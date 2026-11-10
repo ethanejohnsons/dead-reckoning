@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dead Reckoning</title>
+  <link rel="stylesheet" href="/src/ui/style.css" />
+</head>
+<body>
+  <canvas id="gl"></canvas>
+
+  <div id="hud" hidden>
+    <div id="strip"></div>
+    <div id="status"></div>
+    <div id="toast"></div>
+    <div id="warn"></div>
+    <canvas id="panel"></canvas>
+    <div id="hint">H&nbsp;help · M&nbsp;chart · G&nbsp;autopilot · C&nbsp;view · T&nbsp;time · Esc&nbsp;menu</div>
+  </div>
+
+  <aside id="chartPanel" hidden>
+    <header>
+      <span class="cap">Chart</span>
+      <span id="chartInfo"></span>
+      <span class="spacer"></span>
+      <button id="chartWx" class="chip">Weather</button>
+      <button id="chartCentre" class="chip">Centre</button>
+      <button id="chartClose" class="chip">Close</button>
+    </header>
+    <canvas id="chart"></canvas>
+  </aside>
+
+  <div id="screens">
+    <section id="loading" class="screen show">
+      <div class="title-block">
+        <h1>Dead Reckoning</h1>
+        <p id="loadMsg" class="mono">Surveying the continent…</p>
+      </div>
+    </section>
+
+    <section id="title" class="screen">
+      <div class="title-block">
+        <p class="cap">A flight simulator of compass, clock and weather</p>
+        <h1>Dead Reckoning</h1>
+        <p id="titleWhere" class="mono"></p>
+        <div class="row">
+          <button id="btnFly" class="btn primary">Go to dispatch</button>
+          <button id="btnHow" class="btn">How to fly</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="dispatch" class="screen">
+      <div class="sheet wide">
+        <header class="sheet-head">
+          <div><p class="cap">Dispatch office</p><h2 id="dispWhere"></h2><p id="dispBlurb" class="muted"></p></div>
+          <div class="stamp" id="dispLog"></div>
+        </header>
+        <table class="offers" id="offers"></table>
+        <div class="custom">
+          <p class="cap">Plan your own</p>
+          <div class="row wrap">
+            <label>From <select id="cFrom"></select></label>
+            <label>To <select id="cTo"></select></label>
+            <label>Weather <select id="cWx"></select></label>
+            <label>Local time <select id="cHour"></select></label>
+            <button id="cGo" class="btn">Brief this flight</button>
+          </div>
+        </div>
+        <footer class="row"><button id="dispBack" class="btn ghost">Back</button></footer>
+      </div>
+    </section>
+
+    <section id="briefing" class="screen">
+      <div class="sheet wide two">
+        <div class="col">
+          <p class="cap">Flight briefing</p>
+          <h2 id="brTitle"></h2>
+          <p id="brSit" class="muted"></p>
+          <div id="brPlan"></div>
+          <div class="row">
+            <button id="brBack" class="btn ghost">Back</button>
+            <button id="brGo" class="btn primary">Start flight</button>
+          </div>
+        </div>
+        <div class="col chartcol">
+          <canvas id="brChart"></canvas>
+          <p class="muted small">Forecast chart: wind arrows at 5,000 ft in knots; blue barbed line cold front, red scalloped line warm front; red rings thunderstorm cells.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="debrief" class="screen">
+      <div class="sheet">
+        <p class="cap" id="dbCap">Logbook</p>
+        <h2 id="dbTitle"></h2>
+        <p id="dbText" class="muted"></p>
+        <table class="stats" id="dbStats"></table>
+        <div class="row">
+          <button id="dbRetry" class="btn ghost">Fly it again</button>
+          <button id="dbNext" class="btn primary">Continue</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="pause" class="screen">
+      <div class="sheet narrow">
+        <p class="cap">Paused</p>
+        <h2>Flight menu</h2>
+        <div class="stack">
+          <button id="pResume" class="btn primary">Resume</button>
+          <button id="pHelp" class="btn">How to fly</button>
+          <button id="pRestart" class="btn">Restart this flight</button>
+          <button id="pAbandon" class="btn">Abandon to dispatch</button>
+        </div>
+        <div class="settings">
+          <label><input type="checkbox" id="sGps" /> Show true position on the chart (GPS assist)</label>
+          <label><input type="checkbox" id="sSound" checked /> Sound</label>
+          <label><input type="checkbox" id="sInvert" /> Invert pitch keys (W pulls up)</label>
+          <label>Cloud quality <select id="sQuality"><option value="low">Low</option><option value="med" selected>Medium</option><option value="high">High</option></select></label>
+        </div>
+      </div>
+    </section>
+
+    <section id="help" class="screen">
+      <div class="sheet">
+        <p class="cap">Pilot's notes</p>
+        <h2>How to fly</h2>
+        <div class="helpgrid">
+          <div>
+            <h3>Controls</h3>
+            <table class="keys">
+              <tr><td><kbd>S</kbd> <kbd>W</kbd> / <kbd>↓</kbd> <kbd>↑</kbd></td><td>Pitch: pull up / push down</td></tr>
+              <tr><td><kbd>A</kbd> <kbd>D</kbd> / <kbd>←</kbd> <kbd>→</kbd></td><td>Roll left / right</td></tr>
+              <tr><td><kbd>Q</kbd> <kbd>E</kbd></td><td>Rudder, and nose-wheel steering on the ground</td></tr>
+              <tr><td><kbd>R</kbd> <kbd>F</kbd></td><td>Throttle up / down</td></tr>
+              <tr><td><kbd>X</kbd> <kbd>Z</kbd></td><td>Flaps down / up a notch</td></tr>
+              <tr><td><kbd>Space</kbd></td><td>Wheel brakes</td></tr>
+              <tr><td><kbd>G</kbd></td><td>Autopilot. While on, A/D turn the heading bug and W/S change the target altitude</td></tr>
+              <tr><td><kbd>M</kbd></td><td>Chart · <kbd>O</kbd> weather overlay · <kbd>N</kbd> tune next beacon · <kbd>L</kbd> GPS assist</td></tr>
+              <tr><td><kbd>C</kbd></td><td>Cockpit / chase view · drag to look · wheel to zoom</td></tr>
+              <tr><td><kbd>T</kbd></td><td>Time acceleration ×1 ×2 ×4 ×8</td></tr>
+              <tr><td><kbd>Esc</kbd></td><td>Flight menu</td></tr>
+            </table>
+            <p class="muted small">A gamepad works too: left stick to fly, triggers for throttle.</p>
+          </div>
+          <div>
+            <h3>Flying</h3>
+            <p>Full throttle, hold the centreline with <kbd>Q</kbd>/<kbd>E</kbd>, ease back at 70&nbsp;knots. Climb at about 100. The aircraft holds whatever attitude you leave it in, so fly with small taps.</p>
+            <p>To land: 85&nbsp;knots with full flaps on approach, power back, and raise the nose just above the runway. Touch down under 500&nbsp;ft/min.</p>
+            <h3>Navigating</h3>
+            <p>There is no moving map. The briefing gives a heading to steer and a time to fly; the chart pencils in where compass and clock say you <em>should</em> be. Wind you didn't allow for is the difference.</p>
+            <p>The yellow needle on the compass points at the tuned radio beacon (every airfield has one). Flying over any airfield gives you a position fix.</p>
+          </div>
+        </div>
+        <div class="row"><button id="helpClose" class="btn primary">Close</button></div>
+      </div>
+    </section>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
