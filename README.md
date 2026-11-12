@@ -31,9 +31,16 @@ docker build -t dead-reckoning .
 docker run -d --name dead-reckoning --restart unless-stopped -p 8080:80 dead-reckoning
 ```
 
+Or let Compose do both (`compose.yaml`):
+
+```bash
+docker compose up -d --build
+```
+
 For a sub-path, add `--build-arg BASE=/your/path/` to the build and proxy that
-path to the container. `/healthz` answers `ok`. Put TLS in front with whatever
-reverse proxy the server already runs.
+path to the container; with Compose, set `BASE` (and `PORT`, 8080 unless you
+say otherwise) in the environment or in a `.env` file. `/healthz` answers
+`ok`. Put TLS in front with whatever reverse proxy the server already runs.
 
 The server only hands out the game. Each player's browser fetches terrain,
 imagery and building tiles straight from the services named in the credits.

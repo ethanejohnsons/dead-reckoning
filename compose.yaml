@@ -1,0 +1,19 @@
+# Build the game and serve it with nginx (see Dockerfile).
+#
+#   docker compose up -d --build      start it, or rebuild after pulling new code
+#   docker compose down               stop it
+#
+# Two settings, from the environment or a .env file beside this one:
+#   PORT   the port on this machine (default 8080)
+#   BASE   the path it is served under, beginning and ending with a slash (default /)
+name: dead-reckoning
+services:
+  game:
+    build:
+      context: .
+      args:
+        BASE: ${BASE:-/}
+    image: dead-reckoning
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8080}:80"
