@@ -424,7 +424,7 @@ function bindUI() {
   input.on('pause', () => { if (S.mode === 'flying') togglePause(!S.paused); });
   input.on('help', () => { if (S.mode === 'flying') togglePause(!S.paused); });
   input.on('camera', () => { if (flying()) { S.view = S.view === 'chase' ? 'cockpit' : 'chase'; input.look.yaw = 0; input.look.pitch = 0; input.zoom = input.zoomTarget = 1; } });
-  input.on('timeAccel', () => { if (flying()) S.timeAccel = S.timeAccel >= 16 ? 1 : S.timeAccel * 2; });
+  input.on('timeAccel', () => { if (flying()) S.timeAccel = S.timeAccel >= 64 ? 1 : S.timeAccel * 2; });
   input.on('autopilot', () => {
     if (!flying()) return;
     if (!ap.on && ac.onGround) { toast('Autopilot is for the air.', 2); return; }
@@ -617,6 +617,16 @@ function updateDebugReadout() {
 
 // ------------------------------------------------------------------ simulation
 
+/** The autopilot's hands on the controls: bank toward its heading, climb or descend toward its altitude. */
+function autopilot() {
+  let he = ap.hdg - ac.heading; he = ((he + 540) % 360) - 180;
+  const bankT = clamp(he * 1.6, -25, 25) * D2R;
+  ctl.roll = clamp((bankT - ac.bank) * 2.2, -0.8, 0.8);
+  const vsT = clamp((ap.alt - ac.pos.y) * 0.02, ac.ias < 34 ? -4 : -5, clamp((ac.ias - 33) * 0.4, 0, 3.6));
+  ctl.pitch = clamp((vsT - ac.vel.y) * 0.25, -0.7, 0.7);
+  ctl.yaw = input.yaw;
+}
+
 function simulate(dt) {
   const f = S.flight;
   perf.cpuBegin('weather');
@@ -630,12 +640,7 @@ function simulate(dt) {
   if (ap.on) {
     ap.hdg = (ap.hdg + input.raw.roll * 22 * dt / S.timeAccel + 360) % 360;
     ap.alt = clamp(ap.alt + input.raw.pitch * inv * 55 * dt / S.timeAccel, 100, 7500);
-    let he = ap.hdg - ac.heading; he = ((he + 540) % 360) - 180;
-    const bankT = clamp(he * 1.6, -25, 25) * D2R;
-    ctl.roll = clamp((bankT - ac.bank) * 2.2, -0.8, 0.8);
-    const vsT = clamp((ap.alt - ac.pos.y) * 0.02, ac.ias < 34 ? -4 : -5, clamp((ac.ias - 33) * 0.4, 0, 3.6));
-    ctl.pitch = clamp((vsT - ac.vel.y) * 0.25, -0.7, 0.7);
-    ctl.yaw = input.yaw;
+    autopilot();
     if (ac.onGround || ac.stall > 0.6) { ap.on = false; toast('Autopilot disconnected.', 3); }
   } else { ctl.pitch = input.pitch * inv; ctl.roll = input.roll; ctl.yaw = input.yaw; }
   ac.throttle = clamp(ac.throttle + input.raw.throttle * 0.55 * dt / S.timeAccel, 0, 1);
@@ -647,12 +652,13 @@ function simulate(dt) {
   else if (ac.throttle > 0.6 || ac.ias > 45 || ac.onGround) ac.flapTarget = 0;
 
   // Fixed-step flight physics with gusts layered on the mean wind.
-  let n = Math.min(Math.round(dt / STEP), 200);            // (200: sixteen times real time holds down to 10 frames a second)
+  let n = Math.min(Math.round(dt / STEP), 640);            // (640: sixty-four times real time holds down to 12 frames a second)
   const gust = wx.turb * 7.5;
   while (n-- > 0) {
     const t = ac.t;
     env.wind.set(wx.x + gust * (noise1(t * 0.9, 1) + 0.5 * noise1(t * 2.7, 4)), wx.y + gust * 0.8 * (noise1(t * 1.1, 2) + 0.5 * noise1(t * 3.1, 5)), wx.z + gust * (noise1(t * 0.8, 3) + 0.5 * noise1(t * 2.3, 6)));
     env.turb = wx.turb;
+    if (ap.on && (n & 3) === 0) autopilot();          // it flies every few steps, not once a frame: at x64 a frame is a second of flight
     ac.step(STEP, ctl, env);
     if (!ac.crashed && ac.agl < 600 && cities.hit(ac.pos)) ac.crashed = cities.lastHit === 'bridge' ? 'Flew into a bridge' : 'Flew into a building';
     if (ac.crashed) break;

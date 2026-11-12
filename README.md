@@ -196,8 +196,8 @@ Pick an airfield, a weather system, a time of day and whether to start on the
 runway or already in the air over the field, then press Fly. `W`/`S` pitch, `A`/`D` roll, `Q`/`E` rudder, `R`/`F` faster and
 slower; flaps, brakes and fuel look after themselves. `C` switches between the
 chase view and the cockpit (drag to look around, wheel to zoom). `G` hands the
-aircraft to the autopilot, and `T` speeds time up: ×2, ×4, ×8, ×16, then back
-to normal. `Esc` opens the menu.
+aircraft to the autopilot, and `T` speeds time up: ×2, ×4, ×8, ×16, ×32, ×64,
+then back to normal. `Esc` opens the menu.
 
 `V` (or the weather chip at the top left) opens the Weather panel: choose a
 weather system, how long the change takes and the time of day, and read what
