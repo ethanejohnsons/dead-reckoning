@@ -99,11 +99,9 @@ kbd { display: inline-block; min-width: 1.6rem; padding: 0.08rem 0.4rem; font: 6
 #splash.show { display: flex; flex-direction: column; justify-content: flex-end; gap: 1rem; padding: 3rem 4rem 2rem; background: linear-gradient(180deg, rgba(6, 9, 13, 0) 34%, rgba(6, 9, 13, 0.5) 68%, rgba(6, 9, 13, 0.86) 100%); }
 #splash.loading { background: #0a0e13; }
 .title-block { max-width: 100%; }
-.eyebrow { display: flex; align-items: center; gap: 0.75rem; margin: 0 0 0.9rem; font-size: var(--t-s); font-weight: 600; letter-spacing: 0.22em; text-transform: uppercase; color: var(--text); text-shadow: 0 1px 0.6rem rgba(0, 0, 0, 0.6); }
+.eyebrow { display: flex; align-items: center; gap: 0.75rem; margin: 0 0 1.2rem; font-size: var(--t-s); font-weight: 600; letter-spacing: 0.22em; text-transform: uppercase; color: var(--text); text-shadow: 0 1px 0.6rem rgba(0, 0, 0, 0.6); }
 .eyebrow::before { content: ""; width: 1.8rem; height: 2px; background: var(--accent); }
 .eyebrow:empty { visibility: hidden; }
-h1 { margin: 0 0 1.5rem -0.05em; font-size: min(4.3rem, 8.6vw); font-weight: 300; line-height: 1; letter-spacing: 0.15em; text-transform: uppercase; text-shadow: 0 0.1rem 2rem rgba(0, 0, 0, 0.45); }
-h1 b { font-weight: 700; }
 #loadMsg { min-height: 1.4em; margin: 0 0 0.4rem; font-size: 0.9rem; color: var(--dim); }
 #loadMsg:empty { display: none; }
 /* Loading and downloading progress: a thin bar under the loading message, and a pill in flight while scenery streams in. */
