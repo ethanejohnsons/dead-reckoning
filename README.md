@@ -17,6 +17,27 @@ npm run dev
 `npm run build` writes a static site to `dist/`. The game needs an internet
 connection while it runs: terrain is streamed, not bundled.
 
+## Hosting
+
+There is no server side: `dist/` (about 8 MB) can be served by any web server,
+from the top of a domain. For a sub-path, build with
+`npx vite build --base=/your/path/`.
+
+Or build the Docker image, which builds the site and serves it with nginx on
+port 80 (`Dockerfile`, `deploy/nginx.conf`):
+
+```bash
+docker build -t dead-reckoning .
+docker run -d --name dead-reckoning --restart unless-stopped -p 8080:80 dead-reckoning
+```
+
+For a sub-path, add `--build-arg BASE=/your/path/` to the build and proxy that
+path to the container. `/healthz` answers `ok`. Put TLS in front with whatever
+reverse proxy the server already runs.
+
+The server only hands out the game. Each player's browser fetches terrain,
+imagery and building tiles straight from the services named in the credits.
+
 ## The world
 
 The game holds one square window of the earth at a time, 524 km on a side,
