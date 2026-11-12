@@ -1,0 +1,265 @@
+{
+ "version": 1,
+ "format": "mp3",
+ "sampleRate": 48000,
+ "note": "Loops keep their loop region inside the file (a copy of the tail before it, a copy of the head after it); play them with loopStart/loopEnd.",
+ "sounds": {
+  "eng_cab_1": {
+   "file": "eng_cab_1.mp3",
+   "group": "engine-cabin",
+   "channels": 2,
+   "duration": 7.8455,
+   "lufs": -23.4,
+   "truePeak": -11.4,
+   "loop": [
+    0.3,
+    7.545458
+   ],
+   "rpm": 1125.6
+  },
+  "eng_cab_2": {
+   "file": "eng_cab_2.mp3",
+   "group": "engine-cabin",
+   "channels": 2,
+   "duration": 7.3365,
+   "lufs": -23.4,
+   "truePeak": -15.5,
+   "loop": [
+    0.3,
+    7.0365
+   ],
+   "rpm": 1460.3
+  },
+  "eng_cab_3": {
+   "file": "eng_cab_3.mp3",
+   "group": "engine-cabin",
+   "channels": 2,
+   "duration": 10.6141,
+   "lufs": -23.5,
+   "truePeak": -11.8,
+   "loop": [
+    0.3,
+    10.314125
+   ],
+   "rpm": 1954.6
+  },
+  "eng_cab_4": {
+   "file": "eng_cab_4.mp3",
+   "group": "engine-cabin",
+   "channels": 2,
+   "duration": 10.1396,
+   "lufs": -23.5,
+   "truePeak": -12.6,
+   "loop": [
+    0.3,
+    9.839646
+   ],
+   "rpm": 2390.5
+  },
+  "eng_cab_5": {
+   "file": "eng_cab_5.mp3",
+   "group": "engine-cabin",
+   "channels": 2,
+   "duration": 10.4033,
+   "lufs": -23.5,
+   "truePeak": -14.2,
+   "loop": [
+    0.3,
+    10.103333
+   ],
+   "rpm": 2521.6
+  },
+  "eng_ext_lo": {
+   "file": "eng_ext_lo.mp3",
+   "group": "engine-outside",
+   "channels": 1,
+   "duration": 8.7263,
+   "lufs": -23.5,
+   "truePeak": -8.4,
+   "loop": [
+    0.3,
+    8.42625
+   ],
+   "rpm": 1078.1
+  },
+  "eng_ext_hi": {
+   "file": "eng_ext_hi.mp3",
+   "group": "engine-outside",
+   "channels": 1,
+   "duration": 3.9634,
+   "lufs": -23.5,
+   "truePeak": -12.4,
+   "loop": [
+    0.3,
+    3.663396
+   ],
+   "rpm": 2247.8
+  },
+  "eng_start": {
+   "file": "eng_start.mp3",
+   "group": "engine-cabin",
+   "channels": 2,
+   "duration": 2.95,
+   "lufs": -20.4,
+   "truePeak": -6.9,
+   "catchAt": 1.3,
+   "settleRpm": 1326
+  },
+  "air_cabin": {
+   "file": "air_cabin.mp3",
+   "group": "air",
+   "channels": 2,
+   "duration": 10.7557,
+   "lufs": -23.4,
+   "truePeak": -11.6,
+   "loop": [
+    0.3,
+    10.455708
+   ]
+  },
+  "air_gust": {
+   "file": "air_gust.mp3",
+   "group": "air",
+   "channels": 2,
+   "duration": 15.0672,
+   "lufs": -23.5,
+   "truePeak": -4.9,
+   "loop": [
+    0.3,
+    14.767188
+   ]
+  },
+  "air_rush": {
+   "file": "air_rush.mp3",
+   "group": "air",
+   "channels": 2,
+   "duration": 8.663,
+   "lufs": -23.4,
+   "truePeak": -12.2,
+   "loop": [
+    0.3,
+    8.363042
+   ]
+  },
+  "rain_light": {
+   "file": "rain_light.mp3",
+   "group": "weather",
+   "channels": 2,
+   "duration": 12.7366,
+   "lufs": -26.2,
+   "truePeak": -1.9,
+   "loop": [
+    0.3,
+    12.436563
+   ]
+  },
+  "rain_heavy": {
+   "file": "rain_heavy.mp3",
+   "group": "weather",
+   "channels": 2,
+   "duration": 12.4057,
+   "lufs": -23.3,
+   "truePeak": -6.7,
+   "loop": [
+    0.3,
+    12.105708
+   ]
+  },
+  "hail": {
+   "file": "hail.mp3",
+   "group": "weather",
+   "channels": 2,
+   "duration": 12.8805,
+   "lufs": -23.3,
+   "truePeak": -3.3,
+   "loop": [
+    0.3,
+    12.580479
+   ]
+  },
+  "thunder_near_1": {
+   "file": "thunder_near_1.mp3",
+   "group": "thunder-near",
+   "channels": 2,
+   "duration": 11.55,
+   "lufs": -20.4,
+   "truePeak": -2.4
+  },
+  "thunder_near_2": {
+   "file": "thunder_near_2.mp3",
+   "group": "thunder-near",
+   "channels": 2,
+   "duration": 13.05,
+   "lufs": -20.4,
+   "truePeak": -3.1
+  },
+  "thunder_near_3": {
+   "file": "thunder_near_3.mp3",
+   "group": "thunder-near",
+   "channels": 1,
+   "duration": 19.0399,
+   "lufs": -20.5,
+   "truePeak": -2.0
+  },
+  "thunder_far_1": {
+   "file": "thunder_far_1.mp3",
+   "group": "thunder-far",
+   "channels": 2,
+   "duration": 12.05,
+   "lufs": -20.5,
+   "truePeak": -3.3
+  },
+  "thunder_far_2": {
+   "file": "thunder_far_2.mp3",
+   "group": "thunder-far",
+   "channels": 2,
+   "duration": 11.55,
+   "lufs": -20.4,
+   "truePeak": -3.1
+  },
+  "roll_grass": {
+   "file": "roll_grass.mp3",
+   "group": "ground",
+   "channels": 2,
+   "duration": 5.9598,
+   "lufs": -23.4,
+   "truePeak": -9.2,
+   "loop": [
+    0.3,
+    5.659813
+   ]
+  },
+  "touchdown": {
+   "file": "touchdown.mp3",
+   "group": "ground",
+   "channels": 2,
+   "duration": 1.2,
+   "lufs": -17.6,
+   "truePeak": -3.5
+  },
+  "tyre_chirp": {
+   "file": "tyre_chirp.mp3",
+   "group": "ground",
+   "channels": 1,
+   "duration": 0.47,
+   "lufs": -16.0,
+   "truePeak": -4.8
+  },
+  "tyre_screech": {
+   "file": "tyre_screech.mp3",
+   "group": "ground",
+   "channels": 1,
+   "duration": 1.3,
+   "lufs": -17.7,
+   "truePeak": -4.9
+  },
+  "crash": {
+   "file": "crash.mp3",
+   "group": "ground",
+   "channels": 2,
+   "duration": 3.8,
+   "lufs": -20.2,
+   "truePeak": -2.2
+  }
+ }
+}

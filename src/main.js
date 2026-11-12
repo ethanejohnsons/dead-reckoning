@@ -3,320 +3,449 @@
 import * as THREE from 'three';
 import { ENV } from './core/env.js';
 import { Input } from './core/input.js';
-import { Nav } from './core/nav.js';
 import { Sound } from './core/audio.js';
 import { clamp, noise1, smoothstep } from './core/noise.js';
-import { groundHeight, height, LAND_HALF } from './world/terrain.js';
-import { initAirports, AIRPORTS, airportById, nearestAirport, runwayCoords } from './world/airports.js';
-import { Terrain } from './world/chunks.js';
+import * as dem from './world/dem.js';
+import { REGION, LAND_HALF, setRegion, toWorld, toLatLon } from './world/geo.js';
+import { groundHeight, isWater, buildWorld, BN } from './world/terrain.js';
+import { loadAirports, clearAirports, inWindow, AIRPORTS, FIELDS, fieldById, DEFAULT_FIELD, airportById, nearestAirport, airfieldSurface } from './world/airports.js';
+import { OSM_ATTRIBUTION } from './world/airfield-index.js';
+import { Terrain, setUrbanGrid } from './world/chunks.js';
 import { Sky } from './world/sky.js';
+import { STARS_CREDIT } from './world/stars.js';
+import { skyRadiance } from './world/atmosphere.js';
 import { Airfields } from './world/airfield.js';
-import { Weather, SITUATIONS } from './weather/weather.js';
+import { TownLights, loadTowns, placeTowns } from './world/towns.js';
+import { Cities, CITY_ATTRIBUTION } from './world/cities.js';
+import { Imagery, IMAGERY_ATTRIBUTION } from './world/imagery.js';
+import { GroundLight } from './world/groundlight.js';
+import { SunShadows } from './world/sunshadow.js';
+import { Weather, SITUATIONS, CLOUD_SIGMA } from './weather/weather.js';
 import { CloudRenderer } from './weather/clouds.js';
 import { Precip } from './weather/precip.js';
-import { Aircraft, SPEC, KT, FT, NM } from './aircraft/physics.js';
-import { buildAircraft, buildShadow, animateAircraft } from './aircraft/model.js';
-import { HUD } from './ui/hud.js';
+import { Aircraft, FT, NM } from './aircraft/physics.js';
+import { buildAircraft, animateAircraft, disposeAircraft } from './aircraft/model.js';
+import { AIRCRAFT, aircraftById } from './aircraft/variants.js';
+import { cockpitCamera } from './aircraft/cockpitcam.js';
 import { Chart, bakeChart } from './ui/chart.js';
-import { makeOffers, makePlan, fmtHdg, fmtTime, fmtHour, nm } from './game/flightplan.js';
+import { perf } from './render/perf.js';
+import { uploads } from './render/budget.js';
+import { DynRes } from './render/dynres.js';
+import { FlightPanel, FrameMeter, weatherWords, passRows } from './ui/hud.js';
+import { enhanceSelect, syncPickers } from './ui/picker.js';
 
 const $ = (id) => document.getElementById(id);
 const D2R = Math.PI / 180;
 const STEP = 1 / 120;
-const SAVE_KEY = 'dead-reckoning-v1';
+const SAVE_KEY = 'dead-reckoning-v3';     // bumped when the defaults changed (high graphics), so old saves do not pin the old ones
+const SAVE_VERSION = 2;
+const HOURS = [[5.7, 'First light'], [7.5, 'Early morning'], [10, 'Morning'], [13, 'Midday'], [15.5, 'Afternoon'], [17.3, 'Golden hour'], [18.4, 'Dusk'], [22, 'Night']];
 // Yield to the browser so loading text can paint; the timeout keeps boot moving in a background tab.
 const nextFrame = () => new Promise((r) => { requestAnimationFrame(() => r()); setTimeout(r, 60); });
+const fmtHour = (h) => `${String(Math.floor(h)).padStart(2, '0')}:${String(Math.floor((h % 1) * 60)).padStart(2, '0')}`;
+const magnetic = (trueDeg) => (trueDeg - REGION.magVar + 720) % 360;
 
 // ------------------------------------------------------------------ state
 
+// How rough each kind of weather leaves open water whatever the wind at the aircraft says (0 calm .. 1 a storm sea).
+let seaSnap = true;          // set the water's state outright on the next frame (a flight starting, weather set at once)
+const SEA_STATE = { storms: 0.85, scattered: 0.55, hail: 0.8, coldfront: 0.7, gale: 0.9, monsoon: 0.8, blizzard: 0.9, lakeeffect: 0.75, icestorm: 0.45, derecho: 1, chinook: 0.7, rain: 0.35, snow: 0.3 };
 const S = {
-  mode: 'loading', paused: false, timeAccel: 1, view: 'chase', chartOpen: false,
-  flight: null, plan: null, offers: [], time: 0, helpFrom: null,
-  save: { at: 'HAL', log: [], settings: { gps: false, sound: true, invert: false, quality: 'med' } },
+  mode: 'loading', paused: false, timeAccel: 1, view: 'chase', chartOpen: false, time: 0, busy: false, frost: 0, moving: false,
+  flight: null, field: null,
+  opts: { field: DEFAULT_FIELD, wx: 'fair', hour: 7.5, air: false, plane: 'c172' },
+  settings: { sound: true, invert: false, quality: 'high', imagery: true, exposure: 1, fx: {}, wxOver: 0, resolution: 'auto' },   // wxOver: seconds a weather change takes (0 = at once); resolution: 'auto' (follows the frame rate) or 'fixed'
 };
 try {
   const raw = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null');
-  if (raw && raw.at) { S.save = { ...S.save, ...raw, settings: { ...S.save.settings, ...(raw.settings || {}) } }; }
+  if (raw) {
+    Object.assign(S.opts, raw.opts || {}); Object.assign(S.settings, raw.settings || {});
+    if ((raw.v || 1) < SAVE_VERSION) S.opts.hour = 7.5;         // the default time changed to early morning: older saves pick it up once
+  }
 } catch { /* a corrupt save just starts fresh */ }
-const persist = () => { try { localStorage.setItem(SAVE_KEY, JSON.stringify(S.save)); } catch { /* storage unavailable */ } };
+const persist = () => { try { localStorage.setItem(SAVE_KEY, JSON.stringify({ v: SAVE_VERSION, opts: S.opts, settings: S.settings })); } catch { /* storage unavailable */ } };
 
-let renderer, scene, camera, terrain, sky, airfields, weather, clouds, precip, hud, chart, input, sound, nav;
-let ac, model, shadow;
+let renderer, scene, camera, terrain, sky, airfields, towns, cities, imagery, weather, clouds, precip, chart, input, sound, groundLight, sunShadows;
+let ac, model, cityShadeT = 0, cityShadeN = 0;
 const wx = { x: 0, y: 0, z: 0, turb: 0, temp: 15, cloud: 0, precip: 0, snow: false, icing: 0, visibility: 60000, overcast: 0, shade: 0, col: null };
 const env = { wind: new THREE.Vector3(), turb: 0, ground: groundHeight, surface: surfaceAt };
 const ctl = { pitch: 0, roll: 0, yaw: 0 };
 const ap = { on: false, hdg: 0, alt: 1000 };
-const camState = { yaw: 0, pitch: 0, pos: new THREE.Vector3(), vel: new THREE.Vector3(), prev: new THREE.Vector3() };
+const camState = { yaw: 0, pitch: 0, vel: new THREE.Vector3(), prev: new THREE.Vector3() };
+// Graphics tiers: the most device pixels per CSS pixel each draws at ('ultra' takes whatever the screen has).
+const PIXEL_CAP = { low: 1, med: 1.25, high: 1.25, ultra: 3 };
+const res = new DynRes();                  // dynamic resolution: see onResize and the end of tick
 const v1 = new THREE.Vector3(), v2 = new THREE.Vector3(), q1 = new THREE.Quaternion(), e1 = new THREE.Euler(0, 0, 0, 'YXZ');
 
 function surfaceAt(x, z) {
-  for (const a of AIRPORTS) {
-    const dx = x - a.x, dz = z - a.z;
-    if (Math.abs(dx) > 2500 || Math.abs(dz) > 2500) continue;
-    const along = dx * a.ux + dz * a.uz, cross = dx * -a.uz + dz * a.ux;
-    if (Math.abs(along) < a.len / 2 && Math.abs(cross) < a.width / 2) return a.surface;
-    if (Math.abs(along) < 90 && cross > 0 && cross < a.width / 2 + 160) return a.surface;   // taxiway and apron
-  }
-  return groundHeight(x, z) <= 0.3 ? 'water' : 'grass';
+  return airfieldSurface(x, z) || (isWater(x, z) ? 'water' : 'grass');      // runways, taxiways and aprons first
 }
 
 // ------------------------------------------------------------------ boot
 
+// Loading progress on the title screen: a message and a bar. A step with no fraction of its own moves the bar on a little.
+let loadFrac = 0;
+function loadBar(f) {
+  const bar = $('loadBar');
+  if (f == null) { bar.hidden = true; loadFrac = 0; return; }
+  loadFrac = Math.max(0, Math.min(1, f));
+  bar.hidden = false; bar.firstElementChild.style.width = `${(loadFrac * 100).toFixed(1)}%`;
+}
+const msg = (t, f) => { $('loadMsg').textContent = t; loadBar(f ?? loadFrac + (1 - loadFrac) * 0.3); return nextFrame().then(nextFrame); };
+
+// Scenery streaming in flight: how much of what has been asked for since things were last quiet has arrived
+// (elevation tiles, terrain and tree jobs, imagery, city tiles). Shown as a small bar while anything is outstanding.
+const stream = { peak: 0, shown: false, quiet: 0 };
+function streamPending() {
+  return dem.pendingCount() + terrain.flying + terrain.done.length + terrain.trees.farFlying + terrain.trees.farDone.length
+    + (imagery.enabled ? imagery.queue.size + imagery.inFlight.size + imagery.ready.length : 0) + cities.queue.length + cities.jobs.size;
+}
+function updateStream(dt) {
+  const n = streamPending(), el = $('stream');
+  if (n > stream.peak) stream.peak = n;
+  if (n === 0) { stream.quiet += dt; if (stream.quiet > 0.6) stream.peak = 0; } else stream.quiet = 0;
+  const show = S.mode === 'flying' && stream.peak >= 12 && n > 0;          // a handful of tiles is not worth a bar
+  if (show !== stream.shown) { stream.shown = show; el.hidden = !show; }
+  if (show) {
+    const f = 1 - n / stream.peak;
+    $('streamBar').style.width = `${(f * 100).toFixed(0)}%`;
+    $('streamTxt').textContent = S.busy ? 'Loading the area' : 'Loading scenery';
+    $('streamN').textContent = `${Math.round(f * 100)}%`;
+  }
+}
+
 async function boot() {
-  const msg = (t) => { $('loadMsg').textContent = t; return nextFrame().then(nextFrame); };
-  await msg('Surveying the continent…');
-  initAirports();
+  $('splash').classList.add('loading');
+  $('credit').innerHTML = `${dem.ATTRIBUTION}<br>${IMAGERY_ATTRIBUTION}<br>${OSM_ATTRIBUTION}<br>${CITY_ATTRIBUTION}<br>${STARS_CREDIT}`;
+  if (!fieldById(S.opts.field)) S.opts.field = DEFAULT_FIELD;
+  await loadTowns();
+  await loadWorld(fieldById(S.opts.field));
 
   const canvas = $('gl');
   renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(1);
+  renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFShadowMap;
   scene = new THREE.Scene();
-  camera = new THREE.PerspectiveCamera(62, 1, 1.2, 220000);
+  camera = new THREE.PerspectiveCamera(62, 1, 1.2, 320000);
+
+  imagery = new Imagery(renderer, S.settings.quality === 'ultra' ? 'high' : S.settings.quality);
+  imagery.enabled = S.settings.imagery;
 
   await msg('Stirring the atmosphere…');
   weather = new Weather();
   await msg('Raising mountains…');
   terrain = new Terrain(scene);
-  sky = new Sky(scene);
+  await terrain.init();
+  sky = new Sky(scene, renderer);
+  // three.js's own shadow map covers only a small box around the aircraft: it is what the aircraft's own
+  // materials read (a strut's shadow on the wing). What the sun throws on the ground is SunShadows' business.
+  const sh = sky.sun.shadow;
+  sky.sun.castShadow = true; sh.mapSize.set(2048, 2048); sh.bias = -0.0004; sh.normalBias = 0.03;
+  Object.assign(sh.camera, { left: -9, right: 9, top: 9, bottom: -9, near: 1, far: 260 }); sh.camera.updateProjectionMatrix();
   airfields = new Airfields(scene);
+  towns = new TownLights(scene);
+  cities = new Cities(scene, renderer);                 // real buildings, streamed round the aircraft (world/cities.js)
   precip = new Precip(scene);
   clouds = new CloudRenderer(renderer, weather);
+  // Light on the ground: mountain shadow, cloud shadow and sky occlusion baked into maps round the camera,
+  // and the shadows of the aircraft and of the airfield buildings (see world/groundlight.js, world/sunshadow.js).
+  groundLight = new GroundLight(renderer);
+  sunShadows = new SunShadows(renderer);
+  groundLight.raise = (x0, z0, step, n, h) => cities.raise(x0, z0, step, n, h);
+  sunShadows.casterRoots = [airfields.group, cities.group]; sunShadows.ground = groundHeight;
+  sunShadows.isCaster = (o) => o.isMesh && (o.castShadow || o.material === airfields.bldMat || o.material === airfields.poleMat || o.material === airfields.sockMat || o.userData.cityCaster);
+  perf.tag(airfields.group, 'airfields');            // GPU time of the scene by part, in the debug panel (the terrain and the trees tag themselves)
 
   ac = new Aircraft();
-  model = buildAircraft(); scene.add(model.root);
-  shadow = buildShadow(); scene.add(shadow);
+  selectAircraft(aircraftById(S.opts.plane).id);    // builds the model and points the weather and post-processing at it
 
   await msg('Printing charts…');
-  chart = new Chart(bakeChart(768));
-  hud = new HUD($('panel'));
+  chart = new Chart(bakeChart(900));
   input = new Input(canvas);
-  sound = new Sound(); sound.enabled = S.save.settings.sound;
-  nav = new Nav();
-  nav.onFix = (a, err) => toast(`Position fix: overhead ${a.name}. Your reckoning was ${nm(err).toFixed(1)} NM out.`, 6);
+  sound = new Sound(); sound.enabled = S.settings.sound;
 
   bindUI();
   applySettings();
   onResize();
   addEventListener('resize', onResize);
   // Debug handle: lets tests drive the sim from the console without rendering every step.
-  window.DR = { S, ac, weather, nav, terrain, camera, wx, ap, startFlight, makePlan, AIRPORTS, env, tick, input, clouds, sim: (dt) => { S.time += dt; input.update(dt); if (S.mode === 'flying') simulate(dt * S.timeAccel); } };
+  window.DR = { S, ac, weather, precip, setWeather, imagery, terrain, camera, wx, ap, env, tick, input, clouds, sky, dem, AIRPORTS, FIELDS, REGION, toWorld, toLatLon, towns, cities, chart, loadWorld, ENV, skyRadiance, scene, renderer, get model() { return model; }, selectAircraft, groundLight, sunShadows, airfields, fly: (o) => { Object.assign(S.opts, o); return startFlight(); },
+    perf, uploads, res, applySettings,
+    sim: (dt) => { S.time += dt; input.update(dt); if (S.mode === 'flying') simulate(dt * S.timeAccel); } };
 
-  if (!airportById(S.save.at)) S.save.at = 'HAL';
-  enterTitle();
+  if (!SITUATIONS[S.opts.wx]) S.opts.wx = 'fair';
+  S.opts.plane = aircraftById(S.opts.plane).id;
+  $('splash').classList.remove('loading');
+  $('loadMsg').textContent = ''; loadBar(null);
+  $('setup').hidden = false;
+  enterSplash();
   requestAnimationFrame(loop);
 }
 
+// ------------------------------------------------------------------ the window of the world
+
+/**
+ * Put the game's window of the world (524 km square) round an airfield of the index, and build everything
+ * that depends on where that is: the elevation base and its water, the regional maps and towns, the
+ * airfields inside the window with their grading, and (once they exist: at boot they are made afterwards)
+ * the terrain, the weather's terrain grids, the town lights and the chart. A few seconds, mostly download.
+ */
+async function loadWorld(f) {
+  const t0 = performance.now();
+  S.moving = true;                                   // nothing is drawn or simulated while the world is in pieces
+  terrain?.reset(); airfields?.reset(); clearAirports();
+  setRegion(f.lat, f.lon, `${f.state} · United States`);
+  cities?.reset();                                   // its tiles are laid out in the old window's metres
+  const say = `Downloading terrain round ${f.city}, ${f.state}…`;
+  await msg(say, 0.05);
+  const base = await dem.loadBase(BN, (p) => { $('loadMsg').textContent = `${say} ${Math.round(p * 100)}%`; loadBar(0.05 + 0.55 * p); });
+  await msg('Mapping lakes, towns and climate…', 0.62);
+  const urban = placeTowns();
+  setUrbanGrid(urban);                               // the terrain's workers build town patches from it
+  buildWorld(base, urban);
+  await msg('Surveying airfields…', 0.66);
+  await loadAirports((p) => { $('loadMsg').textContent = `Surveying airfields… ${Math.round(p * 100)}%`; loadBar(0.66 + 0.2 * p); });
+  if (terrain) {
+    await msg('Raising the land…', 0.9);
+    await terrain.init();
+    weather.readTerrain();
+    groundLight?.reset();                              // its baked shadow maps describe the old place
+    towns.rebuild();
+    chart.base = bakeChart(900);
+    S.field = null;
+  }
+  S.moving = false;
+  console.info(`World round ${f.id} loaded in ${Math.round(performance.now() - t0)} ms, ${AIRPORTS.length} airfields`);
+}
+
+/** Is this airfield loaded, with at least 120 km of chart on every side of it? If not, the window moves to it. */
+const worldHolds = (id) => !!airportById(id) && !!inWindow(fieldById(id), -120000);
+let worldQueue = Promise.resolve(), worldWanted = null;
+/** Make sure the window of the world holds an airfield, moving it there if need be. One move at a time; the latest request wins. */
+function ensureWorld(id) {
+  worldWanted = id;
+  worldQueue = worldQueue.then(async () => {
+    if (id !== worldWanted || worldHolds(id)) return;
+    $('splash').classList.add('loading');
+    try { await loadWorld(fieldById(id)); } finally { $('splash').classList.remove('loading'); $('loadMsg').textContent = ''; loadBar(null); }
+  }).catch((e) => { console.error(e); S.moving = false; $('loadMsg').textContent = 'Could not load that part of the world: ' + e.message; });
+  return worldQueue;
+}
+
 function onResize() {
-  const w = innerWidth, h = innerHeight, pr = Math.min(devicePixelRatio || 1, 1.25);
+  const w = Math.max(innerWidth, 64), h = Math.max(innerHeight, 64), pr = Math.min(devicePixelRatio || 1, PIXEL_CAP[S.settings.quality] ?? 1.25);
   renderer.setPixelRatio(pr);
   renderer.setSize(w, h, false);
   camera.aspect = w / h; camera.updateProjectionMatrix();
-  clouds.setSize(Math.round(w * pr), Math.round(h * pr));
+  // The picture (and the cloud buffer with it) is drawn at res.scale of the canvas and scaled up by the last pass.
+  const rw = Math.max(64, Math.round(w * pr * res.scale)), rh = Math.max(64, Math.round(h * pr * res.scale));
+  if (rw !== clouds.w || rh !== clouds.h) clouds.setSize(rw, rh);
 }
 
 function applySettings() {
-  const s = S.save.settings;
-  $('sGps').checked = s.gps; $('sSound').checked = s.sound; $('sInvert').checked = s.invert; $('sQuality').value = s.quality;
+  const s = S.settings;
+  $('sSound').checked = s.sound; $('sInvert').checked = s.invert; $('sQuality').value = s.quality; $('sImagery').checked = s.imagery;
+  if ($('sRes')) $('sRes').value = s.resolution === 'fixed' ? 'fixed' : 'auto';
+  imagery.enabled = s.imagery; imagery.setQuality(s.quality === 'ultra' ? 'high' : s.quality);
   sound.setEnabled(s.sound);
-  const q = { low: [0.4, 56], med: [0.5, 88], high: [0.75, 120] }[s.quality] || [0.5, 88];
-  clouds.setQuality(q[0], q[1]);
+  clouds.setQuality(s.quality);
+  terrain.setQuality(s.quality);
+  sunShadows.setQuality(s.quality);
+  sky.setQuality(s.quality === 'ultra' ? 'high' : s.quality);      // the sky's tables have no step above 'high'
+  cities.setQuality(s.quality);
+  // the aircraft's own shadow map (three.js's): half the size on 'low'
+  const sh = sky.sun.shadow, shSize = s.quality === 'low' ? 1024 : 2048;
+  if (sh.mapSize.x !== shSize) { sh.mapSize.set(shSize, shSize); sh.map?.dispose(); sh.map = null; }
+  res.enabled = s.resolution !== 'fixed';
+  perf.watch = res.enabled;                // one GPU timer a frame for it to steer by
+  if (!res.enabled) res.scale = res.max;
+  onResize();                              // the tier sets the pixel ratio
 }
 
-// ------------------------------------------------------------------ screens
-
-function show(name) {
-  for (const el of document.querySelectorAll('.screen')) el.classList.toggle('show', el.id === name);
-  $('hud').hidden = !(S.mode === 'flying');
-  if (S.mode !== 'flying') { $('chartPanel').hidden = true; S.chartOpen = false; document.body.classList.remove('chart-open'); }
-}
+// ------------------------------------------------------------------ flow
 
 let toastT = 0;
 function toast(text, secs = 4) { const t = $('toast'); t.textContent = text; t.classList.add('show'); toastT = secs; }
 
-/** Park the aircraft at an airfield for the menu backdrop. */
-function parkAt(a, hour, kind = 'fair', seed = 3) {
-  weather.setup(kind, { ax: a.x - 40000, az: a.z, bx: a.x + 40000, bz: a.z }, hour, seed);
-  const x = a.x - a.ux * (a.len / 2 - 70), z = a.z - a.uz * (a.len / 2 - 70);
-  ac.placeOnGround(x, z, groundHeight(x, z), a.hdg);
-  ac.fuel = SPEC.fuelCap;
-  camState.yaw = a.hdg * D2R + 2.5; camState.pitch = 0.1;
-  syncModel();
-  updateCamera(0.016, true);
-  terrain.warm(camera.position);
+function show(name) {
+  $('splash').classList.toggle('show', name === 'splash');
+  $('pause').classList.toggle('show', name === 'pause');
+  $('hud').hidden = S.mode !== 'flying';
+  if (S.mode !== 'flying') { setPanel('wxPanel', false); setPanel('dbgPanel', false); document.body.classList.remove('pit'); }
+  if (S.mode !== 'flying') { $('chartPanel').hidden = true; S.chartOpen = false; document.body.classList.remove('chart-open'); }
+  syncPickers();                           // the menus' selects may just have been refilled or set from code
 }
 
-function enterTitle() {
-  S.mode = 'title'; S.paused = false; S.flight = null;
-  const a = airportById(S.save.at);
-  parkAt(a, 17.2, 'fair', 5 + S.save.log.length);
-  $('titleWhere').textContent = `You are at ${a.name} (${a.id}). ${S.save.log.length ? `${S.save.log.length} flight${S.save.log.length > 1 ? 's' : ''} in the logbook.` : 'The logbook is empty.'}`;
-  show('title');
+/** Set up weather and time around an airfield, and put the aircraft on the into-wind runway threshold. */
+function stage(a) {
+  // Arrange the weather between here and an airfield about 110 km away.
+  const far = AIRPORTS.filter((b) => b !== a).sort((p, q) => Math.abs(Math.hypot(p.x - a.x, p.z - a.z) - 110000) - Math.abs(Math.hypot(q.x - a.x, q.z - a.z) - 110000))[0]
+    || { x: a.x + 110000 * a.ux, z: a.z + 110000 * a.uz };                       // no other field in the window: along the runway's line
+  weather.setup(S.opts.wx, { ax: a.x, az: a.z, bx: far.x, bz: far.z }, S.opts.hour, 1 + Math.floor(Math.random() * 1e6));
+  placeAt(a);
+  S.field = a;
 }
-
-function enterDispatch() {
-  S.mode = 'dispatch';
-  const a = airportById(S.save.at);
-  S.offers = makeOffers(a.id, S.save.log.length);
-  $('dispWhere').textContent = `${a.name} · ${a.id}`;
-  $('dispBlurb').textContent = a.blurb;
-  const hrs = S.save.log.reduce((s, l) => s + (l.time || 0), 0) / 3600;
-  $('dispLog').innerHTML = `LOGBOOK<br>${S.save.log.length} flights · ${hrs.toFixed(1)} h`;
-  const rows = S.offers.map((o, i) => {
-    const b = airportById(o.to), d = Math.hypot(b.x - a.x, b.z - a.z), crs = (Math.atan2(b.x - a.x, -(b.z - a.z)) / D2R + 360) % 360;
-    const sit = SITUATIONS[o.kind];
-    return `<tr><td><div class="dest">${b.name}</div><div class="leg">${b.id} · ${fmtHdg(crs)} · ${Math.round(nm(d))} NM · dep ${fmtHour(o.hour)}</div></td>
-      <td><div class="sit">${sit.title}</div><div class="blurb">${sit.blurb}</div></td>
-      <td><div class="pips" title="Difficulty ${sit.difficulty} of 3">${'●'.repeat(sit.difficulty)}<i>${'●'.repeat(3 - sit.difficulty)}</i></div></td>
-      <td><button class="btn" data-offer="${i}">Briefing</button></td></tr>`;
-  });
-  $('offers').innerHTML = rows.join('');
-  const opt = (v, t, sel) => `<option value="${v}"${sel ? ' selected' : ''}>${t}</option>`;
-  $('cFrom').innerHTML = AIRPORTS.map((p) => opt(p.id, p.name, p.id === a.id)).join('');
-  $('cTo').innerHTML = AIRPORTS.map((p) => opt(p.id, p.name, p.id === S.offers[0].to)).join('');
-  $('cWx').innerHTML = Object.entries(SITUATIONS).map(([k, v]) => opt(k, v.title)).join('');
-  $('cHour').innerHTML = [5.5, 7, 9, 12, 15, 17.5, 19, 22].map((h) => opt(h, fmtHour(h), h === 12)).join('');
-  show('dispatch');
-}
-
-function enterBriefing(offer) {
-  S.mode = 'briefing';
-  const a = airportById(offer.from), b = airportById(offer.to);
-  weather.setup(offer.kind, { ax: a.x, az: a.z, bx: b.x, bz: b.z }, offer.hour, offer.seed);
-  const p = S.plan = makePlan(offer, weather);
-  $('brTitle').textContent = `${a.name} to ${b.name}`;
-  $('brSit').textContent = `${p.sit.title}. ${p.sit.blurb}`;
-  const w = (i) => `${fmtHdg(p.winds[i].dir)} / ${Math.round(p.winds[i].kt)} kt`;
-  $('brPlan').innerHTML = `
-    <div class="steer">Steer <b>${fmtHdg(p.wc.heading)}</b> for <b>${fmtTime(p.ete)}</b> at ${p.cruiseFt.toLocaleString()} ft</div>
-    <table>
-      <tr><td>True course</td><td class="num">${fmtHdg(p.course)} · ${Math.round(nm(p.dist))} NM</td></tr>
-      <tr><td>Wind correction</td><td class="num">${p.wc.wca >= 0 ? '+' : '−'}${Math.abs(p.wc.wca).toFixed(0)}° · ground speed ${Math.round(p.wc.gs * KT)} kt at 140 kt TAS</td></tr>
-      <tr><td>Minimum safe altitude</td><td class="num">${p.msaFt.toLocaleString()} ft</td></tr>
-      <tr><td>Winds at ${p.cruiseFt.toLocaleString()} ft</td><td class="num">${w(0)} · ${w(1)} · ${w(2)}</td></tr>
-      <tr><td>Departure</td><td class="num">${fmtHour(p.hour)} local · runway ${a.numbers.join('/')} · ${Math.round(a.elev * FT)} ft</td></tr>
-      <tr><td>Destination</td><td class="num">runway ${b.numbers.join('/')} · ${Math.round(b.len)} m ${b.surface} · ${Math.round(b.elev * FT)} ft</td></tr>
-    </table>
-    <h3>Observations</h3>
-    <div class="metar">${a.id} ${p.depWx.text}</div>
-    <div class="metar">${b.id} ${p.dstWx.text}</div>
-    <h3>Hazards</h3>
-    <ul>${p.hazards.map((h) => `<li>${h}</li>`).join('')}</ul>`;
-  show('briefing');
-  // Forecast chart
-  const c = $('brChart'), size = Math.round(c.clientWidth * Math.min(devicePixelRatio || 1, 2)) || 600;
-  c.width = c.height = size;
-  const bc = new Chart(chart.base);
-  bc.fit(size, size, p.route, 0.55); bc.showWx = true;
-  bc.draw(c.getContext('2d'), size, size, { route: p.route, weather });
-}
-
-function startFlight(plan = S.plan) {
-  const { a, b } = plan;
-  weather.setup(plan.kind, { ax: a.x, az: a.z, bx: b.x, bz: b.z }, plan.hour, plan.seed);
-  // Take off into wind.
+function placeAt(a) {
   const w = weather.wind(a.x, a.z, a.elev + 10, a.elev, { x: 0, z: 0 });
   const head = -(w.x * a.ux + w.z * a.uz) >= 0 ? 1 : -1;
   const x = a.x - head * a.ux * (a.len / 2 - 70), z = a.z - head * a.uz * (a.len / 2 - 70);
   const hdg = (a.hdg + (head > 0 ? 0 : 180)) % 360;
-  ac.placeOnGround(x, z, groundHeight(x, z), hdg);
-  ac.fuel = SPEC.fuelCap; ac.t = 0;
-  nav.reset(x, z, a.name, b);
-  ap.on = false; ap.hdg = plan.wc.heading; ap.alt = plan.cruiseFt / FT;
-  S.flight = { plan, elapsed: 0, airborne: false, stopT: 0, endT: 0, lastTd: null, td: null, maxIce: 0, iceWarned: false, fuelWarned: false, edgeWarned: 0, rwy: head > 0 ? a.numbers[0] : a.numbers[1] };
-  S.mode = 'flying'; S.paused = false; S.timeAccel = 1; S.view = 'chase';
-  input.look.yaw = 0; input.look.pitch = 0; input.zoom = 1;
+  ac.placeOnGround(x, z, groundHeight(x, z), hdg);      // the runway may slope: stand on the ground where the aircraft is
+  ac.fuel = ac.spec.fuelCap;
+  ap.on = false;
+  clouds?.resetHistory?.();                 // the camera is about to jump: drop the clouds' frame history
   camState.yaw = hdg * D2R; camState.pitch = 0;
-  syncModel(); updateCamera(0.016, true);
-  terrain.warm(camera.position);
-  chart.fit(600, 800, plan.route, 0.3); chart.showWx = false;
-  show(null);
-  sound.start();
-  toast(`Runway ${S.flight.rwy}, ${a.name}. Steer ${fmtHdg(plan.wc.heading)} for ${fmtTime(plan.ete)}. Hold R for power.`, 9);
+  input.look.yaw = 0; input.look.pitch = 0; input.zoom = input.zoomTarget = 1;
+  return head > 0 ? a.numbers[0] : a.numbers[1];
 }
 
-function finishFlight(kind) {
-  const f = S.flight, p = f.plan;
-  S.mode = 'debrief';
-  const near = nearestAirport(ac.pos.x, ac.pos.z);
-  const rc = runwayCoords(near.airport, ac.pos.x, ac.pos.z);
-  const onRunway = Math.abs(rc.along) < near.airport.len / 2 + 80 && Math.abs(rc.cross) < near.airport.width / 2 + 12;
-  const onField = onRunway || near.dist < 1600;
-  let title, text, cap = 'Logbook entry', ok = false;
-  if (kind === 'crash') {
-    cap = 'Accident report'; title = 'Aircraft lost';
-    text = `${ac.crashed}, ${Math.round(nm(near.dist))} NM from ${near.airport.name}. The air-taxi company has found you another Wayfarer.`;
-  } else if (kind === 'lost') {
-    cap = 'Overdue'; title = 'Lost at sea'; text = 'You flew off the edge of the chart and were not heard from again.';
-  } else if (onField && near.airport === p.b) {
-    ok = true; title = `Arrived at ${p.b.name}`;
-    text = onRunway ? 'Down and stopped on the runway.' : 'Down on the airfield, if not quite on the runway.';
-    S.save.at = p.b.id;
-  } else if (onField) {
-    ok = true; title = `Diverted to ${near.airport.name}`; text = `Not where you were going, but a runway is a runway.`;
-    S.save.at = near.airport.id;
-  } else {
-    title = 'Forced landing'; text = `You walked away from a field ${Math.round(nm(near.dist))} NM from ${near.airport.name}. A truck brings you and the aircraft in.`;
-    S.save.at = near.airport.id;
-  }
-  const rows = [['Route', `${p.a.id} → ${p.b.id} · ${Math.round(nm(p.dist))} NM`], ['Weather', p.sit.title], ['Flight time', fmtTime(f.elapsed)]];
-  if (f.td && kind !== 'crash') {
-    const fpm = Math.round(f.td.sink * FT * 60);
-    rows.push(['Touchdown', `${fpm} ft/min · ${fpm < 150 ? 'a greaser' : fpm < 350 ? 'good' : fpm < 600 ? 'firm' : 'hard'}`]);
-    if (onRunway) rows.push(['Off the centreline', `${Math.abs(rc.cross).toFixed(1)} m`]);
-  }
-  rows.push(['Worst reckoning error', `${nm(nav.maxError).toFixed(1)} NM`]);
-  if (f.maxIce > 0.05) rows.push(['Peak airframe ice', `${Math.round(f.maxIce * 100)}%`]);
-  $('dbCap').textContent = cap; $('dbTitle').textContent = title; $('dbText').textContent = text;
-  $('dbStats').innerHTML = rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
-  if (kind !== 'crash' && kind !== 'lost') S.save.log.push({ from: p.a.id, to: p.b.id, kind: p.kind, time: f.elapsed, ok, at: S.save.at });
+/** "Start in the air": from the runway spot placeAt chose, lift the aircraft to cruise over the field on the
+ *  runway heading, high enough to clear whatever lies in the first few kilometres ahead. */
+function placeAloft() {
+  const hdg = ac.heading, h = hdg * D2R, x = ac.pos.x, z = ac.pos.z;
+  let top = groundHeight(x, z);
+  for (let d = 300; d <= 7000; d += 300) top = Math.max(top, groundHeight(x + Math.sin(h) * d, z - Math.cos(h) * d));
+  const alt = Math.max(groundHeight(x, z) + 450, top + 250);
+  ac.placeInAir(x, alt, z, hdg, 54);                       // about 105 knots, cruise power
+  clouds?.resetHistory?.();
+  return { alt, hdg };
+}
+
+/** Make the chosen variant the aircraft in the scene: its model, paint and flight-model numbers.
+ *  The old model's geometry, materials and textures are freed; the weather and the post-processing
+ *  are pointed at the new one (wingtips for the vapour trails, glazing for the rain, exhaust for the shimmer). */
+function selectAircraft(id) {
+  const v = aircraftById(id);
+  if (model && S.plane === v.id) return;
+  S.plane = v.id;
+  if (model) disposeAircraft(model);
+  ac.setSpec(v.spec);
+  model = buildAircraft(v); scene.add(model.root);
+  perf.tag(model.root, 'aircraft');
+  sunShadows.setAircraft(model.root, [model.parts.body], [model.parts.pit]);     // the outside of the aircraft throws the shadow, in either view
+  // Post-processing follows the aircraft as its own moving subject (sharp under motion blur), and
+  // knows where the exhaust ends under the cowl, for the heat shimmer.
+  clouds.fx.subject = model.root;
+  clouds.fx.glass = model.parts.glass;            // rain and frost are drawn on the cockpit glazing itself
+  clouds.fx.exhaust = model.parts.exhaust;
+  clouds.subjBox = null;                          // the subject's cached bounding box belongs to the old model
+  precip.tips = model.parts.wingtips;
+}
+
+async function enterSplash() {
+  S.mode = 'splash'; S.paused = false; S.flight = null;
+  show('splash');
+  // A field in another part of the country: the world is moved there now, behind the loading message, so the
+  // backdrop is the place chosen. The menu stays usable meanwhile, and a later choice overtakes this one.
+  if (!worldHolds(S.opts.field)) { const id = S.opts.field; await ensureWorld(id); if (S.mode !== 'splash' || id !== S.opts.field || !airportById(id)) return; }
+  const a = airportById(S.opts.field);
+  selectAircraft(S.opts.plane);
+  $('where').textContent = REGION.title;
+  stage(a);
+  camState.yaw = ac.heading * D2R + 2.4;
+  $('blurb').textContent = `${a.name}: ${a.blurb} ${SITUATIONS[S.opts.wx].blurb}`;
+  syncModel(); updateCamera(0.016);
+  show('splash');
+}
+
+async function startFlight() {
+  seaSnap = true;
+  if (S.busy) return;
+  S.busy = true;
   persist();
-  show('debrief');
+  if (!worldHolds(S.opts.field)) {                    // flying from a field outside the window: move the world first
+    S.mode = 'splash'; S.paused = false; show('splash');
+    await ensureWorld(S.opts.field);
+    if (!airportById(S.opts.field)) { S.busy = false; return; }
+  }
+  const a = airportById(S.opts.field);
+  selectAircraft(S.opts.plane);
+  stage(a);
+  const rwy = placeAt(a);
+  const air = S.opts.air ? placeAloft() : null;
+  S.flight = { airborne: !!air, stopT: 0, endT: 0, lastTd: null, edgeWarned: 0 };
+  S.mode = 'flying'; S.paused = false; S.timeAccel = 1; S.view = 'chase'; S.frost = 0;
+  syncModel(); updateCamera(0.016);
+  show(null);
+  sound.start();
+  toast('Loading the terrain around the airfield…', 30);
+  stream.peak = 0;
+  // Make sure the ground under the wheels is at full detail before handing over.
+  await dem.loadArea(dem.MAX_Z, ac.pos.x - 1800, ac.pos.z - 1800, ac.pos.x + 1800, ac.pos.z + 1800, 0);
+  await terrain.warm(camera.position, 8000);
+  if (air) toast(`Over ${a.name} at ${(Math.round((air.alt * FT) / 100) * 100).toLocaleString()} feet, heading ${String(Math.round(air.hdg)).padStart(3, '0')}°. You have control. C for the cockpit, Esc for controls.`, 9);
+  else toast(`Runway ${rwy}, ${a.name}. Hold R for power, ease back at ${aircraftById(S.plane).speeds?.vr ?? 55} knots. C for the cockpit, Esc for controls.`, 9);
+  S.busy = false;
+}
+
+function respawn(reason) {
+  const near = nearestAirport(ac.pos.x, ac.pos.z).airport;
+  placeAt(near);
+  S.flight.endT = 0; S.flight.airborne = false; S.flight.stopT = 0;
+  syncModel(); updateCamera(0.016);
+  toast(`${reason} You are back on the runway at ${near.name}.`, 7);
 }
 
 function bindUI() {
   const click = (id, fn) => $(id).addEventListener('click', fn);
-  click('btnFly', () => { sound.start(); enterDispatch(); });
-  click('btnHow', () => { S.helpFrom = 'title'; show('help'); });
-  click('helpClose', () => { if (S.helpFrom === 'pause') show('pause'); else if (S.mode === 'flying') { S.paused = false; show(null); } else show(S.helpFrom || 'title'); });
-  click('dispBack', enterTitle);
-  $('offers').addEventListener('click', (e) => { const i = e.target.dataset?.offer; if (i !== undefined) enterBriefing(S.offers[+i]); });
-  click('cGo', () => {
-    const from = $('cFrom').value, to = $('cTo').value;
-    if (from === to) return;
-    enterBriefing({ from, to, kind: $('cWx').value, hour: +$('cHour').value, seed: 1 + Math.floor(Math.random() * 1e6) });
-  });
-  click('brBack', enterDispatch);
-  click('brGo', () => startFlight());
-  click('dbNext', enterDispatch);
-  click('dbRetry', () => startFlight(S.flight.plan));
+  const opt = (v, t, sel) => `<option value="${v}"${sel ? ' selected' : ''}>${t}</option>`;
+  const fill = () => {
+    for (const p of ['o', 'p']) {
+      // Airfields are grouped by state or region when the data says where they are.
+      const groups = new Map();
+      for (const a of FIELDS) { const g = a.state || ''; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(a); }
+      $(p + 'Field').innerHTML = [...groups].map(([g, list]) => { const o = list.map((a) => opt(a.id, a.name, a.id === S.opts.field)).join(''); return g ? `<optgroup label="${g}">${o}</optgroup>` : o; }).join('');
+      $(p + 'Plane').innerHTML = AIRCRAFT.map((a) => opt(a.id, a.name, a.id === S.opts.plane)).join('');
+      $(p + 'Wx').innerHTML = Object.entries(SITUATIONS).map(([k, v]) => opt(k, v.title, k === S.opts.wx)).join('');
+      $(p + 'Hour').innerHTML = HOURS.map(([h, t]) => opt(h, t, h === S.opts.hour)).join('');
+      $(p + 'Start').value = S.opts.air ? 'air' : 'ground';
+    }
+  };
+  fill();
+  // The flight choices are drop-downs of our own (grouped, searchable when long); the <select>s stay as the values.
+  for (const p of ['o', 'p']) {
+    enhanceSelect($(p + 'Plane'), { describe: (id) => aircraftById(id).blurb });
+    enhanceSelect($(p + 'Field'), { code: true, placeholder: 'Search airfields' });
+    for (const k of ['Wx', 'Hour', 'Start']) enhanceSelect($(p + k));
+  }
+  panel = new FlightPanel();
+  const read = (p) => { S.opts.field = $(p + 'Field').value; S.opts.wx = $(p + 'Wx').value; S.opts.hour = +$(p + 'Hour').value; S.opts.air = $(p + 'Start').value === 'air'; S.opts.plane = $(p + 'Plane').value; };
+  $('oStart').addEventListener('change', () => read('o'));
+  for (const id of ['oField', 'oWx', 'oHour', 'oPlane']) $(id).addEventListener('change', () => { read('o'); enterSplash(); });
+  click('btnFly', () => { read('o'); startFlight(); });
   click('pResume', () => togglePause(false));
-  click('pHelp', () => { S.helpFrom = 'pause'; show('help'); });
-  click('pRestart', () => startFlight(S.flight.plan));
-  click('pAbandon', enterDispatch);
-  for (const [id, key] of [['sGps', 'gps'], ['sSound', 'sound'], ['sInvert', 'invert']]) $(id).addEventListener('change', (e) => { S.save.settings[key] = e.target.checked; applySettings(); persist(); });
-  $('sQuality').addEventListener('change', (e) => { S.save.settings.quality = e.target.value; applySettings(); persist(); });
+  click('pApply', () => { read('p'); S.paused = false; startFlight(); });
+  click('pQuit', () => { fill(); enterSplash(); });
+  for (const [id, key] of [['sSound', 'sound'], ['sInvert', 'invert'], ['sImagery', 'imagery']]) $(id).addEventListener('change', (e) => { S.settings[key] = e.target.checked; applySettings(); persist(); });
+  $('sQuality').addEventListener('change', (e) => { S.settings.quality = e.target.value; applySettings(); persist(); });
+  $('sRes')?.addEventListener('change', (e) => { S.settings.resolution = e.target.value; applySettings(); persist(); });
 
   const flying = () => S.mode === 'flying' && !S.paused;
+  const togglePause = (on) => { if (on) fill(); S.paused = on; show(on ? 'pause' : null); };
   input.on('pause', () => { if (S.mode === 'flying') togglePause(!S.paused); });
-  input.on('help', () => { if (S.mode === 'flying') { S.paused = true; S.helpFrom = 'flight'; show('help'); } });
-  input.on('camera', () => { if (flying()) { S.view = S.view === 'chase' ? 'cockpit' : 'chase'; input.look.yaw = 0; input.look.pitch = 0; } });
-  input.on('flapsDown', () => { if (flying()) { ac.flapTarget = Math.min(1, ac.flapTarget + 0.5); toast(`Flaps ${ac.flapTarget === 1 ? 'full' : 'half'}`, 1.5); } });
-  input.on('flapsUp', () => { if (flying()) { ac.flapTarget = Math.max(0, ac.flapTarget - 0.5); toast(`Flaps ${ac.flapTarget === 0 ? 'up' : 'half'}`, 1.5); } });
-  input.on('timeAccel', () => { if (flying()) { S.timeAccel = S.timeAccel >= 8 ? 1 : S.timeAccel * 2; } });
+  input.on('help', () => { if (S.mode === 'flying') togglePause(!S.paused); });
+  input.on('camera', () => { if (flying()) { S.view = S.view === 'chase' ? 'cockpit' : 'chase'; input.look.yaw = 0; input.look.pitch = 0; input.zoom = input.zoomTarget = 1; } });
+  input.on('timeAccel', () => { if (flying()) S.timeAccel = S.timeAccel >= 16 ? 1 : S.timeAccel * 2; });
   input.on('autopilot', () => {
     if (!flying()) return;
     if (!ap.on && ac.onGround) { toast('Autopilot is for the air.', 2); return; }
     ap.on = !ap.on;
     if (ap.on) { ap.hdg = Math.round(ac.heading); ap.alt = Math.round((ac.pos.y * FT) / 100) * 100 / FT; toast('Autopilot holding heading and altitude. A/D and W/S adjust.', 4); } else toast('Autopilot off. You have control.', 2);
   });
-  input.on('tune', (shift) => { if (flying()) { const s = nav.tuneNext(shift ? -1 : 1); toast(`Radio compass tuned to ${s.name} (${s.id})`, 2.5); } });
   input.on('chart', () => { if (flying()) toggleChart(); });
-  input.on('gps', () => { if (flying()) { S.save.settings.gps = !S.save.settings.gps; applySettings(); persist(); toast(S.save.settings.gps ? 'GPS assist on: true position shown on the chart.' : 'GPS assist off. Compass and clock only.', 3); } });
-  input.on('weatherOverlay', () => { if (flying()) { chart.showWx = !chart.showWx; $('chartWx').classList.toggle('on', chart.showWx); } });
+  input.on('wxPanel', () => { if (flying()) toggleWxPanel(); });
+  input.on('debug', () => { if (flying()) toggleDebugPanel(); });
+  click('mapBtn', () => { if (flying()) toggleChart(); });
+  click('menuBtn', () => { if (S.mode === 'flying') togglePause(true); });
+  bindWeatherPanel();
+  // After any click or change in the HUD and its panels, hand the keyboard back to the aircraft.
+  for (const id of ['hud', 'wxPanel', 'dbgPanel', 'chartPanel']) {
+    $(id).addEventListener('click', (e) => e.target.closest('button, summary')?.blur());
+    $(id).addEventListener('change', (e) => e.target.blur());
+  }
 
   click('chartClose', toggleChart);
   click('chartWx', () => { chart.showWx = !chart.showWx; $('chartWx').classList.toggle('on', chart.showWx); });
-  click('chartCentre', () => { chart.cx = nav.dr.x; chart.cz = nav.dr.z; });
+  click('chartCentre', () => { chart.cx = ac.pos.x; chart.cz = ac.pos.z; });
   const cc = $('chart');
   let drag = false;
   cc.addEventListener('pointerdown', (e) => { drag = true; cc.setPointerCapture(e.pointerId); });
@@ -325,77 +454,240 @@ function bindUI() {
   cc.addEventListener('wheel', (e) => { chart.zoom(e.deltaY > 0 ? 0.87 : 1.15, cc.clientWidth, cc.clientHeight); e.preventDefault(); }, { passive: false });
 }
 
-function togglePause(on) { S.paused = on; show(on ? 'pause' : null); }
 function toggleChart() {
   S.chartOpen = !S.chartOpen; $('chartPanel').hidden = !S.chartOpen;
   document.body.classList.toggle('chart-open', S.chartOpen);
-  if (S.chartOpen) { const c = $('chart'); chart.fit(c.clientWidth, c.clientHeight, S.flight.plan.route, 0.3); }
+  if (S.chartOpen) { chart.cx = ac.pos.x; chart.cz = ac.pos.z; chart.scale = 0.0035; }
+}
+
+// ------------------------------------------------------------------ weather panel and debug tools
+
+/** Stage a weather system around the aircraft, right now, keeping the time of day. */
+/** Change the weather around the aircraft: at once, or over `seconds` when the weather model can blend (transitionTo). */
+function setWeather(kind, seconds = S.settings.wxOver || 0) {
+  const h = ac.heading * D2R, far = 100000;
+  const route = { ax: ac.pos.x, az: ac.pos.z, bx: ac.pos.x + Math.sin(h) * far, bz: ac.pos.z - Math.cos(h) * far };
+  S.opts.wx = kind;
+  if (seconds > 0 && weather.transitionTo) weather.transitionTo(kind, route, seconds);
+  else { weather.setup(kind, route, weather.hour, 1 + Math.floor(Math.random() * 1e6)); clouds.resetHistory?.(); seaSnap = true; }
+  syncWeatherPanel();
+}
+
+// The Weather panel (V, or the chip at the top left) is part of the game: choose a weather system, how long
+// the change takes and the time of day, and read what the weather is doing where you are. Everything else,
+// the overrides, the effect sliders and the frame times, lives in the debug tools (the backquote key).
+
+let wxChange = null;          // a weather change in progress: { to, secs, left, flight }. The panel keeps its own clock for it.
+const wxKind = () => (wxChange ? wxChange.to : SITUATIONS[weather.kind] ? weather.kind : S.opts.wx);
+
+function setPanel(id, open) {
+  $(id).hidden = !open;
+  if (id === 'wxPanel') $('wxBtn').setAttribute('aria-expanded', open);
+}
+function toggleWxPanel() {
+  const open = $('wxPanel').hidden;
+  setPanel('wxPanel', open);
+  if (open) { syncWeatherPanel(); updateWeatherSummary(); }
+}
+function toggleDebugPanel() {
+  const open = $('dbgPanel').hidden;
+  setPanel('dbgPanel', open);
+  perf.enabled = open;                    // GPU pass timings (window.DR.perf.passes) are only taken while the debug panel is open
+  if (open) { syncWeatherPanel(); updateWeatherReadout(); updateDebugReadout(); }
+}
+
+/** The player's choice of weather: over S.settings.wxOver seconds when the weather model can blend. */
+function chooseWeather(kind) {
+  const secs = S.settings.wxOver || 0;
+  wxChange = secs > 0 && weather.transitionTo ? { to: kind, secs, left: secs, flight: S.flight } : null;
+  setWeather(kind, secs);
+}
+
+function syncWeatherPanel() {
+  const kind = wxKind(), over = S.settings.wxOver || 0;
+  for (const b of $('wxPresets').children) { const on = b.dataset.kind === kind; b.classList.toggle('on', on); b.setAttribute('aria-checked', on); }
+  for (const b of $('wxOver').children) { const on = +b.dataset.secs === over; b.classList.toggle('on', on); b.setAttribute('aria-checked', on); }
+  $('wxBlurb').textContent = SITUATIONS[kind]?.blurb || '';
+  $('wxProgress').hidden = !wxChange;
+  $('wHour').value = weather.hour; $('wCover').value = weather.ctl.cover; $('wPrecip').value = weather.ctl.precip;
+  $('wVis').value = Math.round(weather.haze / 1000); $('wTemp').value = weather.tAnom;
+  $('wWindOn').checked = !!weather.ctl.wind;
+  labelWeatherPanel();
+}
+function labelWeatherPanel() {
+  $('wHourV').textContent = fmtHour(+$('wHour').value); $('wCoverV').textContent = `${Math.round($('wCover').value * 100)}%`;
+  $('wPrecipV').textContent = `${Math.round($('wPrecip').value * 100)}%`; $('wVisV').textContent = `${$('wVis').value} km`;
+  $('wTempV').textContent = `${$('wTemp').value > 0 ? '+' : ''}${$('wTemp').value}°C`;
+  $('wWindV').textContent = $('wWindOn').checked ? `${String($('wDir').value).padStart(3, '0')}° / ${$('wSpd').value} kt` : 'from the weather';
+}
+
+function bindWeatherPanel() {
+  // The list is built from SITUATIONS, so it grows as weather systems are added.
+  $('wxPresets').innerHTML = Object.entries(SITUATIONS).map(([k, v]) => `<button role="radio" data-kind="${k}">${v.title}</button>`).join('');
+  $('wxPresets').addEventListener('click', (e) => { const k = e.target.closest('button')?.dataset.kind; if (k) chooseWeather(k); });
+  $('wxOver').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { S.settings.wxOver = +b.dataset.secs; persist(); syncWeatherPanel(); } });
+  let bakeT = 0;
+  const rebake = () => { clearTimeout(bakeT); bakeT = setTimeout(() => { weather.bakeAll(); clouds.resetHistory?.(); }, 120); };
+  $('wHour').addEventListener('input', () => { weather.hour = +$('wHour').value; labelWeatherPanel(); rebake(); });
+  // Debug overrides.
+  const apply = () => {
+    weather.ctl.cover = +$('wCover').value; weather.ctl.precip = +$('wPrecip').value;
+    weather.haze = +$('wVis').value * 1000; weather.tAnom = +$('wTemp').value;
+    if ($('wWindOn').checked) {
+      // Direction is where the wind comes from; the vector is where the air goes.
+      const d = +$('wDir').value * D2R, sp = +$('wSpd').value / 1.944;
+      weather.ctl.wind = { x: -Math.sin(d) * sp, z: Math.cos(d) * sp };
+    } else weather.ctl.wind = null;
+    labelWeatherPanel(); rebake();
+  };
+  for (const id of ['wCover', 'wPrecip', 'wVis', 'wTemp', 'wDir', 'wSpd', 'wWindOn']) $(id).addEventListener('input', apply);
+  $('wStrike').addEventListener('click', () => {
+    const h = ac.heading * D2R, d = 2500 + Math.random() * 3500, a = h + (Math.random() - 0.5) * 1.2;
+    weather.flashes.push({ x: ac.pos.x + Math.sin(a) * d, z: ac.pos.z - Math.cos(a) * d, y: Math.max(wx.col?.base || 1200, ac.pos.y - 300), ground: true });
+  });
+  $('wHere').addEventListener('click', () => { wxChange = null; setWeather(wxKind(), 0); });
+  $('wxClose').addEventListener('click', toggleWxPanel);
+  $('dbgClose').addEventListener('click', toggleDebugPanel);
+  $('wxBtn').addEventListener('click', toggleWxPanel);
+  bindFxPanel();
+}
+
+// Camera and lens effects in the debug panel: [key in clouds.fx, label, slider maximum]. 1 is each effect's
+// natural strength (bloom is a share of the image), 0 switches it off.
+const FX_CONTROLS = [
+  ['ssr', 'Water reflections', 1], ['ao', 'Ambient occlusion', 2], ['taa', 'Temporal anti-aliasing', 1], ['motionBlur', 'Motion blur', 4],
+  ['dof', 'Depth of field', 8], ['bloom', 'Bloom', 0.4], ['rays', 'Sun rays', 3], ['flare', 'Lens flare', 3], ['streak', 'Light streaks', 5],
+  ['halation', 'Halation', 3], ['glare', 'Veiling glare', 3], ['dirt', 'Lens dirt', 6], ['mist', 'Mist halos', 3], ['heat', 'Exhaust heat shimmer', 10],
+  ['distort', 'Lens distortion', 4], ['chroma', 'Colour fringing', 3], ['vignette', 'Vignette', 3], ['grain', 'Film grain', 3],
+  ['filmic', 'Highlight roll-off', 2], ['wb', 'White balance', 2], ['clarity', 'Local contrast', 3], ['grade', 'Colour grade', 2], ['sharpen', 'Sharpening', 1.4],
+];
+function bindFxPanel() {
+  const fx = clouds.fx, saved = S.settings.fx, defaults = Object.fromEntries(FX_CONTROLS.map(([k]) => [k, fx[k]]));
+  $('fxControls').innerHTML = FX_CONTROLS.map(([k, label, max]) =>
+    `<label>${label} <output id="fxV_${k}"></output><input type="range" data-fx="${k}" min="0" max="${max}" step="${max > 0.5 ? 0.05 : 0.005}" /></label>`).join('');
+  const show = () => {
+    for (const el of $('fxControls').querySelectorAll('input')) { const k = el.dataset.fx; el.value = fx[k]; $('fxV_' + k).textContent = fx[k] === 0 ? 'off' : (+fx[k]).toFixed(2); }
+    $('fxExp').value = S.settings.exposure; $('fxExpV').textContent = '×' + (+S.settings.exposure).toFixed(2);
+  };
+  const set = (k, v) => { fx[k] = v; if (v === defaults[k]) delete saved[k]; else saved[k] = v; };
+  for (const [k] of FX_CONTROLS) if (typeof saved[k] === 'number') fx[k] = saved[k];
+  $('fxControls').addEventListener('input', (e) => { const k = e.target.dataset?.fx; if (k) { set(k, +e.target.value); show(); persist(); } });
+  $('fxControls').addEventListener('change', (e) => e.target.blur());
+  $('fxExp').addEventListener('input', (e) => { S.settings.exposure = +e.target.value; show(); persist(); });
+  $('fxExp').addEventListener('change', (e) => e.target.blur());
+  $('fxReset').addEventListener('click', (e) => { for (const [k] of FX_CONTROLS) set(k, defaults[k]); S.settings.exposure = 1; show(); persist(); e.target.blur(); });
+  $('fxOff').addEventListener('click', (e) => { for (const [k] of FX_CONTROLS) set(k, 0); show(); persist(); e.target.blur(); });
+  $('fxDebug').addEventListener('change', (e) => { clouds.post.debug = e.target.value || null; e.target.blur(); });
+  show();
+}
+
+function updateWeatherReadout() {
+  const c = wx.col;
+  if (!c) return;
+  const from = (Math.atan2(-wx.x, wx.z) / D2R + 360) % 360, kt = Math.hypot(wx.x, wx.z) * 1.944;
+  $('wxNow').textContent =
+    `cloud ${Math.round(c.cov * 100)}%  base ${(Math.round((c.base * FT) / 100) * 100).toLocaleString()} ft  tops ${(Math.round((c.top * FT) / 500) * 500).toLocaleString()} ft\n` +
+    `${wx.snow ? 'snow' : 'rain'} ${Math.round(wx.precip * 100)}%${wx.hail > 0.05 ? `  hail ${Math.round(wx.hail * 100)}%` : ''}  vis ${(wx.visibility / 1000).toFixed(wx.visibility < 10000 ? 1 : 0)} km\n` +
+    `wind ${String(Math.round(from)).padStart(3, '0')}° / ${Math.round(kt)} kt  air ${Math.round(wx.temp)}°C  bumps ${Math.round(wx.turb * 100)}%${wx.cloud > 0 ? '  in cloud' : ''}`;
+}
+
+/** The Weather panel's account of the weather at the aircraft, in plain words, and the progress of a change. */
+const wxText = {};
+function updateWeatherSummary() {
+  const w = weatherWords(wx, ac.pos.y);
+  if (!w) return;
+  const put = (id, text) => { if (wxText[id] !== text) { wxText[id] = text; $(id).textContent = text; } };
+  put('wxHead', w.head); put('wxCloud', w.cloud); put('wxVis', w.vis); put('wxWind', w.wind); put('wxFallLbl', w.fallLabel); put('wxFall', w.fall); put('wxTemp', w.air);
+  if (document.activeElement !== $('wHour')) { $('wHour').value = weather.hour; put('wHourV', fmtHour(weather.hour)); }
+  if (wxChange) put('wxProgress', `${SITUATIONS[wxChange.to].title} in ${fmtLeft(wxChange.left)}`);
+}
+const fmtLeft = (secs) => (secs >= 90 ? `${Math.round(secs / 60)} min` : secs >= 45 ? '1 min' : `${Math.max(5, Math.ceil(secs / 5) * 5)} s`);
+
+/** The debug tools' frame times, and GPU time per render pass when the renderer reports it (DR.perf.passes). */
+const meter = new FrameMeter();
+function updateDebugReadout() {
+  $('dbgPerf').textContent = meter.text(renderer.domElement)
+    + `\ndrawn at ${clouds.w}×${clouds.h}, ${Math.round(res.scale * 100)}%\n  ${res.enabled ? `auto for ${res.target} fps, by ${res.by === 'gpu' ? 'GPU time' : 'frame times'}` : 'fixed'}`
+    + `\nuploads: ${uploads.last.pieces}, ${(uploads.last.bytes / 1024).toFixed(0)} KB, ${uploads.last.ms.toFixed(2)} ms${uploads.last.late ? ' (late frame)' : ''}`
+    + `\n  waiting ${terrain.done.length + terrain.trees.farDone.length}, building ${terrain.flying + terrain.trees.farFlying}, tiles on order ${dem.pendingCount()}`
+    + '\n' + perf.cpuText();
+  const passes = window.DR?.perf?.passes, rows = passes ? passRows(passes) : '';
+  if (wxText.passes !== rows) { wxText.passes = rows; $('dbgPasses').innerHTML = rows; $('dbgPasses').hidden = !rows; }
 }
 
 // ------------------------------------------------------------------ simulation
 
 function simulate(dt) {
   const f = S.flight;
+  perf.cpuBegin('weather');
   weather.update(dt);
   const gy = groundHeight(ac.pos.x, ac.pos.z);
   weather.sample(ac.pos.x, ac.pos.y, ac.pos.z, gy, wx);
+  perf.cpuEnd();
 
   // Controls: pilot, or autopilot steered by the same keys.
-  const inv = S.save.settings.invert ? -1 : 1;
+  const inv = S.settings.invert ? -1 : 1;
   if (ap.on) {
     ap.hdg = (ap.hdg + input.raw.roll * 22 * dt / S.timeAccel + 360) % 360;
     ap.alt = clamp(ap.alt + input.raw.pitch * inv * 55 * dt / S.timeAccel, 100, 7500);
     let he = ap.hdg - ac.heading; he = ((he + 540) % 360) - 180;
     const bankT = clamp(he * 1.6, -25, 25) * D2R;
     ctl.roll = clamp((bankT - ac.bank) * 2.2, -0.8, 0.8);
-    const vsT = clamp((ap.alt - ac.pos.y) * 0.02, ac.ias < 45 ? -6 : -7, ac.ias < 48 ? 0 : 6);
+    const vsT = clamp((ap.alt - ac.pos.y) * 0.02, ac.ias < 34 ? -4 : -5, clamp((ac.ias - 33) * 0.4, 0, 3.6));
     ctl.pitch = clamp((vsT - ac.vel.y) * 0.25, -0.7, 0.7);
     ctl.yaw = input.yaw;
     if (ac.onGround || ac.stall > 0.6) { ap.on = false; toast('Autopilot disconnected.', 3); }
   } else { ctl.pitch = input.pitch * inv; ctl.roll = input.roll; ctl.yaw = input.yaw; }
   ac.throttle = clamp(ac.throttle + input.raw.throttle * 0.55 * dt / S.timeAccel, 0, 1);
-  ac.brake = input.brake;
+  // No systems to manage: the tank never empties, the wheel brakes come on by themselves at idle on the
+  // ground, and the flaps follow airspeed (out for a slow approach, in again as power comes on).
+  ac.fuel = ac.spec.fuelCap; ac.ice = 0;
+  ac.brake = Math.max(input.brake, ac.onGround && ac.throttle < 0.03 ? 1 : 0);
+  if (ac.throttle < 0.45 && ac.ias < 40 && !ac.onGround) ac.flapTarget = ac.ias < 35 ? 1 : 0.5;
+  else if (ac.throttle > 0.6 || ac.ias > 45 || ac.onGround) ac.flapTarget = 0;
 
   // Fixed-step flight physics with gusts layered on the mean wind.
-  let n = Math.min(Math.round(dt / STEP), 80);
+  let n = Math.min(Math.round(dt / STEP), 200);            // (200: sixteen times real time holds down to 10 frames a second)
   const gust = wx.turb * 7.5;
   while (n-- > 0) {
     const t = ac.t;
     env.wind.set(wx.x + gust * (noise1(t * 0.9, 1) + 0.5 * noise1(t * 2.7, 4)), wx.y + gust * 0.8 * (noise1(t * 1.1, 2) + 0.5 * noise1(t * 3.1, 5)), wx.z + gust * (noise1(t * 0.8, 3) + 0.5 * noise1(t * 2.3, 6)));
     env.turb = wx.turb;
     ac.step(STEP, ctl, env);
+    if (!ac.crashed && ac.agl < 600 && cities.hit(ac.pos)) ac.crashed = cities.lastHit === 'bridge' ? 'Flew into a bridge' : 'Flew into a building';
     if (ac.crashed) break;
   }
 
-  // Airframe icing
-  if (wx.icing > 0) ac.ice = Math.min(1, ac.ice + wx.icing * dt * 0.0045);
-  else ac.ice = Math.max(0, ac.ice - dt * (wx.temp > 1 ? 0.012 : 0.0006));
-  f.maxIce = Math.max(f.maxIce, ac.ice);
-  if (ac.ice > 0.12 && !f.iceWarned) { f.iceWarned = true; toast('Ice is building on the wings. Get out of cloud or down into warmer air.', 7); }
-  if (ac.ice < 0.03) f.iceWarned = false;
-  if (ac.fuel <= 0 && !f.fuelWarned) { f.fuelWarned = true; toast('Fuel exhausted. You are a glider now.', 6); }
-
-  f.elapsed += dt;
-  nav.update(dt, ac, f.elapsed);
+  // Frost on the glass is a visual only: it creeps in while flying through freezing cloud.
+  S.frost += ((wx.icing > 0 ? 0.55 : 0) - S.frost) * Math.min(1, dt * (wx.icing > 0 ? 0.03 : wx.temp > 1 ? 0.3 : 0.08));   // melts quickly in warm air
+  // Rain on the airframe (a sheen on the paint, see animateAircraft): a few seconds of rain or a minute in cloud wets it;
+  // the airflow dries it in about a minute of flight, standing still in mild air it takes several.
+  { const rain = wx.precip * (1 - (wx.snowMix ?? (wx.snow ? 1 : 0))), to = rain > 0.03 ? 1 : wx.cloud > 0 && wx.temp > 0 ? 0.6 : 0;
+    if (S.acWetFor !== f) { S.acWetFor = f; S.acWet = rain > 0.03 ? 1 : 0; }               // a new flight: it has stood out in whatever is falling
+    const w = S.acWet;
+    S.acWet = clamp(w + (to > w ? dt * (0.05 + 0.4 * rain) : -dt * (1 / 300 + ac.tas / 4200) * clamp(0.4 + wx.temp / 15, 0.2, 1.6)), 0, Math.max(to, w)); }
 
   // Lightning
   for (const fl of weather.flashes) {
     const d = Math.hypot(fl.x - ac.pos.x, fl.z - ac.pos.z);
-    if (d < 110000) { precip.strike(fl, Math.max(0, height(fl.x, fl.z, 1))); if (d < 45000) sound.thunder(d); if (d < 9000) clouds.uFlashScreen.value = 0.35 * (1 - d / 9000); }
+    if (d < 110000) { precip.strike(fl, groundHeight(fl.x, fl.z)); if (d < 45000) sound.thunder(d); if (d < 9000) clouds.uFlashScreen.value = 0.35 * (1 - d / 9000); }
   }
   weather.flashes.length = 0;
 
-  // Flight progress
+  // Touchdowns, crashes, wandering off the map
   if (ac.maxAgl > 15) f.airborne = true;
   if (ac.touchdown && ac.touchdown !== f.lastTd) {
     f.lastTd = ac.touchdown;
-    if (f.airborne && !ac.crashed) { f.td = ac.touchdown; sound.chirp(clamp(f.td.sink / 5, 0, 1)); toast(`Touchdown at ${Math.round(f.td.sink * FT * 60)} ft/min.`, 3); }
+    if (f.airborne && !ac.crashed) { sound.chirp(clamp(ac.touchdown.sink / 5, 0, 1), ac.surface); toast(`Touchdown at ${Math.round(ac.touchdown.sink * FT * 60)} ft/min.`, 3); }
   }
-  if (ac.crashed) { if (!f.endT) { f.endT = 1.4; sound.crash(); clouds.uFlashScreen.value = 0.5; } }
-  else if (f.airborne && ac.onGround && ac.groundSpeed < 1 && ac.throttle < 0.15) { f.stopT += dt / S.timeAccel; if (f.stopT > 2.2) return finishFlight('landed'); } else f.stopT = 0;
+  if (ac.crashed) { if (!f.endT) { f.endT = 2.4; sound.crash(); clouds.uFlashScreen.value = 0.5; toast(`${ac.crashed}.`, 3); } }
+  else if (f.airborne && ac.onGround && ac.groundSpeed < 1 && ac.throttle < 0.15) {
+    f.stopT += dt / S.timeAccel;
+    if (f.stopT > 2) { const near = nearestAirport(ac.pos.x, ac.pos.z); toast(near.dist < 1800 ? `Down and stopped at ${near.airport.name}.` : `Down in one piece, ${Math.round(near.dist / NM)} NM from ${near.airport.name}.`, 6); f.airborne = false; ac.maxAgl = 0; f.stopT = 0; }
+  } else f.stopT = 0;
   const edge = Math.max(Math.abs(ac.pos.x), Math.abs(ac.pos.z)) - LAND_HALF;
-  if (edge > 0 && S.time - f.edgeWarned > 20) { f.edgeWarned = S.time; toast('You are off the edge of the chart. Turn back.', 6); }
-  if (edge > 40000) finishFlight('lost');
+  if (edge > 0 && S.time - f.edgeWarned > 20) { f.edgeWarned = S.time; toast('You are leaving the charted area. Turn back.', 6); }
+  if (edge > 15000) respawn('You flew off the edge of the chart.');
 }
 
 function syncModel() {
@@ -403,39 +695,37 @@ function syncModel() {
   model.root.quaternion.copy(ac.quat);
 }
 
-function updateCamera(dt, snap = false) {
-  const cs = camState;
+function updateCamera(dt) {
+  input.zoom += (input.zoomTarget - input.zoom) * (dt <= 0 ? 1 : 1 - Math.exp(-dt * 9));     // wheel zoom glides instead of stepping
+  const cs = camState, parts = model.parts;
   if (S.mode !== 'flying') {
-    // Slow orbit of the parked aircraft behind the menus.
-    cs.yaw += dt * 0.05;
-    const d = 30, y = 5.5;
+    // Slow orbit of the parked aircraft behind the splash screen.
+    cs.yaw += dt * 0.045;
+    const d = 21, y = 3.8;
     camera.position.set(ac.pos.x - Math.sin(cs.yaw) * d, ac.pos.y + y, ac.pos.z + Math.cos(cs.yaw) * d);
     camera.up.set(0, 1, 0);
-    camera.lookAt(v1.copy(ac.pos).add(v2.set(Math.cos(cs.yaw) * 6, 2.5, Math.sin(cs.yaw) * 6)));
+    camera.lookAt(v1.copy(ac.pos).add(v2.set(Math.cos(cs.yaw) * 4.2, 1.9, Math.sin(cs.yaw) * 4.2)));
     camera.fov = 50; camera.near = 1.2;
-    model.parts.body.visible = true; model.parts.pit.visible = false;
+    parts.body.visible = true; parts.pit.visible = false;
   } else if (S.view === 'cockpit') {
-    camera.position.copy(v1.set(0, 0.62, -1.3).applyQuaternion(ac.quat)).add(ac.pos);
-    e1.set(-input.look.pitch * 0.8, input.look.yaw, 0);
-    camera.quaternion.copy(ac.quat).multiply(q1.setFromEuler(e1));
-    camera.fov = 68 / Math.sqrt(input.zoom); camera.near = 0.3;
-    model.parts.body.visible = false; model.parts.pit.visible = true;
+    cockpitCamera(camera, ac, input, dt, wx.turb);
+    parts.body.visible = false; parts.pit.visible = true;
   } else {
     // Chase: follow the heading with a little lag, stay level with the horizon.
     const hdg = ac.heading * D2R;
     let dy = hdg - cs.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy));
-    const k = snap ? 1 : 1 - Math.exp(-dt * 3.2);
+    const k = dt <= 0 ? 1 : 1 - Math.exp(-dt * 3.2);
     cs.yaw += dy * k; cs.pitch += (ac.pitch * 0.55 - cs.pitch) * k;
     const yaw = cs.yaw - input.look.yaw, pit = clamp(cs.pitch - 0.2 - input.look.pitch, -1.4, 1.4);
-    const dist = 26 * input.zoom;
+    const dist = 18 * input.zoom;
     v1.set(Math.sin(yaw) * Math.cos(pit), Math.sin(pit), -Math.cos(yaw) * Math.cos(pit));   // view direction
-    camera.position.copy(ac.pos).addScaledVector(v1, -dist); camera.position.y += 2.5;
+    camera.position.copy(ac.pos).addScaledVector(v1, -dist); camera.position.y += 1.8;
     const floor = groundHeight(camera.position.x, camera.position.z) + 1.5;
     if (camera.position.y < floor) camera.position.y = floor;
     camera.up.set(0, 1, 0);
-    camera.lookAt(v2.copy(ac.pos).addScaledVector(v1, 12).setY(ac.pos.y + 2.5 + v1.y * 12));
+    camera.lookAt(v2.copy(ac.pos).addScaledVector(v1, 8.5).setY(ac.pos.y + 1.8 + v1.y * 8.5));
     camera.fov = 58; camera.near = 1.2;
-    model.parts.body.visible = true; model.parts.pit.visible = false;
+    parts.body.visible = true; parts.pit.visible = false;
   }
   camera.updateProjectionMatrix();
   camera.updateMatrixWorld();
@@ -443,94 +733,145 @@ function updateCamera(dt, snap = false) {
   cs.prev.copy(camera.position);
 }
 
-const hs = { ias: 0, alt: 0, vs: 0, heading: 0, pitch: 0, bank: 0, adf: null, station: '', apOn: false, apHdg: 0, throttle: 0, power: 0, fuel: 1, flap: 0, elapsed: 0 };
-let uiT = 0, chartT = 0;
+let uiT = 0, chartT = 0, panel = null, pitShown = false, placeShown = '', warnShown = '';
 
 function updateHud(dt) {
-  const f = S.flight, p = f.plan;
-  hs.ias = ac.ias; hs.alt = ac.pos.y; hs.vs = ac.vel.y; hs.heading = ac.heading; hs.pitch = ac.pitch; hs.bank = ac.bank;
-  hs.adf = nav.adf(ac, S.time); hs.station = nav.station?.id || '---'; hs.apOn = ap.on; hs.apHdg = ap.hdg;
-  hs.throttle = ac.throttle; hs.power = ac.thrustLevel; hs.fuel = ac.fuel / SPEC.fuelCap; hs.flap = ac.flap; hs.elapsed = f.elapsed;
-  hud.draw(hs);
-
+  updateStream(dt);
+  const t0 = performance.now();
+  const pit = S.view === 'cockpit';
+  if (pit !== pitShown) { pitShown = pit; document.body.classList.toggle('pit', pit); }      // in the cockpit the panel folds to a strip at the top, clear of the dials
+  panel.update(dt, { ac, wx, ap, accel: S.timeAccel, magVar: REGION.magVar, hour: weather.hour, flight: S.flight, running: !S.paused && !S.busy, pit });
+  if (weather.trans && !wxChange) wxChange = { to: weather.kind, secs: weather.trans.seconds, left: weather.trans.remaining, flight: S.flight };   // a change started elsewhere (debug handle, evolving weather)
+  if (wxChange && !S.paused) {
+    wxChange.left = weather.trans ? weather.trans.remaining : wxChange.left - dt * S.timeAccel;        // the weather model's own clock when it has one
+    if (wxChange.left <= 0 || wxChange.flight !== S.flight || (weather.transitionTo && !weather.trans)) { wxChange = null; syncWeatherPanel(); }
+  }
   if ((uiT -= dt) <= 0) {
     uiT = 0.25;
-    $('strip').innerHTML = `<b>${p.a.id} → ${p.b.id}</b> ${p.b.name} <span class="dim">· ${p.sit.title}</span><br>` +
-      `PLAN  steer <b>${fmtHdg(p.wc.heading)}</b> · ${fmtTime(p.ete)} · ${p.cruiseFt.toLocaleString()} ft<br>` +
-      `<span class="dim">HDG</span> <b>${fmtHdg(ac.heading)}</b>  <span class="dim">OAT</span> ${Math.round(wx.temp)}°C  <span class="dim">LOCAL</span> ${fmtHour(weather.hour)}`;
-    const st = [];
-    if (S.timeAccel > 1) st.push(`<span class="on">TIME ×${S.timeAccel}</span>`);
-    if (ap.on) st.push(`<span class="on">AP</span> HDG ${fmtHdg(ap.hdg)} · ALT ${(Math.round((ap.alt * FT) / 100) * 100).toLocaleString()}`);
-    if (ac.ice > 0.05) st.push(`<span class="on">ICE ${Math.round(ac.ice * 100)}%</span>`);
-    if (ac.brake > 0.5 && ac.onGround) st.push('BRAKES');
-    if (S.save.settings.gps) st.push('<span class="dim">GPS ASSIST</span>');
-    if (wx.cloud > 0) st.push('<span class="dim">IN CLOUD</span>');
-    st.push(`<span class="dim">ADF</span> ${nav.station?.id || '---'}${hs.adf === null ? ' no signal' : ''}`);
-    $('status').innerHTML = st.join('<br>');
-    const warn = [];
-    if (ac.stall > 0.45 && !ac.onGround) warn.push('STALL');
-    else if (!ac.onGround && ac.agl < 220 && ac.vel.y < -14) warn.push('PULL UP');
-    if (ac.crashed) warn.length = 0;
-    $('warn').textContent = warn.join('\n');
+    const place = `<b>${SITUATIONS[wxKind()].title}</b>${wxChange ? ` <span class="dim">in ${fmtLeft(wxChange.left)}</span>` : ''}<span class="sep"> · </span><span class="num">${fmtHour(weather.hour)}</span>`;
+    if (place !== placeShown) { placeShown = place; $('place').innerHTML = place; }
+    if (!$('wxPanel').hidden) updateWeatherSummary();
+    if (!$('dbgPanel').hidden) { updateWeatherReadout(); updateDebugReadout(); }
+    const warn = ac.crashed || ac.onGround ? '' : ac.stall > 0.45 ? 'STALL' : ac.agl < 220 && ac.vel.y < -14 ? 'PULL UP' : '';
+    if (warn !== warnShown) { warnShown = warn; $('warn').textContent = warn; }
   }
   if (S.chartOpen && (chartT -= dt) <= 0) {
     chartT = 0.2;
     const c = $('chart'), pr = Math.min(devicePixelRatio || 1, 2), w = c.clientWidth, h = c.clientHeight;
     if (c.width !== Math.round(w * pr) || c.height !== Math.round(h * pr)) { c.width = Math.round(w * pr); c.height = Math.round(h * pr); }
     const g = c.getContext('2d'); g.setTransform(pr, 0, 0, pr, 0, 0);
-    chart.draw(g, w, h, { route: p.route, nav, ac, gps: S.save.settings.gps, weather, lop: nav.lop(ac) });
-    $('chartInfo').textContent = `since fix ${fmtTime(nav.sinceFix)} · ${nm(nav.distSinceFix).toFixed(0)} NM run`;
+    chart.draw(g, w, h, { ac, weather });
+    $('chartInfo').textContent = `${Math.round(nearestAirport(ac.pos.x, ac.pos.z).dist / NM)} NM from ${nearestAirport(ac.pos.x, ac.pos.z).airport.name}`;
   }
+  meter.frame(performance.now() - t0);
 }
 
 let last = performance.now();
 function loop(now) {
   requestAnimationFrame(loop);
   const dt = Math.min((now - last) / 1000, 0.1); last = now;
-  tick(dt);
+  tick(dt, true);
 }
 
-function tick(dt) {
+/** One frame. shown: it is one of the browser's own frames (not a test stepping the game by hand through DR.tick),
+ *  so the time since the last one says something about the frame rate. */
+function tick(dt, shown = false) {
+  if (S.moving) return;                               // the window of the world is being moved: see loadWorld
+  // Frame accounting (render/perf.js: main-thread time per stage, for the debug panel) and the frame's budget
+  // for uploads to the graphics card (render/budget.js), which every streaming module draws on.
+  const frameMs = perf.frameBegin();
+  uploads.open = S.busy; uploads.begin(shown ? frameMs : 0);
   S.time += dt;
   input.update(dt);
   input.enabled = S.mode === 'flying';
-  const flying = S.mode === 'flying' && !S.paused;
+  const flying = S.mode === 'flying' && !S.paused && !S.busy;
 
+  perf.cpuBegin('simulation');
   if (flying) {
-    if (S.flight.endT > 0) { S.flight.endT -= dt; if (S.flight.endT <= 0) { finishFlight('crash'); } }
+    if (S.flight.endT > 0) { S.flight.endT -= dt; if (S.flight.endT <= 0) respawn('That one will need a new aeroplane.'); }
     else simulate(dt * S.timeAccel);
-  } else if (S.mode !== 'flying') {
-    weather.update(dt);
+  } else {
+    if (S.mode === 'splash') weather.update(dt);
     weather.sample(ac.pos.x, ac.pos.y, ac.pos.z, groundHeight(ac.pos.x, ac.pos.z), wx);
   }
-  if (S.mode === 'loading') return;
+  perf.cpuEnd();
 
   syncModel();
   updateCamera(dt);
-  ENV.uTime.value = S.time; ENV.uTAnom.value = weather.tAnom;
+  ENV.uTime.value = S.time; ENV.uTAnom.value = weather.tAnom; ENV.uWind.value = Math.hypot(wx.x, wx.z);
+  // The state of open water: from the wind, the kind of weather, and any heavy rain overhead. It builds and settles over
+  // half a minute (longer through a slow change of weather), so a passing squall raises the lakes gradually.
+  { const w = ENV.uWind.value, seaT = Math.min(1, Math.max(Math.min(1, Math.max(0, (w - 5) / 11)), SEA_STATE[weather.kind] || 0, 0.8 * wx.precip));
+    ENV.uSea.value = S.mode === 'flying' && dt > 0 && !seaSnap ? ENV.uSea.value + (seaT - ENV.uSea.value) * Math.min(1, dt / Math.max(30, 0.6 * (weather.trans?.remaining || 0))) : seaT; seaSnap = false; }
+  // the ground's weather (ENV.uWet is set by the weather itself)
+  ENV.uSnow.value = weather.snowpack; ENV.uRain.value = wx.precip * (1 - (wx.snowMix ?? (wx.snow ? 1 : 0))); ENV.uGroundT.value = wx.temp + 0.0065 * Math.max(ac.agl || 0, 0);
   const night = ENV.uNight.value;
-  animateAircraft(model.parts, ac, flying || S.mode !== 'flying' ? dt : 0, S.time, night);
+  animateAircraft(model.parts, ac, S.paused ? 0 : dt, S.time, night, Math.round((S.acWet || 0) * 50) / 50);
+  // The eye adapts at night, so pull the light glows back or they burn out into white balls.
+  for (const l of Object.values(model.parts.lights || {})) { l.glow.material.opacity = Math.min(1, 1.3 / sky.exposure); l.glow.scale.multiplyScalar(1 - 0.45 * night); }
 
-  // Atmosphere seen from the camera. In cloud the light is flat and grey.
-  sky.update(weather.hour, wx, ac.pos);
-  // Shadow on the ground under the aircraft
-  const sd = ENV.uSunDir.value, agl = Math.max(0, ac.agl + SPEC.gearHeight);
-  const sx = ac.pos.x - (sd.x / sd.y) * agl, sz = ac.pos.z - (sd.z / sd.y) * agl;
-  shadow.position.set(sx, groundHeight(sx, sz) + 0.12, sz);
-  shadow.rotation.y = -ac.heading * D2R;
-  shadow.material.opacity = 0.55 * (1 - wx.shade) * smoothstep(700, 60, agl) * smoothstep(-2, 6, sky.elev);
-  shadow.visible = shadow.material.opacity > 0.01 && groundHeight(sx, sz) > 0.3;
+  perf.cpuBegin('sky, light, shadows');
+  sky.update(weather.hour, wx, weather.haze, ac.pos, dt, weather);
+  // Light and shadow on the ground, for everything drawn this frame.
+  groundLight.update(camera.position, groundHeight(camera.position.x, camera.position.z));
+  const sunOut = 1 - smoothstep(0.3, 0.8, wx.shade);                    // no shadows under cloud
+  sunShadows.update(camera, sunOut * (1 - 0.4 * night));               // fainter by moonlight
+  perf.cpuEnd();
+  // The landing lamp throws a cone of light on the ground ahead once it is dark enough to see it (the sprite on
+  // the wing is only the lamp itself): position and reach, direction and cone, colour and strength.
+  const spot = ENV.uSpot.value, lamp = model.parts.lights?.landing;
+  if (lamp && night > 0.03 && (ac.agl < 350 || night > 0.5)) {
+    lamp.lens.getWorldPosition(v1); v2.set(0, -0.105, -1).normalize().applyQuaternion(ac.quat);
+    spot[0].set(v1.x, v1.y, v1.z, 700); spot[1].set(v2.x, v2.y, v2.z, Math.cos(0.3)); spot[2].set(1, 0.95, 0.84, 2.4 * night);
+  } else spot[2].w = 0;
 
-  terrain.update(camera.position, 5);
-  airfields.update(S.time, weather, clamp(night + wx.overcast * 0.35 + (wx.visibility < 6000 ? 0.4 : 0), 0, 1), camera.position);
-  precip.update(dt, flying || S.mode !== 'flying' ? wx.precip : precip.level, wx.snow, v1.set(wx.x, wx.y, wx.z), camState.vel, camera.position);
+  terrain.update(camera.position, 5);               // (times its own stages)
+  terrain.trees.shade(renderer, camera.position, sunOut);     // the shade of the trees on the ground, drawn into its maps for this frame (world/trees.js)
+  perf.cpuBegin('imagery');
+  imagery.update(camera.position, camera.fov, clouds.h || renderer.domElement.height);      // the height the picture is drawn at
+  perf.cpuEnd(); perf.cpuBegin('airfields, towns, rain');
+  airfields.update(S.time, weather, clamp(night + wx.overcast * 0.35 + (wx.visibility < 6000 ? 0.4 : 0), 0, 1), camera.position, sky.exposure);
+  const dusk = clamp(night * 1.2 + smoothstep(8, -2, sky.elev) * 0.6, 0, 1);
+  cities.update(dt, camera, dusk, sky.exposure);
+  // New buildings change the height map the baked shadows are marched through: refill it now and then while they arrive.
+  if ((cityShadeT -= dt) <= 0) { cityShadeT = 5; if (cities.builtCount !== cityShadeN) { cityShadeN = cities.builtCount; groundLight.stale(); } }
+  towns.update(dt, dusk, camera.position, sky.exposure, cities);
+  const live = !S.paused, pr = live ? wx.precip : precip.level, sn = wx.snowMix ?? (wx.snow ? 1 : 0);   // rain turns to snow over a couple of degrees
+  precip.update({
+    dt: live ? dt : 0, time: S.time, rain: pr * (1 - sn), snow: pr * sn,
+    hail: live ? wx.hail || 0 : 0, blow: wx.blow || 0, ground: groundHeight(camera.position.x, camera.position.z),
+    wind: v1.set(wx.x, wx.y, wx.z), camVel: camState.vel, camPos: camera.position, camera,
+    cloud: wx.cloud / CLOUD_SIGMA, humidity: weather.humidity * 0.6,
+    aircraft: { pos: ac.pos, quat: ac.quat, vel: ac.vel, root: model.root, tas: ac.tas, gLoad: ac.gLoad, onGround: ac.onGround },
+  });
   clouds.uFlashScreen.value *= Math.exp(-dt * 7);
+  const fx = clouds.fx;
+  fx.time = S.time; fx.rain = wx.snow ? 0 : pr; fx.snow = wx.snow ? pr : 0; fx.ice = S.frost;
+  fx.cockpit = S.mode === 'flying' && S.view === 'cockpit' ? 1 : 0; fx.airspeed = ac.tas; fx.flash = clouds.uFlashScreen.value;
+  fx.clearance = Math.max(camera.position.y - groundHeight(camera.position.x, camera.position.z), 1);      // lets post skip motion blur when nothing is near enough to streak
+  fx.exposure = 0.64 * sky.exposure * S.settings.exposure;
+  perf.cpuEnd();
 
+  perf.cpuBegin('render (draw calls)');
   clouds.render(scene, camera);
+  perf.cpuEnd();
 
+  perf.cpuBegin('HUD, sound');
   if (S.mode === 'flying') updateHud(dt);
   if (toastT > 0) { toastT -= dt; if (toastT <= 0) $('toast').classList.remove('show'); }
-  sound.update({ active: flying, power: ac.thrustLevel, engine: ac.fuel > 0, ias: ac.ias, rain: wx.precip * (wx.snow ? 0.15 : 1), stall: ac.stall > 0.45 && !ac.onGround, time: S.time });
+  sound.update({
+    active: flying, view: S.view, time: S.time,
+    rpm: ac.rpm, power: ac.thrustLevel, engine: ac.fuel > 0, crashed: !!ac.crashed,
+    ias: ac.ias, onGround: ac.onGround, groundSpeed: ac.groundSpeed, surface: ac.surface,
+    rain: wx.snow ? 0 : wx.precip, snow: wx.snow ? wx.precip : 0, hail: wx.hail || 0, hailHits: precip.hits.rate, turb: wx.turb, cloud: wx.cloud / CLOUD_SIGMA,
+    stall: ac.stall > 0.45 && !ac.onGround, stallLevel: ac.stall,
+  });
+  perf.cpuEnd();
+  const scriptMs = perf.frameEnd();
+  // Dynamic resolution: steer by the graphics card's time for a frame when the browser can tell it (and has
+  // told it lately), else by whether frames come on time. Only in flight (a menu or a loading screen proves nothing),
+  // and only on the browser's own frames (a test stepping the game by hand keeps the size it has).
+  if (flying && shown && res.update(frameMs, performance.now() - perf.gpuAt < 1500 ? perf.gpu : NaN, scriptMs)) { onResize(); perf.restart(); }      // (the old size's timings say nothing about the new)
 }
 
-boot().catch((e) => { console.error(e); $('loadMsg').textContent = 'Could not start: ' + e.message; });
+boot().catch((e) => { console.error(e); $('splash').classList.add('show'); $('loadMsg').textContent = 'Could not start: ' + e.message; });

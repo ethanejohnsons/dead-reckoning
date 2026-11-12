@@ -1,185 +1,205 @@
-// The instrument panel: six analogue dials drawn on a canvas each frame.
-// Airspeed, attitude, altimeter, radio compass (heading card + ADF needle),
-// vertical speed, and an engine/clock cluster. Units are aviation standard:
-// knots, feet, feet per minute.
+// The flight panel, the words for the weather, and the frame-time meter of the debug tools.
+//
+// FlightPanel drives the readouts in #fp. It runs every frame, so it touches the page as little as it can:
+// the horizon, the bars and the wind arrow move by transform alone (no layout), numbers are written ten
+// times a second and only when their text has changed, everything else four times a second.
 
-import { KT, FT, SPEC } from '../aircraft/physics.js';
+import { FT, KT, G, RHO0, SPEC } from '../aircraft/physics.js';
 
-const D2R = Math.PI / 180;
-const CREAM = '#e9e2cc', DIM = '#9a947f', AMBER = '#f0a030', RED = '#e04530', GREEN = '#58b56a', FACE = '#15171a';
+const R2D = 180 / Math.PI;
+const $ = (id) => document.getElementById(id);
+const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 
-export class HUD {
-  constructor(canvas) {
-    this.canvas = canvas; this.ctx = canvas.getContext('2d');
-    this.R = 62; this.n = 6;
-    this.resize();
-    addEventListener('resize', () => this.resize());
+/** 12345 -> "12,345" (a true minus sign for negatives, so the figure keeps its width). */
+export const thousands = (n) => { const a = Math.abs(n), s = a < 1000 ? String(a) : `${Math.floor(a / 1000)},${String(a % 1000).padStart(3, '0')}`; return n < 0 ? '−' + s : s; };
+/** A heading the way it is spoken: three digits, 360 for north. */
+export const hdg3 = (deg) => String(Math.round(((deg % 360) + 360) % 360) || 360).padStart(3, '0');
+
+/** A text slot that touches the page only when its text changes. */
+function slot(id) {
+  const el = $(id), node = document.createTextNode('');
+  let last = '';
+  el.textContent = ''; el.appendChild(node);
+  return (s) => { if (s !== last) { last = s; node.data = s; } };
+}
+/** One of a few named states on an element ('' for none), written only on change. */
+function state(el) {
+  let last = '';
+  return (s) => { if (s === last) return; if (last) el.classList.remove(last); if (s) el.classList.add(s); last = s; };
+}
+/** The hidden attribute, written only on change. */
+function shown(el) { let last = !el.hidden; return (on) => { if (on !== last) { last = on; el.hidden = !on; } }; }
+
+const PITCH_EM = 0.025;        // the horizon moves this many ball diameters per degree of pitch: 20 degrees reaches the rim
+const VS_FULL = 1500;          // ft/min at which the climb bar is full
+const LOW_AGL = 760;           // metres above ground under which the height above ground is shown (2,500 ft)
+
+export class FlightPanel {
+  constructor() {
+    this.t = {};
+    for (const k of ['Clk', 'Tod', 'Spd', 'Hdg', 'Alt', 'Vs', 'Pwr', 'Rpm', 'Flap', 'Agl', 'Wind', 'Oat', 'ApHdg', 'ApAlt', 'AccelV', 'SpdLbl']) this.t[k] = slot('fp' + k);
+    this.ball = $('fpBall').style; this.vsBar = $('fpVsBar').style; this.pwrBar = $('fpPwrBar').style; this.arrow = $('fpWindArrow').style;
+    this.spdState = state($('fpSpdCell')); this.altState = state($('fpAltCell')); this.vsState = state($('fpVsCell'));
+    this.flapOn = state($('fpFlapBox')); this.low = state($('fpAltCell').querySelector('.lbl'));
+    this.apShown = shown($('fpAp')); this.accelShown = shown($('fpAccel')); this.arrowShown = shown($('fpWindArrow'));
+    this.vs = 0; this.rel = 0; this.fastT = 0; this.slowT = 0; this.flight = null; this.elapsed = 0;
+    this.k = { bank: 1e9, pitch: 1e9, vs: 1e9, pwr: 1e9, rel: 1e9 };
   }
 
-  resize() {
-    const dpr = Math.min(devicePixelRatio || 1, 2);
-    const maxW = Math.min(innerWidth - 24, 900);
-    this.R = Math.floor(Math.min(66, (maxW / this.n - 14) / 2));
-    this.cell = this.R * 2 + 14;
-    const w = this.cell * this.n + 10, h = this.cell + 12;
-    this.canvas.width = w * dpr; this.canvas.height = h * dpr;
-    this.canvas.style.width = w + 'px'; this.canvas.style.height = h + 'px';
-    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    this.w = w; this.h = h;
-  }
+  /**
+   * d: { ac (aircraft), wx (weather at the aircraft), ap (autopilot), accel (time acceleration),
+   *      magVar (degrees east), hour (time of day), flight (any object that is new for each flight: the
+   *      stopwatch restarts with it), running (false while paused),
+   *      pit (true in the cockpit, where only the strip is kept up to date) }
+   */
+  update(dt, d) {
+    const { ac, wx, ap, pit } = d, t = this.t, k = this.k;
+    // The stopwatch: heading, speed and time are how a pilot keeps track of where they are.
+    if (d.flight !== this.flight) { this.flight = d.flight; this.elapsed = 0; }
+    if (d.running) this.elapsed += dt * d.accel;
+    const ease = dt > 0 ? 1 - Math.exp(-dt * 5) : 1;
+    this.vs += (ac.vel.y * FT * 60 - this.vs) * ease;            // eased, so the figure does not chatter in rough air
 
-  face(i, label) {
-    const g = this.ctx, R = this.R, cx = 5 + this.cell * i + this.cell / 2, cy = 6 + this.cell / 2;
-    g.save(); g.translate(cx, cy);
-    g.beginPath(); g.arc(0, 0, R + 5, 0, 7); g.fillStyle = '#2b2d31'; g.fill();
-    g.beginPath(); g.arc(0, 0, R + 2.5, 0, 7); g.fillStyle = '#0b0c0e'; g.fill();
-    g.beginPath(); g.arc(0, 0, R, 0, 7); g.fillStyle = FACE; g.fill();
-    if (label) { g.fillStyle = DIM; g.font = `600 ${R * 0.14}px ui-sans-serif, system-ui, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(label, 0, -R * 0.34); }
-    return g;
-  }
-  // angle helper: 0 = 12 o'clock, clockwise positive
-  tick(g, deg, r0, r1, w = 1.5, col = CREAM) {
-    const a = (deg - 90) * D2R;
-    g.beginPath(); g.moveTo(Math.cos(a) * r0, Math.sin(a) * r0); g.lineTo(Math.cos(a) * r1, Math.sin(a) * r1);
-    g.strokeStyle = col; g.lineWidth = w; g.stroke();
-  }
-  num(g, deg, r, text, size, col = CREAM) {
-    const a = (deg - 90) * D2R;
-    g.fillStyle = col; g.font = `600 ${size}px ui-sans-serif, system-ui, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.fillText(text, Math.cos(a) * r, Math.sin(a) * r);
-  }
-  arc(g, d0, d1, r, w, col) {
-    g.beginPath(); g.arc(0, 0, r, (d0 - 90) * D2R, (d1 - 90) * D2R); g.strokeStyle = col; g.lineWidth = w; g.stroke();
-  }
-  needle(g, deg, len, w = 3, col = '#f4f0e4', tail = 0.18) {
-    const R = this.R;
-    g.save(); g.rotate(deg * D2R);
-    g.beginPath(); g.moveTo(-w / 2, R * tail); g.lineTo(-w / 2, -len * 0.75); g.lineTo(0, -len); g.lineTo(w / 2, -len * 0.75); g.lineTo(w / 2, R * tail); g.closePath();
-    g.fillStyle = col; g.fill(); g.restore();
-    g.beginPath(); g.arc(0, 0, R * 0.07, 0, 7); g.fillStyle = '#3a3c40'; g.fill();
-  }
-
-  /** s: snapshot of flight state assembled by main.js */
-  draw(s) {
-    const g = this.ctx, R = this.R;
-    g.clearRect(0, 0, this.w, this.h);
-
-    // 1. Airspeed (knots): 0 at 7 o'clock sweeping 300 degrees to 200 kt
-    {
-      this.face(0, 'AIRSPEED');
-      const A = (kt) => -150 + (Math.min(kt, 200) / 200) * 300;
-      this.arc(g, A(58), A(105), R * 0.9, R * 0.045, '#d8d4c6');
-      this.arc(g, A(67), A(150), R * 0.96, R * 0.06, GREEN);
-      this.arc(g, A(150), A(178), R * 0.96, R * 0.06, AMBER);
-      this.tick(g, A(178), R * 0.8, R, 3, RED);
-      for (let k = 0; k <= 200; k += 10) this.tick(g, A(k), R * (k % 20 ? 0.86 : 0.8), R * 0.93, k % 20 ? 1 : 1.8);
-      for (let k = 40; k <= 200; k += 40) this.num(g, A(k), R * 0.64, k, R * 0.17);
-      g.fillStyle = DIM; g.font = `${R * 0.13}px ui-sans-serif, system-ui, sans-serif`; g.fillText('KT', 0, R * 0.42);
-      this.needle(g, A(s.ias * KT), R * 0.88);
-      g.restore();
+    // ---- every frame: transforms only
+    if (!pit) {
+      const bank = Math.round(ac.bank * R2D * 5) / 5, pitch = Math.round(clamp(ac.pitch * R2D, -45, 45) * 5) / 5;
+      if (bank !== k.bank || pitch !== k.pitch) { k.bank = bank; k.pitch = pitch; this.ball.transform = `rotate(${-bank}deg) translateY(${(pitch * PITCH_EM).toFixed(3)}em)`; }
+      const vs = Math.round(clamp(this.vs / VS_FULL, -1, 1) * 50) / 50;
+      if (vs !== k.vs) { k.vs = vs; this.vsBar.transform = `scaleY(${-vs})`; }
+      const pwr = Math.round(ac.throttle * 100) / 100;
+      if (pwr !== k.pwr) { k.pwr = pwr; this.pwrBar.transform = `scaleX(${pwr})`; }
+      // Wind arrow: the way the air is moving, seen from above with the nose at the top. Down the panel is a headwind.
+      const to = Math.atan2(wx.x, -wx.z) * R2D - ac.heading;
+      this.rel += ((((to - this.rel) % 360) + 540) % 360 - 180) * ease;
+      const rel = Math.round(this.rel);
+      if (rel !== k.rel) { k.rel = rel; this.arrow.transform = `rotate(${rel}deg)`; }
     }
-    // 2. Attitude
-    {
-      this.face(1);
-      g.save(); g.beginPath(); g.arc(0, 0, R * 0.94, 0, 7); g.clip();
-      g.rotate(-s.bank);
-      const ppd = R / 32, off = (s.pitch / D2R) * ppd;
-      g.fillStyle = '#3f86c9'; g.fillRect(-R * 2, -R * 3 + off, R * 4, R * 3);
-      g.fillStyle = '#7a5433'; g.fillRect(-R * 2, off, R * 4, R * 3);
-      g.strokeStyle = '#f4f0e4'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(-R * 2, off); g.lineTo(R * 2, off); g.stroke();
-      g.fillStyle = '#f4f0e4'; g.font = `${R * 0.13}px ui-sans-serif, system-ui, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
-      for (let p = -60; p <= 60; p += 5) {
-        if (!p) continue;
-        const y = off - p * ppd, w = p % 10 ? R * 0.12 : R * 0.26;
-        if (Math.abs(y) > R) continue;
-        g.beginPath(); g.moveTo(-w, y); g.lineTo(w, y); g.lineWidth = 1.2; g.stroke();
-        if (p % 10 === 0) { g.fillText(Math.abs(p), -w - R * 0.13, y); g.fillText(Math.abs(p), w + R * 0.13, y); }
+
+    // ---- ten times a second: the figures
+    if ((this.fastT -= dt) <= 0) {
+      this.fastT = 0.1;
+      t.Spd(String(Math.round(ac.ias * KT)));
+      t.Alt(thousands(Math.round((ac.pos.y * FT) / 10) * 10));
+      t.Hdg(hdg3(ac.heading - d.magVar));
+      const e = Math.floor(this.elapsed), mm = Math.floor(e / 60) % 60, ss = String(e % 60).padStart(2, '0');
+      t.Clk(e >= 3600 ? `${Math.floor(e / 3600)}:${String(mm).padStart(2, '0')}:${ss}` : `${mm}:${ss}`);
+      if (!pit) {
+        const v = Math.round(this.vs / 50) * 50;
+        t.Vs(v > 0 ? '+' + thousands(v) : thousands(v));
+        t.Pwr(Math.round(ac.throttle * 100) + '%');
+        t.Rpm(thousands(Math.round(ac.rpm / 10) * 10));
+        const low = !ac.onGround && ac.agl < LOW_AGL;
+        this.low(low ? 'low' : '');
+        if (low) t.Agl(`${thousands(Math.max(0, Math.round((ac.agl * FT) / 10) * 10))} ft above ground`);
       }
-      // bank scale rotates with the horizon
-      for (const b of [-60, -45, -30, -20, -10, 0, 10, 20, 30, 45, 60]) this.tick(g, b, R * (b % 30 ? 0.86 : 0.8), R * 0.94, b ? 1.5 : 3, '#f4f0e4');
-      g.restore();
-      // fixed aircraft symbol and bank pointer
-      g.strokeStyle = AMBER; g.lineWidth = 3; g.lineCap = 'round';
-      g.beginPath(); g.moveTo(-R * 0.55, 0); g.lineTo(-R * 0.2, 0); g.lineTo(-R * 0.2, R * 0.08); g.moveTo(R * 0.55, 0); g.lineTo(R * 0.2, 0); g.lineTo(R * 0.2, R * 0.08); g.stroke();
-      g.fillStyle = AMBER; g.beginPath(); g.arc(0, 0, 2.5, 0, 7); g.fill();
-      g.beginPath(); g.moveTo(0, -R * 0.94); g.lineTo(-R * 0.07, -R * 0.8); g.lineTo(R * 0.07, -R * 0.8); g.closePath(); g.fill();
-      g.lineCap = 'butt';
-      g.restore();
     }
-    // 3. Altimeter (feet)
-    {
-      this.face(2, 'ALT');
-      const ft = s.alt * FT;
-      for (let k = 0; k < 50; k++) this.tick(g, k * 7.2, R * (k % 5 ? 0.88 : 0.8), R * 0.95, k % 5 ? 1 : 1.8);
-      for (let k = 0; k < 10; k++) this.num(g, k * 36, R * 0.66, k, R * 0.18);
-      // drum readout
-      const bw = R * 0.92, bh = R * 0.3;
-      g.fillStyle = '#000'; g.strokeStyle = '#444'; g.lineWidth = 1; g.fillRect(-bw / 2, R * 0.18, bw, bh); g.strokeRect(-bw / 2, R * 0.18, bw, bh);
-      g.fillStyle = CREAM; g.font = `600 ${R * 0.23}px ui-monospace, Menlo, Consolas, monospace`; g.textAlign = 'center'; g.textBaseline = 'middle';
-      g.fillText(String(Math.round(ft / 10) * 10), 0, R * 0.34);
-      g.fillStyle = DIM; g.font = `${R * 0.12}px ui-sans-serif, system-ui, sans-serif`; g.fillText('FEET', 0, R * 0.6);
-      this.needle(g, ((ft % 10000) / 10000) * 360, R * 0.5, 5, '#cfcab8', 0);
-      this.needle(g, ((ft % 1000) / 1000) * 360, R * 0.9, 3);
-      g.restore();
-    }
-    // 4. Radio compass: rotating heading card, fixed lubber line, ADF needle, autopilot bug
-    {
-      this.face(3);
-      g.save(); g.rotate(-s.heading * D2R);
-      for (let d = 0; d < 360; d += 5) this.tick(g, d, R * (d % 30 ? (d % 10 ? 0.9 : 0.86) : 0.82), R * 0.96, d % 30 ? 1 : 1.8);
-      for (let d = 0; d < 360; d += 30) {
-        const lab = d === 0 ? 'N' : d === 90 ? 'E' : d === 180 ? 'S' : d === 270 ? 'W' : d / 10;
-        g.save(); g.rotate(d * D2R); g.fillStyle = d % 90 ? CREAM : AMBER; g.font = `600 ${R * (d % 90 ? 0.16 : 0.2)}px ui-sans-serif, system-ui, sans-serif`;
-        g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(lab, 0, -R * 0.68); g.restore();
+
+    // ---- four times a second: states and slow values
+    if ((this.slowT -= dt) <= 0) {
+      this.slowT = 0.25;
+      const air = !ac.onGround && !ac.crashed;
+      // Near the stall: within a few degrees of the angle where the wing lets go, or flying barely faster than
+      // the speed at which it would in level flight. (The stalling angle, 15.5 degrees clean and 13 with full
+      // flap, and the flaps' lift are the flight model's own numbers, repeated here.)
+      const aStall = 15.5 - 2.5 * ac.flap, clMax = SPEC.CL0 + 0.7 * ac.flap + (SPEC.CLa * aStall) / R2D;
+      const vStall = Math.sqrt((2 * SPEC.mass * G) / (RHO0 * SPEC.S * clMax));
+      const spd = !air ? '' : ac.stall > 0.45 ? 'alert' : ac.stall > 0.03 || aStall - ac.alpha * R2D < 2.5 || ac.ias < vStall * 1.06 ? 'caution' : '';
+      // Sinking fast near the ground: seconds to the ground at this rate.
+      const sink = -ac.vel.y, tti = sink > 0.5 ? ac.agl / sink : 1e9;
+      const gnd = !air ? '' : (ac.agl < 220 && sink > 14) || (sink > 6 && tti < 5) ? 'alert' : sink > 5 && tti < 15 ? 'caution' : '';
+      this.spdState(spd); this.altState(gnd); this.vsState(gnd);
+      t.SpdLbl(spd === 'alert' ? 'Stall' : spd === 'caution' ? 'Slow' : 'Speed');
+
+      this.apShown(ap.on);
+      if (ap.on) { t.ApHdg(hdg3(ap.hdg - d.magVar) + '°'); t.ApAlt(thousands(Math.round((ap.alt * FT) / 100) * 100) + ' ft'); }
+      this.accelShown(d.accel > 1);
+      t.Tod(`${String(Math.floor(d.hour)).padStart(2, '0')}:${String(Math.floor((d.hour % 1) * 60)).padStart(2, '0')}`);
+      if (d.accel > 1) t.AccelV('×' + d.accel);
+
+      if (!pit) {
+        t.Flap(ac.flap < 0.05 ? 'up' : ac.flap < 0.75 ? 'half' : 'full');
+        this.flapOn(ac.flap < 0.05 ? '' : 'on');
+        const kt = Math.hypot(wx.x, wx.z) * KT, calm = kt < 1.5;
+        this.arrowShown(!calm);
+        t.Wind(calm ? 'calm' : `${hdg3(Math.atan2(-wx.x, wx.z) * R2D - d.magVar)}° ${Math.round(kt)} kt`);
+        t.Oat(`${Math.round(wx.temp) || 0}°C`);
       }
-      if (s.apOn) { g.save(); g.rotate(s.apHdg * D2R); g.fillStyle = '#ff7a1a'; g.fillRect(-R * 0.09, -R * 0.99, R * 0.18, R * 0.1); g.restore(); }
-      g.restore();
-      if (s.adf !== null) {
-        g.save(); g.rotate(s.adf * D2R);
-        g.strokeStyle = '#ffd24a'; g.lineWidth = 3; g.beginPath(); g.moveTo(0, R * 0.52); g.lineTo(0, -R * 0.44); g.stroke();
-        g.fillStyle = '#ffd24a'; g.beginPath(); g.moveTo(0, -R * 0.58); g.lineTo(-R * 0.09, -R * 0.4); g.lineTo(R * 0.09, -R * 0.4); g.closePath(); g.fill();
-        g.restore();
-      }
-      g.fillStyle = '#f4f0e4'; g.beginPath(); g.moveTo(0, -R * 0.99); g.lineTo(-R * 0.06, -R * 1.1); g.lineTo(R * 0.06, -R * 1.1); g.closePath(); g.fill();
-      g.strokeStyle = '#f4f0e4'; g.lineWidth = 2; g.beginPath(); g.moveTo(0, -R * 0.2); g.lineTo(0, R * 0.2); g.moveTo(-R * 0.16, 0); g.lineTo(R * 0.16, 0); g.moveTo(-R * 0.07, R * 0.15); g.lineTo(R * 0.07, R * 0.15); g.stroke();
-      g.font = `600 ${R * 0.15}px ui-monospace, Menlo, Consolas, monospace`; g.textAlign = 'center'; g.textBaseline = 'middle';
-      g.fillStyle = s.adf !== null ? '#ffd24a' : RED; g.fillText(s.adf !== null ? s.station : s.station + ' ✕', 0, R * 0.36);
-      g.restore();
     }
-    // 5. Vertical speed (x1000 ft/min)
-    {
-      this.face(4, 'VERT SPEED');
-      const fpm = Math.max(-2000, Math.min(2000, s.vs * FT * 60));
-      const A = (v) => -90 + (v / 2000) * 172;
-      for (let v = -2000; v <= 2000; v += 100) this.tick(g, A(v), R * (v % 500 ? 0.88 : 0.8), R * 0.95, v % 500 ? 1 : 1.8);
-      for (const v of [-2000, -1000, 0, 1000, 2000]) this.num(g, A(v), R * 0.64, Math.abs(v / 1000), R * 0.18);
-      g.fillStyle = DIM; g.font = `${R * 0.115}px ui-sans-serif, system-ui, sans-serif`; g.fillText('×1000 FT/MIN', R * 0.12, R * 0.4);
-      this.needle(g, A(fpm), R * 0.88);
-      g.restore();
+  }
+}
+
+// ------------------------------------------------------------------ the weather in plain words
+
+const COMPASS = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
+const feet = (m, step) => thousands(Math.max(0, Math.round((m * FT) / step) * step));
+
+/**
+ * What the weather is doing where the aircraft is, for the Weather panel.
+ * wx: the sample main.js keeps (wind x/z, temp, visibility, precip, snow, hail, turb, cloud, col); alt: metres.
+ * Returns { head, cloud, vis, wind, fallLabel, fall, air }, or null before the first sample.
+ */
+export function weatherWords(wx, alt) {
+  const c = wx.col;
+  if (!c) return null;
+  const inCloud = wx.cloud > 0, fog = c.fog > 0.3 && alt < c.top, storm = c.cell > 0.3 || c.front > 0.35;
+  const sky = c.cov < 0.06 ? 'Clear sky' : c.cov < 0.3 ? 'A few clouds' : c.cov < 0.55 ? 'Scattered cloud' : c.cov < 0.88 ? 'Broken cloud' : 'Overcast';
+  const cloud = fog ? `Fog up to ${feet(c.top, 100)} ft`
+    : c.cov < 0.06 ? 'None'
+      : `${sky.replace(' cloud', '')}, base ${feet(c.base, 100)} ft, tops ${feet(c.top, 500)} ft`;
+
+  const p = wx.precip, hail = (wx.hail || 0) > 0.05;
+  const amount = p < 0.05 ? '' : p < 0.3 ? 'Light' : p < 0.65 ? 'Steady' : 'Heavy';
+  const kind = wx.snow ? 'snow' : 'rain';
+  const fall = (amount ? amount : 'None') + (hail ? (amount ? ', with hail' : ' but hail') : '');
+
+  const v = wx.visibility;
+  const vis = inCloud ? 'Next to nothing: in cloud'
+    : fog ? `${(0.3 + (1 - c.fog) * 2).toFixed(1)} km, in fog`
+      : v >= 50000 ? 'More than 50 km' : v >= 10000 ? `${Math.round(v / 1000)} km` : v >= 1000 ? `${(v / 1000).toFixed(1)} km` : `${Math.max(50, Math.round(v / 50) * 50)} m`;
+
+  const kt = Math.hypot(wx.x, wx.z) * KT, from = (Math.atan2(-wx.x, wx.z) * R2D + 360) % 360;
+  const bumps = wx.turb > 0.5 ? ', rough air' : wx.turb > 0.2 ? ', a few bumps' : '';
+  const wind = kt < 1.5 ? 'Calm' + bumps : `From the ${COMPASS[Math.round(from / 45) % 8]} at ${Math.round(kt)} kt${bumps}`;
+
+  const temp = Math.round(wx.temp) || 0;
+  const air = `${temp}°C${temp <= 0 ? ', freezing' : ''}`;
+
+  const first = inCloud ? 'In cloud' : storm ? 'Thunderstorm' : fog ? 'Fog' : sky;
+  const second = hail ? (amount ? `${amount.toLowerCase()} ${kind} and hail` : 'hail') : amount ? `${amount.toLowerCase()} ${kind}` : kt >= 34 ? 'gale' : kt >= 22 ? 'strong wind' : '';
+  return { head: second ? `${first}, ${second}` : first, cloud, vis, wind, fallLabel: wx.snow ? 'Snow' : 'Rain', fall, air };
+}
+
+// ------------------------------------------------------------------ frame-time meter (debug tools)
+
+/** Rows for the debug tools' table of GPU time per render pass: `passes` maps a pass name to milliseconds. */
+export function passRows(passes) {
+  const rows = Object.entries(passes).filter(([, v]) => Number.isFinite(v));
+  if (!rows.length) return '';
+  const total = rows.reduce((a, [, v]) => a + v, 0);
+  return '<caption>GPU time per pass, ms</caption>' + rows.map(([k, v]) => `<tr><td>${String(k).replace(/[&<>]/g, '')}</td><td>${v.toFixed(2)}</td></tr>`).join('') + `<tr><td>total</td><td>${total.toFixed(2)}</td></tr>`;
+}
+
+/** Averages frame times over half a second. Call frame() once a frame; text() gives the readout. */
+export class FrameMeter {
+  constructor() { this.last = 0; this.n = 0; this.sum = 0; this.max = 0; this.jsN = 0; this.jsSum = 0; this.hudSum = 0; this.out = null; }
+  /** hudMs: what the HUD update itself took this frame. */
+  frame(hudMs) {
+    const now = performance.now(), gap = now - this.last;
+    this.last = now;
+    if (gap > 0 && gap < 1000) { this.n++; this.sum += gap; if (gap > this.max) this.max = gap; this.hudSum += hudMs; }
+    // The document timeline's clock is the time this frame began, so the difference is the script time spent
+    // on the frame so far: simulation, scene and submitting the draw calls. (Not the time the GPU then takes.)
+    const js = now - (document.timeline?.currentTime ?? NaN);
+    if (js >= 0 && js < 250) { this.jsN++; this.jsSum += js; }
+    if (this.sum >= 500) {
+      this.out = { ms: this.sum / this.n, max: this.max, fps: (1000 * this.n) / this.sum, js: this.jsN ? this.jsSum / this.jsN : NaN, hud: this.hudSum / this.n };
+      this.n = 0; this.sum = 0; this.max = 0; this.jsN = 0; this.jsSum = 0; this.hudSum = 0;
     }
-    // 6. Engine, fuel, flaps, clock
-    {
-      this.face(5);
-      const A = (p) => -130 + p * 260;
-      this.arc(g, A(0), A(1), R * 0.9, R * 0.06, '#3a3d42');
-      this.arc(g, A(0), A(s.power), R * 0.9, R * 0.06, s.power > 0.92 ? AMBER : GREEN);
-      this.tick(g, A(s.throttle), R * 0.78, R * 0.99, 3, '#f4f0e4');
-      g.textAlign = 'center'; g.textBaseline = 'middle';
-      g.fillStyle = CREAM; g.font = `600 ${R * 0.26}px ui-monospace, Menlo, Consolas, monospace`; g.fillText(Math.round(s.throttle * 100) + '%', 0, -R * 0.42);
-      g.fillStyle = DIM; g.font = `${R * 0.115}px ui-sans-serif, system-ui, sans-serif`; g.fillText('POWER', 0, -R * 0.2);
-      // fuel and flaps bars
-      const bar = (y, frac, label, col) => {
-        g.fillStyle = '#2a2c30'; g.fillRect(-R * 0.5, y, R, R * 0.09);
-        g.fillStyle = col; g.fillRect(-R * 0.5, y, R * frac, R * 0.09);
-        g.fillStyle = DIM; g.font = `${R * 0.11}px ui-sans-serif, system-ui, sans-serif`; g.textAlign = 'right'; g.fillText(label, -R * 0.54, y + R * 0.05); g.textAlign = 'center';
-      };
-      bar(-R * 0.04, s.fuel, 'F', s.fuel < 0.15 ? RED : CREAM);
-      bar(R * 0.13, s.flap, 'FL', '#7fb7e6');
-      g.fillStyle = CREAM; g.font = `600 ${R * 0.2}px ui-monospace, Menlo, Consolas, monospace`;
-      const t = Math.max(0, s.elapsed), hh = Math.floor(t / 3600), mm = Math.floor((t % 3600) / 60), ss = Math.floor(t % 60);
-      g.fillText(`${hh}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`, 0, R * 0.46);
-      g.fillStyle = DIM; g.font = `${R * 0.11}px ui-sans-serif, system-ui, sans-serif`; g.fillText('ELAPSED', 0, R * 0.66);
-      g.restore();
-    }
+  }
+  text(canvas) {
+    const o = this.out, f = (x, w = 5) => (Number.isFinite(x) ? x.toFixed(1) : '–').padStart(w);
+    const size = canvas ? `canvas ${canvas.width}×${canvas.height}, ${(canvas.width / Math.max(1, canvas.clientWidth)).toFixed(2)} per CSS px` : '';
+    if (!o) return `frame      … measuring\n${size}`;
+    return `frame  ${f(o.ms)} ms  ${f(o.fps)} fps\nworst  ${f(o.max)} ms\nscript ${f(o.js)} ms  sim + draw calls\nHUD    ${o.hud.toFixed(2).padStart(5)} ms\n${size}`;
   }
 }

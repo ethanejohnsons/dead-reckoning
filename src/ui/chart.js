@@ -1,38 +1,53 @@
 // The aeronautical chart. A relief-shaded base map is baked once from the
-// terrain, then drawn with airfields, the planned course, the dead-reckoning
-// track and (optionally) the synoptic weather picture on top.
+// regional elevation grid, then drawn with airfields, the aircraft and
+// (optionally) the synoptic weather picture on top.
 
-import { height, terrainColor, LAND_HALF } from '../world/terrain.js';
+import { baseHeight, baseWater, moisture, LAND_HALF } from '../world/terrain.js';
 import { AIRPORTS } from '../world/airports.js';
 import { NM } from '../aircraft/physics.js';
 
 const D2R = Math.PI / 180;
-const INK = '#2a2f3a', MAGENTA = '#b01872', BLUE = '#1c56a8', PENCIL = '#3b3b3b';
+// The map is drawn dark, like the rest of the interface: muted relief, one cool colour for airfields.
+const INK = '#edf1f4', MAGENTA = '#ffffff', BLUE = '#74d7f4', PLATE = 'rgba(13,18,24,0.74)', SOFT = 'rgba(170,181,191,0.95)';
+const SANS = '"Inter", "Adwaita Sans", -apple-system, "Segoe UI", Roboto, "Noto Sans", system-ui, sans-serif';
+/** Type and symbols follow the interface's root size, so the map reads the same at 720p and at 4K. */
+const uiScale = () => (parseFloat(getComputedStyle(document.documentElement).fontSize) || 16) / 16;
 
-export function bakeChart(size = 768) {
+export function bakeChart(size = 900) {
   const H = LAND_HALF, c = document.createElement('canvas');
   c.width = c.height = size;
   const g = c.getContext('2d'), img = g.createImageData(size, size), d = img.data;
-  const hs = new Float32Array(size * size), col = [0, 0, 0], px = (2 * H) / size;
-  for (let j = 0; j < size; j++) for (let i = 0; i < size; i++) hs[j * size + i] = height(((i + 0.5) / size) * 2 * H - H, ((j + 0.5) / size) * 2 * H - H, 1);
+  const hs = new Float32Array(size * size), px = (2 * H) / size;
+  const at = (k) => (k + 0.5) / size * 2 * H - H;
+  for (let j = 0; j < size; j++) for (let i = 0; i < size; i++) hs[j * size + i] = baseHeight(at(i), at(j));
+  let top = 600;
+  for (const h of hs) if (h > top) top = h;
+  // The tints stretch to the relief of the window: plains country and the Rockies both use the whole scale.
+  const mid = Math.min(900, top * 0.35), hi = Math.max(mid + 300, Math.min(top * 0.6, 2600)), span = Math.max(400, top - hi), step = top > 2200 ? 500 : top > 900 ? 250 : 100;
+  const mix = (a, b, t) => a + (b - a) * Math.max(0, Math.min(1, t));
   for (let j = 0; j < size; j++) for (let i = 0; i < size; i++) {
-    const k = j * size + i, h = hs[k], o = k * 4;
-    const hx = hs[j * size + Math.min(i + 1, size - 1)] - hs[j * size + Math.max(i - 1, 0)];
-    const hz = hs[Math.min(j + 1, size - 1) * size + i] - hs[Math.max(j - 1, 0) * size + i];
-    const nx = -hx / (2 * px), nz = -hz / (2 * px), nl = Math.hypot(nx, 1, nz);
+    const k = j * size + i, h = hs[k], o = k * 4, x = at(i), z = at(j);
+    const e = hs[j * size + Math.min(i + 1, size - 1)], w = hs[j * size + Math.max(i - 1, 0)];
+    const s = hs[Math.min(j + 1, size - 1) * size + i], n = hs[Math.max(j - 1, 0) * size + i];
+    const nx = -(e - w) / (2 * px), nz = -(s - n) / (2 * px), nl = Math.hypot(nx, 1, nz);
+    const lake = h > 0 && baseWater(x, z);
     let r, gr, b;
-    if (h <= 0) {
-      const t = Math.min(1, -h / 250);
-      r = 0.80 - 0.14 * t; gr = 0.87 - 0.10 * t; b = 0.90 - 0.05 * t;
+    if (h <= 0 || lake) {
+      const t = lake ? 0.25 : Math.min(1, -h / 300);
+      r = 0.08 - 0.03 * t; gr = 0.17 - 0.05 * t; b = 0.29 - 0.09 * t;
     } else {
-      terrainColor(((i + 0.5) / size) * 2 * H - H, ((j + 0.5) / size) * 2 * H - H, h, 1 - 1 / nl, col, 0);
-      // Lift toward paper tone, then shade relief from the northwest.
-      const sh = Math.max(0.62, Math.min(1.18, 0.82 + (nx * -0.7 + nz * -0.7) / nl * 1.1));
-      r = (Math.pow(col[0], 0.45) * 0.62 + 0.36) * sh; gr = (Math.pow(col[1], 0.45) * 0.62 + 0.35) * sh; b = (Math.pow(col[2], 0.45) * 0.62 + 0.30) * sh;
-      // contour every 500 m
-      const lv = Math.floor(h / 500);
-      if (lv !== Math.floor(hs[k + (i < size - 1 ? 1 : 0)] / 500) || lv !== Math.floor(hs[k + (j < size - 1 ? size : 0)] / 500)) { r *= 0.8; gr *= 0.76; b *= 0.7; }
-      if (hs[k + (i < size - 1 ? 1 : 0)] <= 0 || hs[k + (j < size - 1 ? size : 0)] <= 0 || hs[k - (i > 0 ? 1 : 0)] <= 0 || hs[k - (j > 0 ? size : 0)] <= 0) { r = 0.25; gr = 0.38; b = 0.5; }
+      // Hypsometric tint, dark: deep green lowlands, olive uplands, brown-grey ranges, pale tops; greener where wet.
+      const m = moisture(x, z);
+      r = mix(mix(0.15, 0.22, h / mid), mix(0.33, 0.74, (h - hi) / span), (h - mid) / (hi - mid));
+      gr = mix(mix(0.21, 0.25, h / mid), mix(0.31, 0.77, (h - hi) / span), (h - mid) / (hi - mid));
+      b = mix(mix(0.18, 0.19, h / mid), mix(0.27, 0.81, (h - hi) / span), (h - mid) / (hi - mid));
+      const wet = Math.max(0, Math.min(1, (m - 0.45) * 2.5)) * (1 - Math.max(0, Math.min(1, (h - hi) / 400)));
+      r = mix(r, 0.11, wet * 0.7); gr = mix(gr, 0.23, wet * 0.7); b = mix(b, 0.16, wet * 0.7);
+      const sh = Math.max(0.55, Math.min(1.2, 0.84 + ((nx * -0.7 + nz * -0.7) / nl) * (top > 1500 ? 0.75 : 2.2)));
+      r *= sh; gr *= sh; b *= sh;
+      const lv = Math.floor(h / step);
+      if (lv !== Math.floor(e / step) || lv !== Math.floor(s / step)) { r *= 1.22; gr *= 1.22; b *= 1.24; }
+      if (Math.min(e, w, s, n) <= 0) { r = 0.3; gr = 0.43; b = 0.54; }
     }
     d[o] = Math.min(255, r * 255); d[o + 1] = Math.min(255, gr * 255); d[o + 2] = Math.min(255, b * 255); d[o + 3] = 255;
   }
@@ -41,6 +56,7 @@ export function bakeChart(size = 768) {
 }
 
 export class Chart {
+  /** base: the canvas from bakeChart (give it a new one, `chart.base = bakeChart()`, when the world moves). */
   constructor(base) {
     this.base = base;
     this.cx = 0; this.cz = 0; this.scale = 0.0016;       // pixels per metre
@@ -61,17 +77,19 @@ export class Chart {
   }
 
   /**
-   * opts: { route, nav, ac (true position, only shown with GPS assist), gps, weather, elapsed, lop }
+   * opts: { ac (aircraft, drawn at its position), station (tuned beacon's airfield), weather }
    */
   draw(g, w, h, opts = {}) {
-    const S = this.scale, X = (x) => w / 2 + (x - this.cx) * S, Z = (z) => h / 2 + (z - this.cz) * S;
+    const u = this._u = uiScale();
     g.save();
-    g.fillStyle = '#a8c4d9'; g.fillRect(0, 0, w, h);
+    g.scale(u, u); w /= u; h /= u;                    // everything below is drawn in interface units
+    const S = this.scale / u, X = (x) => w / 2 + (x - this.cx) * S, Z = (z) => h / 2 + (z - this.cz) * S;
+    g.fillStyle = '#0d1f33'; g.fillRect(0, 0, w, h);
     g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
     g.drawImage(this.base, X(-LAND_HALF), Z(-LAND_HALF), LAND_HALF * 2 * S, LAND_HALF * 2 * S);
 
     // Graticule every 20 NM
-    g.strokeStyle = 'rgba(40,50,70,0.22)'; g.lineWidth = 1; g.fillStyle = 'rgba(40,50,70,0.6)'; g.font = '10px ui-monospace, Menlo, monospace';
+    g.strokeStyle = 'rgba(255,255,255,0.07)'; g.lineWidth = 1; g.fillStyle = 'rgba(237,241,244,0.42)'; g.font = `500 10.5px ${SANS}`;
     const stepM = 20 * NM, n = Math.floor(LAND_HALF / stepM);
     for (let k = -n; k <= n; k++) {
       const p = k * stepM;
@@ -85,90 +103,45 @@ export class Chart {
 
     if (opts.weather && this.showWx) this.drawWeather(g, w, h, opts.weather, X, Z);
 
-    // Planned course
-    const r = opts.route;
-    if (r) {
-      g.strokeStyle = MAGENTA; g.lineWidth = 2.2; g.setLineDash([]);
-      g.beginPath(); g.moveTo(X(r.ax), Z(r.az)); g.lineTo(X(r.bx), Z(r.bz)); g.stroke();
-      const mx = (X(r.ax) + X(r.bx)) / 2, mz = (Z(r.az) + Z(r.bz)) / 2;
-      const crs = (Math.atan2(r.bx - r.ax, -(r.bz - r.az)) / D2R + 360) % 360, dist = Math.hypot(r.bx - r.ax, r.bz - r.az) / NM;
-      const label = `${String(Math.round(crs)).padStart(3, '0')}°  ${Math.round(dist)} NM`;
-      g.font = '600 12px ui-monospace, Menlo, monospace'; g.textAlign = 'center'; g.textBaseline = 'middle';
-      const tw = g.measureText(label).width + 10;
-      g.fillStyle = 'rgba(244,238,220,0.92)'; g.fillRect(mx - tw / 2, mz - 9, tw, 18);
-      g.fillStyle = MAGENTA; g.fillText(label, mx, mz + 1);
-      // tick marks every 10 NM along the course
-      const ux = (r.bx - r.ax) / (dist * NM), uz = (r.bz - r.az) / (dist * NM);
-      for (let m = 10; m < dist; m += 10) {
-        const px = X(r.ax + ux * m * NM), pz = Z(r.az + uz * m * NM);
-        g.beginPath(); g.moveTo(px - uz * 5, pz + ux * 5); g.lineTo(px + uz * 5, pz - ux * 5); g.lineWidth = 1.5; g.stroke();
-      }
-    }
-
     // Airfields
     for (const a of AIRPORTS) {
       const px = X(a.x), pz = Z(a.z);
       if (px < -60 || px > w + 60 || pz < -30 || pz > h + 30) continue;
-      const hot = r && (a.id === r.to || a.id === r.from);
-      g.strokeStyle = hot ? MAGENTA : BLUE; g.fillStyle = 'rgba(244,238,220,0.9)'; g.lineWidth = 2;
+      const hot = opts.station === a;
+      g.strokeStyle = hot ? MAGENTA : BLUE; g.fillStyle = '#0d1218'; g.lineWidth = 1.75;
       g.beginPath(); g.arc(px, pz, 6.5, 0, 7); g.fill(); g.stroke();
-      g.beginPath(); g.moveTo(px - a.ux * 5, pz - a.uz * 5); g.lineTo(px + a.ux * 5, pz + a.uz * 5); g.lineWidth = 2.5; g.stroke();
-      if (opts.nav?.station === a) { g.setLineDash([2, 3]); g.beginPath(); g.arc(px, pz, 12, 0, 7); g.lineWidth = 1.5; g.stroke(); g.setLineDash([]); }
-      g.font = `${hot ? '700' : '600'} 11.5px ui-sans-serif, system-ui, sans-serif`; g.textAlign = 'left'; g.textBaseline = 'middle';
+      g.beginPath(); g.moveTo(px - a.ux * 5, pz - a.uz * 5); g.lineTo(px + a.ux * 5, pz + a.uz * 5); g.lineWidth = 2.25; g.stroke();
+      if (hot) { g.setLineDash([2, 3]); g.beginPath(); g.arc(px, pz, 12, 0, 7); g.lineWidth = 1.5; g.stroke(); g.setLineDash([]); }
+      g.font = `${hot ? '700' : '600'} 12.5px ${SANS}`; g.textAlign = 'left'; g.textBaseline = 'middle';
       const name = `${a.name}  ${a.id}`, tw = g.measureText(name).width;
-      g.fillStyle = 'rgba(244,238,220,0.78)'; g.fillRect(px + 11, pz - 14, tw + 6, 15);
+      g.fillStyle = PLATE; g.fillRect(px + 11, pz - 14, tw + 6, 15);
       g.fillStyle = hot ? MAGENTA : INK; g.fillText(name, px + 14, pz - 6);
-      g.font = '10px ui-monospace, Menlo, monospace'; g.fillStyle = 'rgba(42,47,58,0.85)';
+      g.font = `500 10.5px ${SANS}`; g.fillStyle = SOFT;
       g.fillText(`${Math.round(a.elev * 3.281)} ft · ${a.numbers.join('/')}`, px + 14, pz + 7);
     }
 
-    const nav = opts.nav;
-    if (nav) {
-      // Line of position from the tuned beacon
-      if (opts.lop) {
-        const s = opts.lop.station, b = opts.lop.bearing * D2R;
-        g.strokeStyle = 'rgba(28,86,168,0.75)'; g.lineWidth = 1.4; g.setLineDash([7, 5]);
-        g.beginPath(); g.moveTo(X(s.x), Z(s.z)); g.lineTo(X(s.x + Math.sin(b) * 260000), Z(s.z - Math.cos(b) * 260000)); g.stroke(); g.setLineDash([]);
-      }
-      // Pencilled dead-reckoning track
-      const t = nav.track;
-      g.strokeStyle = PENCIL; g.lineWidth = 1.6; g.setLineDash([5, 4]);
-      g.beginPath();
-      for (let i = 0; i < t.length; i += 2) i ? g.lineTo(X(t[i]), Z(t[i + 1])) : g.moveTo(X(t[i]), Z(t[i + 1]));
-      g.lineTo(X(nav.dr.x), Z(nav.dr.z)); g.stroke(); g.setLineDash([]);
-      for (const f of nav.fixes) {
-        const px = X(f.x), pz = Z(f.z);
-        g.beginPath(); g.moveTo(px, pz - 6); g.lineTo(px + 5.5, pz + 4); g.lineTo(px - 5.5, pz + 4); g.closePath(); g.strokeStyle = PENCIL; g.lineWidth = 1.5; g.stroke();
-      }
-      const px = X(nav.dr.x), pz = Z(nav.dr.z), ur = nav.uncertainty * S;
-      g.fillStyle = 'rgba(59,59,59,0.10)'; g.strokeStyle = 'rgba(59,59,59,0.55)'; g.lineWidth = 1;
-      g.beginPath(); g.arc(px, pz, Math.max(ur, 5), 0, 7); g.fill(); g.stroke();
-      g.strokeStyle = PENCIL; g.lineWidth = 2; g.beginPath(); g.moveTo(px - 7, pz); g.lineTo(px + 7, pz); g.moveTo(px, pz - 7); g.lineTo(px, pz + 7); g.stroke();
-      g.font = '600 11px ui-monospace, Menlo, monospace'; g.textAlign = 'left'; g.fillStyle = PENCIL;
-      g.fillText('DR', px + 9, pz - 9);
-    }
-    if (opts.gps && opts.ac) {
+    if (opts.ac) {
       const px = X(opts.ac.pos.x), pz = Z(opts.ac.pos.z);
       g.save(); g.translate(px, pz); g.rotate(opts.ac.heading * D2R);
-      g.fillStyle = '#d0301a'; g.strokeStyle = '#fff'; g.lineWidth = 1.2;
+      g.fillStyle = '#fff'; g.strokeStyle = '#0a0e13'; g.lineWidth = 1.5; g.shadowColor = 'rgba(116,215,244,0.9)'; g.shadowBlur = 8;
       g.beginPath(); g.moveTo(0, -11); g.lineTo(3, -2); g.lineTo(11, 3); g.lineTo(3, 3); g.lineTo(2, 9); g.lineTo(-2, 9); g.lineTo(-3, 3); g.lineTo(-11, 3); g.lineTo(-3, -2); g.closePath(); g.fill(); g.stroke();
       g.restore();
     }
 
     // Scale bar
     const barNm = [5, 10, 20, 50].find((v) => v * NM * S > 60) || 50, bw = barNm * NM * S;
-    g.fillStyle = 'rgba(244,238,220,0.9)'; g.fillRect(12, h - 34, bw + 16, 24);
-    g.strokeStyle = INK; g.lineWidth = 2; g.beginPath(); g.moveTo(20, h - 24); g.lineTo(20, h - 18); g.lineTo(20 + bw, h - 18); g.lineTo(20 + bw, h - 24); g.stroke();
-    g.fillStyle = INK; g.font = '10px ui-monospace, Menlo, monospace'; g.textAlign = 'center'; g.textBaseline = 'alphabetic'; g.fillText(`${barNm} NM`, 20 + bw / 2, h - 22);
+    g.fillStyle = PLATE; g.fillRect(12, h - 34, bw + 16, 24);
+    g.strokeStyle = INK; g.lineWidth = 1.5; g.beginPath(); g.moveTo(20, h - 24); g.lineTo(20, h - 18); g.lineTo(20 + bw, h - 18); g.lineTo(20 + bw, h - 24); g.stroke();
+    g.fillStyle = INK; g.font = `600 10.5px ${SANS}`; g.textAlign = 'center'; g.textBaseline = 'alphabetic'; g.fillText(`${barNm} NM`, 20 + bw / 2, h - 22);
     g.restore();
   }
 
   drawWeather(g, w, h, wx, X, Z) {
-    const S = this.scale;
+    const S = this.scale / (this._u || 1);
     g.save();
     // Wind arrows at 5,000 ft on a coarse grid
     const o = { x: 0, z: 0 }, stepPx = 64;
-    g.strokeStyle = 'rgba(20,40,90,0.55)'; g.fillStyle = 'rgba(20,40,90,0.75)'; g.lineWidth = 1.3; g.font = '9px ui-monospace, Menlo, monospace'; g.textAlign = 'center';
+    g.strokeStyle = 'rgba(200,222,238,0.5)'; g.fillStyle = 'rgba(200,222,238,0.8)'; g.lineWidth = 1.2; g.font = `500 9.5px ${SANS}`; g.textAlign = 'center';
     for (let py = stepPx / 2; py < h; py += stepPx) for (let px = stepPx / 2; px < w; px += stepPx) {
       const x = this.cx + (px - w / 2) / S, z = this.cz + (py - h / 2) / S;
       wx.wind(x, z, 1500, 0, o);
@@ -181,14 +154,14 @@ export class Chart {
     }
     // Fog banks
     for (const f of wx.fogs) {
-      g.fillStyle = 'rgba(200,170,60,0.25)'; g.strokeStyle = 'rgba(150,120,20,0.8)'; g.lineWidth = 1.5; g.setLineDash([4, 3]);
+      g.fillStyle = 'rgba(255,182,73,0.16)'; g.strokeStyle = 'rgba(255,182,73,0.8)'; g.lineWidth = 1.5; g.setLineDash([4, 3]);
       g.beginPath(); g.arc(X(f.x), Z(f.z), f.r * S, 0, 7); g.fill(); g.stroke(); g.setLineDash([]);
-      g.fillStyle = 'rgba(120,95,10,0.95)'; g.font = '700 12px ui-sans-serif, system-ui, sans-serif'; g.fillText('FOG', X(f.x), Z(f.z) + 4);
+      g.fillStyle = '#ffb649'; g.font = `700 11px ${SANS}`; g.fillText('FOG', X(f.x), Z(f.z) + 4);
     }
     // Thunderstorm cells
     for (const c of wx.cells) {
       const ph = c.age / c.life, px = X(c.x), pz = Z(c.z), rr = Math.max(5, c.r * S);
-      g.strokeStyle = `rgba(190,30,30,${0.35 + 0.6 * Math.sin(Math.PI * ph)})`; g.lineWidth = 2;
+      g.strokeStyle = `rgba(255,98,80,${0.35 + 0.6 * Math.sin(Math.PI * ph)})`; g.lineWidth = 1.75;
       g.beginPath();
       for (let k = 0; k < 8; k++) { const a = (k / 8) * 6.283; g.moveTo(px + Math.cos(a) * rr + rr * 0.42, pz + Math.sin(a) * rr); g.arc(px + Math.cos(a) * rr, pz + Math.sin(a) * rr, rr * 0.42, 0, 7); }
       g.stroke();
@@ -196,12 +169,12 @@ export class Chart {
     // Pressure centres and fronts
     for (const l of wx.lows) {
       const px = X(l.x), pz = Z(l.z);
-      g.fillStyle = '#b3201a'; g.font = '700 26px ui-serif, Georgia, serif'; g.textAlign = 'center'; g.fillText('L', px, pz + 9);
+      g.fillStyle = '#ff6250'; g.font = `700 24px ${SANS}`; g.textAlign = 'center'; g.fillText('L', px, pz + 9);
       if (!l.fronts) continue;
-      for (const [th0, curl, len, col, warm] of [[l.thC, l.curlC, 2.4, '#1746b0', false], [l.thW, l.curlW, 1.6, '#c0201a', true]]) {
+      for (const [th0, curl, len, col, warm] of [[l.thC, l.curlC, 2.4, '#5b9cff', false], [l.thW, l.curlW, 1.6, '#ff6250', true]]) {
         const pts = [];
         for (let ds = 0.12; ds <= len; ds += 0.06) { const th = th0 + curl * ds; pts.push([X(l.x + Math.cos(th) * ds * l.sig), Z(l.z - Math.sin(th) * ds * l.sig)]); }
-        g.strokeStyle = col; g.fillStyle = col; g.lineWidth = 2.5; g.beginPath(); pts.forEach((p, i) => (i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1]))); g.stroke();
+        g.strokeStyle = col; g.fillStyle = col; g.lineWidth = 2.25; g.beginPath(); pts.forEach((p, i) => (i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1]))); g.stroke();
         // pips on the advancing side
         let acc = 0;
         for (let i = 1; i < pts.length; i++) {
@@ -217,7 +190,7 @@ export class Chart {
         }
       }
     }
-    for (const hh of wx.highs) { g.fillStyle = '#1746b0'; g.font = '700 26px ui-serif, Georgia, serif'; g.textAlign = 'center'; g.fillText('H', X(hh.x), Z(hh.z) + 9); }
+    for (const hh of wx.highs) { g.fillStyle = '#5b9cff'; g.font = `700 24px ${SANS}`; g.textAlign = 'center'; g.fillText('H', X(hh.x), Z(hh.z) + 9); }
     g.restore();
   }
 }

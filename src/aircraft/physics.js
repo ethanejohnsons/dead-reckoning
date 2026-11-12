@@ -1,4 +1,5 @@
-// Flight model for the Wayfarer, a single-engine turboprop bush plane.
+// Flight model for the Skyhawk-class trainer: a four-seat, high-wing piston single
+// with a fixed-pitch propeller and fixed tricycle gear.
 // Forces come from real lift/drag/thrust physics (stalls, slips, wind and
 // ground effect all emerge from it). Pitch uses a rate-command law with
 // auto-trim so the aircraft holds the attitude you leave it in.
@@ -7,49 +8,50 @@
 
 import { Vector3, Quaternion } from 'three';
 import { clamp, smoothstep, noise1 } from '../core/noise.js';
+import { AIRCRAFT } from './variants.js';
 
 export const G = 9.81;
 export const RHO0 = 1.225;
 export const KT = 1.94384, FT = 3.28084, NM = 1852;
 export const airDensity = (alt) => RHO0 * Math.exp(-alt / 8500);
 
-export const SPEC = {
-  mass: 2900, S: 26, span: 15.9,
-  Ipitch: 9500, Iyaw: 17000, Iroll: 8500,
-  CL0: 0.27, CLa: 5.0, CD0: 0.027, K: 0.046,
-  power: 520e3, propEff: 0.82, staticThrust: 9500,
-  fuelCap: 1000, fuelFlow: 0.042,           // kg, kg/s at full power
-  // Wheel contact points (body frame): two mains just aft of the CG, one nose wheel.
-  wheels: [
-    { x: -1.7, y: -1.75, z: 0.3, k: 95e3, c: 12e3, main: true },
-    { x: 1.7, y: -1.75, z: 0.3, k: 95e3, c: 12e3, main: true },
-    { x: 0, y: -1.75, z: -3.1, k: 45e3, c: 7e3, main: false },
-  ],
-  // Points that must never touch the ground: nose, tail, wingtips, belly.
-  hull: [[0, 0.1, -5.2], [0, 0.9, 6.0], [-7.9, 1.25, 0.3], [7.9, 1.25, 0.3], [0, -0.85, 0.5]],
-  gearHeight: 1.6,
-};
+// The numbers come per aircraft (see variants.js): `new Aircraft(spec)` or `ac.setSpec(spec)`. SPEC is the
+// 172's set, kept for readers that want a default; the aircraft being flown is always `ac.spec`.
+export const SPEC = AIRCRAFT[0].spec;
 
-const QREF = 0.5 * RHO0 * 60 * 60;
 const D2R = Math.PI / 180;
 
 const v1 = new Vector3(), v2 = new Vector3(), v3 = new Vector3(), v4 = new Vector3();
 const F = new Vector3(), TQ = new Vector3(), qInv = new Quaternion(), dq = new Quaternion();
-const fwd = new Vector3(), right = new Vector3(), up = new Vector3();
+const fwd = new Vector3(), right = new Vector3(), up = new Vector3(), nrm = new Vector3(), v5 = new Vector3(), v6 = new Vector3();
+
+/** Unit normal of the ground at (x, z), into `out`. */
+function groundNormal(env, x, z, out) {
+  const e = 1.5;
+  return out.set(env.ground(x - e, z) - env.ground(x + e, z), 2 * e, env.ground(x, z - e) - env.ground(x, z + e)).normalize();
+}
+const STRIKE_REASON = { nose: 'Flew into the ground', tail: 'Broke the tail on the ground', tipL: 'Wingtip struck the ground', tipR: 'Wingtip struck the ground', belly: 'Struck the ground', top: 'Came down inverted' };
 
 export class Aircraft {
-  constructor() {
+  constructor(spec = SPEC) {
+    this.spec = spec;
     this.pos = new Vector3(); this.vel = new Vector3();
     this.quat = new Quaternion(); this.omega = new Vector3();
-    this.throttle = 0; this.thrustLevel = 0;
+    this.throttle = 0; this.thrustLevel = 0; this.rpm = 0;
     this.flapTarget = 0; this.flap = 0;           // 0, 0.5, 1
     this.brake = 0;
     this.elev = 0; this.ail = 0; this.rud = 0;    // surface deflections -1..1
     this.trimI = 0;
-    this.ice = 0; this.fuel = SPEC.fuelCap;
+    this.ice = 0; this.fuel = spec.fuelCap;
     this.onGround = false; this.wheelsDown = 0;
     this.crashed = null;                           // reason string once crashed
-    this.touchdown = null;                         // {sink, speed} of the last touchdown
+    this.touchdown = null;                         // {sink, closing, speed, t, hard} of the last touchdown
+    // Light contact of anything but the wheels (see the hull points in variants.js):
+    this.scrape = 0;                               // 0..1, how hard something is dragging along the ground right now
+    this.scrapePart = null;                        // 'tail' | 'nose' | 'tipL' | 'tipR' | 'belly' while it does
+    this.strike = null;                            // {part, vn, speed, t}: a new object each time a part first touches
+    this.strikes = 0;
+    this._hullT = {};
     this.t = 0;
     // Air data, refreshed every step
     this.alpha = 0; this.beta = 0; this.tas = 0; this.ias = 0; this.stall = 0;
@@ -57,13 +59,17 @@ export class Aircraft {
     this.surface = 'paved';
   }
 
+  /** Take on another variant's numbers (call before placing the aircraft). */
+  setSpec(spec) { this.spec = spec; this.fuel = spec.fuelCap; }
+
   /** Place the aircraft at rest on the ground, pointing along heading (deg true). */
   placeOnGround(x, z, groundY, headingDeg) {
-    this.pos.set(x, groundY + SPEC.gearHeight + 0.02, z);
+    this.pos.set(x, groundY + this.spec.gearHeight + 0.02, z);
     this.vel.set(0, 0, 0); this.omega.set(0, 0, 0);
     this.quat.setFromAxisAngle(v1.set(0, 1, 0), -headingDeg * D2R);
     this.throttle = 0; this.thrustLevel = 0; this.flapTarget = 0; this.flap = 0; this.brake = 1;
     this.trimI = 0; this.ice = 0; this.crashed = null; this.touchdown = null;
+    this.scrape = 0; this.scrapePart = null; this.strike = null; this._hullT = {};
     this.onGround = true; this.maxAgl = 0; this.agl = 0;
   }
 
@@ -74,6 +80,7 @@ export class Aircraft {
     this.vel.set(0, 0, -speed).applyQuaternion(this.quat);
     this.omega.set(0, 0, 0); this.trimI = 0; this.throttle = 0.7; this.thrustLevel = 0.7;
     this.crashed = null; this.onGround = false; this.flap = this.flapTarget = 0; this.maxAgl = 100;
+    this.scrape = 0; this.scrapePart = null; this.strike = null; this._hullT = {}; this.wheelsDown = 0;
   }
 
   get heading() { fwd.set(0, 0, -1).applyQuaternion(this.quat); return (Math.atan2(fwd.x, -fwd.z) / D2R + 360) % 360; }
@@ -95,14 +102,14 @@ export class Aircraft {
   step(dt, input, env) {
     if (this.crashed) return;
     this.t += dt;
-    const q = this.quat;
+    const S = this.spec, q = this.quat, QREF = 0.5 * RHO0 * S.vRef * S.vRef;      // dynamic pressure the control gains are quoted at
     const rho = airDensity(this.pos.y);
 
     // Slew actuators and engine
     this.flap += clamp(this.flapTarget - this.flap, -dt * 0.22, dt * 0.22);
     const thrTarget = this.fuel > 0 ? this.throttle : 0;
     this.thrustLevel += (thrTarget - this.thrustLevel) * Math.min(1, dt / 0.9);
-    this.fuel = Math.max(0, this.fuel - SPEC.fuelFlow * (0.12 + 0.88 * this.thrustLevel) * dt);
+    this.fuel = Math.max(0, this.fuel - S.fuelFlow * (0.12 + 0.88 * this.thrustLevel) * dt);
 
     // --- Air data
     qInv.copy(q).invert();
@@ -115,16 +122,16 @@ export class Aircraft {
 
     // --- Lift, drag, side force
     const ice = this.ice, flap = this.flap;
-    const aStall = (15.5 - 2.5 * flap - 5 * ice) * D2R;
+    const aStall = (S.aStall - 2.5 * flap - 5 * ice) * D2R;
     const sig = Math.max(smoothstep(aStall, aStall + 7 * D2R, alpha), smoothstep(11 * D2R, 17 * D2R, -alpha));
     this.stall = sig;
-    const CLlin = SPEC.CL0 + 0.62 * flap + SPEC.CLa * alpha;
+    const CLlin = S.CL0 + 0.7 * flap + S.CLa * alpha;
     const CLflat = 1.05 * Math.sin(2 * alpha);
     const CL = (CLlin + (CLflat - CLlin) * sig) * (1 - 0.25 * ice);
     // Ground effect trims induced drag within a wingspan of the surface.
-    const ge = 1 - 0.45 * Math.exp(-Math.pow(Math.max(this.agl, 0) / (0.35 * SPEC.span), 2));
+    const ge = 1 - S.groundEffect * Math.exp(-Math.pow(Math.max(this.agl, 0) / (0.35 * S.span), 2));
     const s2 = Math.sin(alpha);
-    let CD = SPEC.CD0 + 0.012 + 0.055 * flap * flap + 0.02 * flap + SPEC.K * ge * CLlin * CLlin;
+    let CD = S.CD0 + 0.012 + (0.055 * flap * flap + 0.02 * flap) * S.flapDrag + S.K * ge * CLlin * CLlin;
     CD = CD + (0.12 + 1.7 * s2 * s2 - CD) * sig;
     CD = CD * (1 + 1.6 * ice) + 0.35 * Math.sin(beta) * Math.sin(beta);
     const CY = -0.95 * clamp(beta, -0.5, 0.5);
@@ -133,37 +140,50 @@ export class Aircraft {
     if (V > 0.5) {
       const vh = v2.copy(vb).multiplyScalar(1 / V);
       const lift = v3.set(0, -vh.z, vh.y).normalize();             // X cross v
-      const qS = qbar * SPEC.S;
+      const qS = qbar * S.S;
       F.addScaledVector(lift, qS * CL).addScaledVector(vh, -qS * CD);
       F.x += qS * CY;
     }
-    // Thrust: constant-power prop, capped at static thrust; thinner air, less power.
+    // Thrust: fixed-pitch prop. Strongest standing still, fading with airspeed; thinner air, less power.
     const dens = Math.pow(rho / RHO0, 0.75);
-    const thrust = this.thrustLevel * Math.min(SPEC.staticThrust, (SPEC.power * SPEC.propEff) / Math.max(V, 1)) * dens
-      - (1 - this.thrustLevel) * 0.012 * qbar * SPEC.S * 0.3;       // windmilling drag at idle
+    const full = Math.min(S.staticThrust * Math.max(0, 1 - V / S.propZero), (S.power * S.propEff) / Math.max(V, 1));
+    // The lever sets power more than thrust, so the first part of its travel does the most.
+    const tl = this.thrustLevel, pull = tl * (1.55 - 0.55 * tl);
+    const thrust = pull * full * dens
+      - (1 - tl) * 0.012 * qbar * S.S * 0.3;                     // windmilling drag at idle
+    // Engine speed for the tachometer: a fixed-pitch prop unloads and spins up as the aircraft accelerates.
+    const rpmT = this.fuel > 0 ? Math.min(S.rpmMax, S.rpmIdle + (S.rpmStatic - S.rpmIdle) * Math.pow(tl, 0.8) + S.rpmWind * u * (0.25 + 0.75 * tl)) : clamp(u * 22, 0, 1100);
+    this.rpm += (rpmT - this.rpm) * Math.min(1, dt * 4);
     F.z -= thrust;
     const Faero = v4.copy(F);
     F.applyQuaternion(q);
-    F.y -= SPEC.mass * G;
+    F.y -= S.mass * G;
 
     // --- Control law and aerodynamic moments (expressed as angular accelerations)
     const om = this.omega;
     const wow = this.wheelsDown > 0;
     let de;
     if (wow) {
-      de = input.pitch; this.trimI = 0;
+      // Direct elevator on the ground, eased off as the nose comes up so the tail cannot be dragged.
+      de = Math.min(input.pitch, (S.rotatePitch - this.pitch) * 9); this.trimI = 0;
     } else {
-      const qMax = Math.min(0.62, (2.7 * G) / Math.max(V, 30));
+      const qMax = Math.min(S.pitchRate, (S.gPull * G) / Math.max(V, 30));
       // Turn compensation: add the pitch rate a level, coordinated turn needs at this
       // bank angle, so rolling into a turn doesn't immediately drop the nose.
       const bank = Math.min(Math.abs(this.bank), 0.9);
-      const qTurn = (G / Math.max(V, 25)) * Math.sin(bank) * Math.tan(bank) * (1 - smoothstep(0.6, 0.9, bank) * 0.5);
-      const qCmd = input.pitch * (input.pitch > 0 ? qMax : qMax * 0.7) + qTurn * (1 - sig);
+      const qTurn = (G / Math.max(V, 20)) * Math.sin(bank) * Math.tan(bank) * (1 - smoothstep(0.6, 0.9, bank) * 0.5);
+      // Rolling into a steeper bank needs more lift; feed the extra angle of attack in as the bank
+      // changes (and take it out again rolling level) so the flight path does not sag or balloon.
+      const steep = Math.abs(this.bank) < 0.9 ? -om.z * Math.sign(this.bank) : 0;
+      const qLoad = (Math.min(1.2, (S.mass * G) / (Math.max(qbar, 80) * S.S)) / S.CLa) * (Math.tan(bank) / Math.cos(bank)) * steep;
+      const qCmd = input.pitch * (input.pitch > 0 ? qMax : qMax * 0.7) + (qTurn + qLoad) * (1 - sig);
       const err = qCmd - om.x;
-      const raw = 1.6 * err + this.trimI;
+      const raw = S.pitchGain * err + this.trimI;
       de = clamp(raw, -1, 1);
       if (raw === de || Math.sign(err) !== Math.sign(raw)) this.trimI = clamp(this.trimI + 5.5 * err * dt, -0.85, 0.85);
     }
+    // The tail on the runway stops the rotation: for a moment after it touches, the elevator cannot ask for more nose-up.
+    if (this.t - (this._hullT.tail ?? -9) < 0.3) { de = Math.min(de, -0.2); this.trimI = Math.min(this.trimI, 0); }
     const slew = dt * 6;
     this.elev += clamp(de - this.elev, -slew, slew);
     this.ail += clamp(input.roll - this.ail, -slew, slew);
@@ -171,9 +191,17 @@ export class Aircraft {
 
     const auth = 1 - 0.45 * sig;                                    // controls go mushy in the stall
     const t = this.t, tb = env.turb;
-    let aPitch = qn * (3.5 * this.elev * auth - 9.5 * (alpha - 2 * D2R) - 2.2 * sig) - 3.2 * sqn * om.x;
-    let aRollR = qn * (4.6 * this.ail * auth - 2.2 * beta) - 4.2 * sqn * -om.z + 0.35 * sqn * -om.y;
-    let aYawR = qn * (1.25 * this.rud + 6.5 * beta - 0.22 * this.ail) - 2.6 * sqn * -om.y;
+    // The propeller blows over the tail, so elevator and rudder still bite at low speed with power on.
+    const qt = qn + 0.3 * Math.max(thrust, 0) / S.washRef;
+    // Yaw rate of a balanced turn at this bank. Yaw damping works about it rather than about zero,
+    // so a banked aircraft turns without skidding and needs no rudder to stay coordinated.
+    const bk = this.bank;
+    const rTurn = wow ? 0 : (G / Math.max(V, 20)) * Math.sin(clamp(bk, -0.9, 0.9)) * (1 - sig) * (1 - smoothstep(1.2, 1.7, Math.abs(bk)));
+    const rErr = -om.y - rTurn;
+    let aPitch = qt * S.pitchPower * this.elev * auth - qn * (9.5 * (alpha - 2 * D2R) + 2.2 * sig) - S.pitchDamp * sqn * om.x;
+    // (the last term is a trace of spiral stability: left alone, a banked aircraft very slowly rolls level)
+    let aRollR = qn * (S.rollPower * this.ail * auth - 2.2 * beta) - S.rollDamp * sqn * -om.z + 0.35 * sqn * rErr - (wow ? 0 : 0.045 * sqn * Math.sin(bk));
+    let aYawR = qt * S.yawPower * this.rud + qn * (6.5 * beta - 0.22 * this.ail) - 2.6 * sqn * rErr;
     // Wing drop in the stall, and turbulence shaking the airframe.
     aRollR += qn * sig * 2.4 * noise1(t * 0.9, 5);
     if (tb > 0.01) {
@@ -181,16 +209,16 @@ export class Aircraft {
       aRollR += tb * sqn * 3.0 * noise1(t * 1.3, 12);
       aYawR += tb * sqn * 1.2 * noise1(t * 1.1, 13);
     }
-    TQ.set(aPitch * SPEC.Ipitch, -aYawR * SPEC.Iyaw, -aRollR * SPEC.Iroll);
+    TQ.set(aPitch * S.Ipitch, -aYawR * S.Iyaw, -aRollR * S.Iroll);
 
     // --- Landing gear and ground contact
     let down = 0;
-    this.agl = this.pos.y - SPEC.gearHeight - env.ground(this.pos.x, this.pos.z);
+    this.agl = this.pos.y - S.gearHeight - env.ground(this.pos.x, this.pos.z);
     if (this.agl > this.maxAgl) this.maxAgl = this.agl;
     if (this.agl < 25) {
       fwd.set(0, 0, -1).applyQuaternion(q); right.set(1, 0, 0).applyQuaternion(q);
-      const steer = input.yaw * 0.34 * clamp(1.1 - this.groundSpeed / 30, 0.08, 1);
-      for (const w of SPEC.wheels) {
+      const steer = input.yaw * 0.34 * clamp(1.1 - this.groundSpeed / 22, 0.08, 1);
+      for (const w of S.wheels) {
         const r = v1.set(w.x, w.y, w.z).applyQuaternion(q);
         const px = this.pos.x + r.x, py = this.pos.y + r.y, pz = this.pos.z + r.z;
         const gy = env.ground(px, pz);
@@ -200,12 +228,14 @@ export class Aircraft {
         if (surf === 'water') { this.crashed = 'Ditched in the water'; return; }
         // velocity of the contact point: v + omega x r (omega is body-frame)
         const pv = v2.copy(om).applyQuaternion(q).cross(r).add(this.vel);
-        const Nf = clamp(w.k * pen - w.c * pv.y, 0, SPEC.mass * G * 5);
+        // Spring-steel legs: firm going down, lightly damped coming back, so a hard arrival is thrown back into the air.
+        const Nf = clamp(w.k * pen - w.c * pv.y * (pv.y > 0 && w.main ? S.gearRebound : 1), 0, S.mass * G * 5);
         if (Nf <= 0) continue;
         if (down === 0 && !this.onGround) {
-          const sink = -this.vel.y;
-          this.touchdown = { sink, speed: this.groundSpeed, t: this.t };
-          if (sink > 6.2) { this.crashed = 'Hit the ground too hard'; return; }
+          // Closing speed along the ground's own normal, so flying level into a hillside counts as well as sinking onto a runway.
+          const sink = -this.vel.y, closing = Math.max(sink, -this.vel.dot(groundNormal(env, px, pz, nrm)));
+          this.touchdown = { sink, closing, speed: this.groundSpeed, t: this.t, hard: closing > 3 };
+          if (closing > S.sinkMax) { this.crashed = sink > 0.7 * closing ? 'Hit the ground too hard' : 'Flew into terrain'; return; }
         }
         down++;
         // Wheel heading on the ground plane (nose wheel steers).
@@ -217,7 +247,7 @@ export class Aircraft {
         const mu = surf === 'paved' ? 0.8 : 0.6;
         const roll = surf === 'paved' ? 0.02 : surf === 'gravel' ? 0.035 : 0.075;
         const fLat = -clamp(vLat * Nf * 2.2, -mu * Nf, mu * Nf);
-        const fLong = -clamp(vLong / 0.4, -1, 1) * Nf * (roll + (w.main ? this.brake * 0.42 : 0));
+        const fLong = -clamp(vLong / 0.4, -1, 1) * Nf * (roll + (w.main ? this.brake * S.brake : 0));
         const fx = fLat * sx + fLong * hx, fz = fLat * sz + fLong * hz;
         F.x += fx; F.y += Nf; F.z += fz;
         // Torque: normal force at the wheel, friction applied at CG height (yaw only).
@@ -225,25 +255,47 @@ export class Aircraft {
         TQ.add(v3.applyQuaternion(qInv));
         this.surface = surf;
       }
-      // Anything other than wheels touching the ground is a crash.
-      if (this.groundSpeed > 9 || Math.abs(this.vel.y) > 3) {
-        for (const h of SPEC.hull) {
-          const r = v1.set(h[0], h[1], h[2]).applyQuaternion(q);
-          if (env.ground(this.pos.x + r.x, this.pos.z + r.z) - (this.pos.y + r.y) > 0.15) {
-            this.crashed = h[0] !== 0 ? 'Wingtip struck the ground' : h[2] < 0 ? 'Flew into terrain' : 'Struck the ground';
-            return;
-          }
-        }
+      // Anything else that meets the ground. A light touch is survivable: the part pushes back and drags
+      // (a tail scrape on over-rotation nudges the nose down and bleeds speed, a wingtip on the grass
+      // swings the aircraft round it). It is a crash only when the part arrives faster than it can take,
+      // when a wingtip digs in at speed (a cartwheel), or when the aircraft comes down on its back.
+      let scr = 0, part = null;
+      up.set(0, 1, 0).applyQuaternion(q);
+      for (const h of S.hull) {
+        const r = v1.set(h.p[0], h.p[1], h.p[2]).applyQuaternion(q);
+        const px = this.pos.x + r.x, py = this.pos.y + r.y, pz = this.pos.z + r.z;
+        const pen = env.ground(px, pz) - py;
+        if (pen <= 0) continue;
+        const n = groundNormal(env, px, pz, nrm);
+        const pv = v2.copy(om).applyQuaternion(q).cross(r).add(this.vel);
+        const vn = -pv.dot(n), slide = v5.copy(pv).addScaledVector(n, vn), vs = slide.length(), speed = this.vel.length();
+        if (env.surface(px, pz) === 'water' && speed > 6) { this.crashed = 'Ditched in the water'; return; }
+        const tip = h.part === 'tipL' || h.part === 'tipR';
+        if ((h.part === 'top' || up.y < 0.25) && speed > 3) { this.crashed = up.y < 0 ? 'Came down inverted' : 'Cartwheeled'; return; }
+        if (vn > h.vMax) { this.crashed = STRIKE_REASON[h.part]; return; }
+        if (tip && vs > S.tipDrag && (pen > 0.03 || vn > 1.2 || vs > 1.5 * S.tipDrag)) { this.crashed = 'Wingtip dug in'; return; }
+        const Nf = clamp(h.k * pen + h.c * vn, 0, S.mass * G * 4);
+        if (Nf <= 0) continue;
+        const mu = (h.part === 'belly' ? 0.5 : 0.75) * Math.min(1, vs / 0.5);
+        v3.copy(n).multiplyScalar(Nf); if (vs > 1e-4) v3.addScaledVector(slide, (-mu * Nf) / vs);
+        F.add(v3);
+        TQ.add(v6.copy(r).cross(v3).applyQuaternion(qInv));
+        const level = clamp(vs / 25, 0, 1) * clamp(Nf / (S.mass * G * 0.25), 0.2, 1);
+        if (level >= scr) { scr = level; part = h.part; }
+        if (this.t - (this._hullT[h.part] ?? -9) > 0.4) { this.strike = { part: h.part, vn, speed, t: this.t }; this.strikes++; }
+        this._hullT[h.part] = this.t;
       }
-    }
+      this.scrape += (scr - this.scrape) * Math.min(1, dt * (scr > this.scrape ? 40 : 7));
+      this.scrapePart = part || (this.scrape > 0.02 ? this.scrapePart : null);
+    } else { this.scrape = 0; this.scrapePart = null; }
     this.wheelsDown = down;
     this.onGround = down > 0;
 
     // --- Integrate
-    this.gLoad = Faero.y / (SPEC.mass * G);
-    this.vel.addScaledVector(F, dt / SPEC.mass);
+    this.gLoad = Faero.y / (S.mass * G);
+    this.vel.addScaledVector(F, dt / S.mass);
     this.pos.addScaledVector(this.vel, dt);
-    om.x += (TQ.x / SPEC.Ipitch) * dt; om.y += (TQ.y / SPEC.Iyaw) * dt; om.z += (TQ.z / SPEC.Iroll) * dt;
+    om.x += (TQ.x / S.Ipitch) * dt; om.y += (TQ.y / S.Iyaw) * dt; om.z += (TQ.z / S.Iroll) * dt;
     const wl = om.length();
     if (wl > 1e-7) {
       dq.setFromAxisAngle(v1.copy(om).multiplyScalar(1 / wl), wl * dt);

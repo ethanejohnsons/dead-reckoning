@@ -8,8 +8,9 @@ const AXES = {
   throttle: [['KeyR', 'Equal'], ['KeyF', 'Minus']],
 };
 const ACTIONS = {
-  KeyX: 'flapsDown', KeyZ: 'flapsUp', KeyC: 'camera', KeyM: 'chart', KeyT: 'timeAccel', KeyG: 'autopilot',
-  KeyN: 'tune', KeyH: 'help', Escape: 'pause', KeyP: 'pause', KeyL: 'gps', KeyO: 'weatherOverlay',
+  KeyC: 'camera', KeyM: 'chart', KeyT: 'timeAccel', KeyG: 'autopilot', KeyH: 'help', Escape: 'pause', KeyP: 'pause',
+  KeyV: 'wxPanel',
+  Backquote: 'debug',          // developer tools: not listed in the game's own help
 };
 
 export class Input {
@@ -19,7 +20,7 @@ export class Input {
     this.raw = { pitch: 0, roll: 0, yaw: 0, throttle: 0 };
     this.brake = 0;
     this.look = { yaw: 0, pitch: 0, dragging: false, idle: 0 };
-    this.zoom = 1;
+    this.zoom = 1; this.zoomTarget = 1;        // the wheel moves the target; the game eases zoom toward it every frame
     this.handlers = {};
     this.padPrev = [];
     this.enabled = true;
@@ -41,7 +42,7 @@ export class Input {
       this.look.yaw -= e.movementX * 0.005; this.look.pitch = Math.max(-1.2, Math.min(1.3, this.look.pitch + e.movementY * 0.004));
       this.look.idle = 0;
     });
-    el.addEventListener('wheel', (e) => { this.zoom = Math.max(0.5, Math.min(3, this.zoom * (e.deltaY > 0 ? 1.1 : 0.9))); e.preventDefault(); }, { passive: false });
+    el.addEventListener('wheel', (e) => { const px = e.deltaMode === 1 ? e.deltaY * 32 : e.deltaY; this.zoomTarget = Math.max(0.5, Math.min(3, this.zoomTarget * Math.exp(Math.max(-240, Math.min(240, px)) * 0.0011))); e.preventDefault(); }, { passive: false });
     el.addEventListener('dblclick', () => { this.look.yaw = 0; this.look.pitch = 0; });
   }
 
@@ -68,7 +69,7 @@ export class Input {
       r.throttle += b(7) - b(6);
       brake = Math.max(brake, b(0));
       const edge = (i, action) => { const d = b(i) > 0.5; if (d && !this.padPrev[i]) this.fire(action); this.padPrev[i] = d; };
-      edge(2, 'flapsDown'); edge(3, 'flapsUp'); edge(1, 'camera'); edge(9, 'pause'); edge(8, 'chart');
+      edge(1, 'camera'); edge(9, 'pause'); edge(8, 'chart'); edge(3, 'wxPanel');
     }
     if (!analog) {
       for (const k of ['pitch', 'roll', 'yaw']) {
