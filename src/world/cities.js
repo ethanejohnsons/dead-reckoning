@@ -41,8 +41,10 @@ import { ATMO_GLSL, ATMO_UNIFORMS } from './atmosphere.js';
 import { IMAGERY_GLSL, IMAGERY_UNIFORMS } from './imagery.js';
 import { FullscreenQuad, fsMaterial } from '../render/fullscreen.js';
 
+const FACADE_URL = `${import.meta.env.BASE_URL}facades/`, FAC_N = 11;      // wall materials: public/facades, one layer each (tools/bake-facades.py)
+
 /** The credit OpenFreeMap asks for, for the title screen. */
-export const CITY_ATTRIBUTION = 'Buildings: OpenFreeMap © OpenMapTiles, data from OpenStreetMap (openstreetmap.org/copyright)';
+export const CITY_ATTRIBUTION = 'Buildings: OpenFreeMap © OpenMapTiles, data from OpenStreetMap (openstreetmap.org/copyright); wall materials from ambientCG.com (CC0)';
 
 const Z = 14;                              // the only zoom that carries every building with its height
 const TIERS = {                            // R0 near, R1 mid, SKY tall (m); upload budget a frame (bytes)
@@ -95,6 +97,7 @@ centroid varying vec3 vWorld, vN, vCol;
 centroid varying vec4 vW;     // along the wall, above the ground, how far the building has risen, distance
 centroid varying vec2 vLight, vImg;
 flat varying vec4 vK;         // surface, glazing, random, roof sampled at the middle
+flat varying float vMat;      // a wall's material (a layer of tFacade, from 1; 0 or over 100: none)
 ${LIGHT_GLSL}
 void main() {
   vec4 wp = modelMatrix * vec4(position, 1.0);
@@ -108,6 +111,7 @@ void main() {
   vW = vec4(uv, grow, d);
   vK = vec4(aK.x, style, aCol.a * 255.0, central);
   vImg = wp.xz + (aK.zw - 128.0);
+  vMat = aK.z;
   float hReg = regionHeight(wp.xz);
   vLight = vec2(terrainShadow(wp.xyz, hReg) * (1.0 - 0.9 * cloudShadow(wp.xyz)), skyOcclusion(wp.xyz, hReg));
   gl_Position = projectionMatrix * viewMatrix * wp;
@@ -120,6 +124,12 @@ centroid varying vec3 vWorld, vN, vCol;
 centroid varying vec4 vW;
 centroid varying vec2 vLight, vImg;
 flat varying vec4 vK;
+flat varying float vMat;
+// Wall materials (public/facades, tools/bake-facades.py): photographed surfaces and whole facades, one to a layer.
+uniform mediump sampler2DArray tFacade;
+uniform vec4 uFacA[FAC_N];    // metres a tile covers across and up; window cells across and up (0: a plain surface)
+uniform vec4 uFacB[FAC_N];    // the mean colour of the part that takes the building's colour; (a facade) 1 when its glass takes it too, (a surface) how strongly it shows
+uniform float uFacOn;         // 1 once the pictures are loaded
 ${LIGHT_GLSL}
 ${ATMO_GLSL}
 ${IMAGERY_GLSL}
@@ -131,29 +141,62 @@ void main() {
   float glass = 0.0, F0 = 0.06, low = 1.0;
   float grain = texture2D(tDetail, vWorld.xz / 23.0).g;
   if (kind < 0.5) {
-    // ---- a wall: cladding, and the windows its kind of building has
+    // ---- a wall: its material, and the windows its kind of building has
     float streak = texture2D(tDetail, vec2(vW.x / 9.0, vW.y / 90.0)).r;
     low = smoothstep(0.0, 2.5, vW.y);
-    vec3 pane = vec3(0.035, 0.05, 0.065), panel = alb * (0.84 + 0.3 * streak) * mix(0.72, 1.0, smoothstep(0.0, 1.1, vW.y));
-    if (style > 0.5) {
+    // The material: a photographed surface in the building's own colour (the picture over its mean), or a whole
+    // facade, whose windows then stand for the drawn ones: their glass is the picture's mask, their cells its grid.
+    int mi = uFacOn > 0.5 && vMat > 0.5 && vMat < 99.5 ? int(vMat + 0.5) : 0;
+    vec4 fA = vec4(0.0), fB = vec4(1.0), ftx = vec4(1.0, 1.0, 1.0, 0.0);
+    vec2 fuv = vec2(0.0);
+    if (mi > 0) {
+      fA = uFacA[mi - 1]; fB = uFacB[mi - 1];
+      fuv = vec2(vW.x, max(vW.y, 0.0)) / fA.xy;
+      if (fA.z > 0.5) fuv.x += floor(fract(seed * 0.618) * fA.z) / fA.z; else fuv += vec2(fract(seed * 0.618), fract(seed * 0.377));
+      ftx = texture(tFacade, vec3(fuv, float(mi - 1)));
+      ftx.rgb /= fB.rgb;
+      if (fA.z < 0.5) ftx.rgb = mix(vec3(1.0), ftx.rgb, fB.a);
+      else if (fB.a > 0.5) ftx.rgb = mix(vec3(1.0), ftx.rgb, 0.6);     // (a dark glass wall's pane-to-pane differences are large beside its mean)
+    }
+    bool facade = fA.z > 0.5;
+    float wear = (0.84 + 0.3 * streak) * mix(0.72, 1.0, smoothstep(0.0, 1.1, vW.y));
+    vec3 pane = vec3(0.035, 0.05, 0.065), panel = alb * wear;
+    if (mi > 0) panel = alb * clamp(ftx.rgb, 0.0, 3.0) * (facade ? mix(0.8, 1.0, smoothstep(0.0, 1.1, vW.y)) : mix(wear, 1.0, 0.5));
+    if (style > 0.5 || facade) {
       // storey height, bay width, half the window's share of a bay, the window's sill and head, the share of bays glazed, the share lit at night
       float fh = 2.8, bw = 3.4, wHalf = 0.19, wy0 = 0.95, wy1 = 2.15, some = 0.72, share = 0.16;
       vec3 lamp = vec3(1.0, 0.62, 0.28);
       if (style > 3.5) { fh = 3.7; bw = 6.0; wHalf = 0.485; wy0 = 1.05; wy1 = 2.75; some = 1.0; share = 0.3; lamp = vec3(1.0, 0.88, 0.68); F0 = 0.1; }
-      else if (style > 2.5) { fh = 3.9; bw = 1.5; wHalf = 0.47; wy0 = 0.85; wy1 = 3.8; some = 1.0; share = 0.28; lamp = vec3(0.96, 0.92, 0.82); F0 = 0.14 + 0.3 * fract(seed * 0.137); pane = alb * 0.55; panel = alb * 1.25; }
+      else if (style > 2.5) { fh = 3.9; bw = 1.5; wHalf = 0.47; wy0 = 0.85; wy1 = 3.8; some = 1.0; share = 0.28; lamp = vec3(0.96, 0.92, 0.82); F0 = 0.14 + 0.3 * fract(seed * 0.137); pane = alb * 0.55; if (mi == 0) panel = alb * 1.25; }
       else if (style > 1.5) { fh = 3.5; bw = 2.7; wHalf = 0.27; wy0 = 1.0; wy1 = 2.7; some = 1.0; share = 0.26; lamp = mix(vec3(1.0, 0.68, 0.34), vec3(1.0, 0.88, 0.66), step(128.0, seed)); }
       vec2 fw = vec2(fwidth(vW.x), fwidth(vW.y));
-      float y = max(vW.y, 0.0), fl = floor(y / fh), fy = y - fl * fh, bay = floor(vW.x / bw), fx = fract(vW.x / bw) - 0.5;
-      float band = clamp(min(fy - wy0, wy1 - fy) / max(fw.y, 0.02) + 0.5, 0.0, 1.0);
-      float colm = clamp((wHalf - abs(fx)) * bw / max(fw.x, 0.02) + 0.5, 0.0, 1.0);
-      float h1 = hashB(vec2(bay, fl) + seed * 0.37), h2 = hashB(vec2(fl * 1.31, seed));
-      float there = some < 1.0 ? step(1.0 - some, h1) : 1.0, up = step(0.01, vW.y);
-      // Once a window is about a pixel the grid gives way to its average, across and up separately (the floors of
-      // a tower still read as bands when its bays have long merged): nothing small and bright is left to twinkle.
-      float farX = smoothstep(0.4, 1.3, fw.x / (2.0 * wHalf * bw)), farY = smoothstep(0.4, 1.3, fw.y / (wy1 - wy0));
-      float meanX = 2.0 * wHalf * some, meanY = (wy1 - wy0) / fh, far = max(farX, farY);
-      float w = band * colm * there * up, mean = meanX * meanY * up;
-      glass = mix(colm * there, meanX, farX) * mix(band, meanY, farY) * up;
+      float y = max(vW.y, 0.0), up = step(0.01, vW.y), fl, bay, h1, w, mean, far;
+      if (facade) {
+        fh = fA.y / fA.w; bw = fA.x / fA.z;
+        fl = floor(fuv.y * fA.w); bay = floor(fuv.x * fA.z);
+        h1 = hashB(vec2(bay, fl) + seed * 0.37);
+        far = max(smoothstep(0.4, 1.3, fw.x / (0.6 * bw)), smoothstep(0.4, 1.3, fw.y / (0.5 * fh)));
+        glass = ftx.a * up; w = glass; mean = glass;
+        // the picture's own glass, or (a wall all of glass) glass in the building's colour
+        pane = mix(ftx.rgb * fB.rgb, panel, fB.a);
+        F0 = max(F0, 0.08);
+        share *= 0.62;          // (a facade's whole pane lights, where a drawn window is a part of its bay)
+      } else {
+        fl = floor(y / fh); bay = floor(vW.x / bw);
+        float fy = y - fl * fh, fx = fract(vW.x / bw) - 0.5;
+        float band = clamp(min(fy - wy0, wy1 - fy) / max(fw.y, 0.02) + 0.5, 0.0, 1.0);
+        float colm = clamp((wHalf - abs(fx)) * bw / max(fw.x, 0.02) + 0.5, 0.0, 1.0);
+        h1 = hashB(vec2(bay, fl) + seed * 0.37);
+        float there = some < 1.0 ? step(1.0 - some, h1) : 1.0;
+        // Once a window is about a pixel the grid gives way to its average, across and up separately (the floors of
+        // a tower still read as bands when its bays have long merged): nothing small and bright is left to twinkle.
+        float farX = smoothstep(0.4, 1.3, fw.x / (2.0 * wHalf * bw)), farY = smoothstep(0.4, 1.3, fw.y / (wy1 - wy0));
+        float meanX = 2.0 * wHalf * some, meanY = (wy1 - wy0) / fh;
+        far = max(farX, farY);
+        w = band * colm * there * up; mean = meanX * meanY * up;
+        glass = mix(colm * there, meanX, farX) * mix(band, meanY, farY) * up;
+      }
+      float h2 = hashB(vec2(fl * 1.31, seed));
       // Lit rooms: this window or that; in offices a floor here and there works late. Far off, where windows have
       // merged, the glow still varies floor by floor and from one stretch of wall to the next for as long as those
       // can be told apart, and some buildings are busier than others: a tower is never one even lamp.
@@ -164,8 +207,15 @@ void main() {
       float blockVar = mix(0.35 + 1.3 * hashB(vec2(floor(vW.x / (bw * 5.0)) + 7.0, fl * 0.5 + seed)), 1.0, smoothstep(0.5, 1.5, fw.x / (bw * 5.0)));
       float busy = 0.45 + 1.1 * fract(seed * 0.377);
       emit = lamp * busy * mix(w * on * bright, mean * share * floorVar * blockVar, far);
+      if (facade) {
+        // A lit pane is a room, not a lamp: dark below the sill line, brightest under the ceiling lights, uneven,
+        // and it keeps the pane's own frames and blinds. (Far off this is its average.)
+        float cy = fract(fuv.y * fA.w);
+        float room = smoothstep(0.06, 0.3, cy) * (0.5 + 0.5 * smoothstep(0.3, 0.92, cy)) * (0.7 + 0.5 * texture2D(tDetail, fuv * fA.zw * 0.37 + seed * 0.11).r);
+        emit *= mix(room, 0.6, far) * (0.55 + 0.45 * clamp(dot(ftx.rgb * fB.rgb, vec3(4.0)), 0.0, 1.0));
+      }
       // blinds drawn behind some panes
-      pane = mix(pane, vec3(0.30, 0.29, 0.26), (1.0 - far) * step(0.8, hashB(vec2(bay + 5.0, fl + 2.0) + seed)) * 0.7 * step(style, 2.5));
+      if (!facade) pane = mix(pane, vec3(0.30, 0.29, 0.26), (1.0 - far) * step(0.8, hashB(vec2(bay + 5.0, fl + 2.0) + seed)) * 0.7 * step(style, 2.5));
     }
     alb = mix(panel, pane, glass);
   } else if (kind < 2.5) {
@@ -445,8 +495,16 @@ export class Cities {
     scene.add(this.group);
     this.uFade = { value: new THREE.Vector2(1550, 2000) }; this.uLit = { value: 0 };
     this.uLevel = { value: 0 }; this.uViewH = { value: 1080 };
+    // wall materials: an empty array texture until the pictures arrive (loadFacades)
+    const blank = new THREE.DataArrayTexture(new Uint8Array(4 * FAC_N).fill(128), 1, 1, FAC_N); blank.needsUpdate = true;
+    this.uFacTex = { value: blank }; this.uFacOn = { value: 0 };
+    this.uFacA = { value: Array.from({ length: FAC_N }, () => new THREE.Vector4(1, 1, 0, 0)) };
+    this.uFacB = { value: Array.from({ length: FAC_N }, () => new THREE.Vector4(1, 1, 1, 0)) };
+    this.loadFacades();
     this.material = new THREE.ShaderMaterial({
-      uniforms: { ...shared(LIGHT_UNIFORMS), ...shared(ATMO_UNIFORMS), ...shared(IMAGERY_UNIFORMS), uCityFade: this.uFade, uCityLit: this.uLit },
+      uniforms: { ...shared(LIGHT_UNIFORMS), ...shared(ATMO_UNIFORMS), ...shared(IMAGERY_UNIFORMS), uCityFade: this.uFade, uCityLit: this.uLit,
+        tFacade: this.uFacTex, uFacA: this.uFacA, uFacB: this.uFacB, uFacOn: this.uFacOn },
+      defines: { FAC_N },
       vertexShader: VERT, fragmentShader: FRAG,
     });
     this.mats = [this.material];
@@ -524,6 +582,37 @@ export class Cities {
 
   /** Take the tiles from another server of the same schema (the address of its TileJSON), a mirror of one's own say. */
   setSource(url) { this.worker?.postMessage({ type: 'source', url }); this.pauseUntil = 0; this.fails = 0; }
+
+  /**
+   * Fetch the wall materials (public/facades: photographed surfaces and facades from ambientCG, CC0) into one array
+   * texture, a layer each with its mipmaps. Until they are in, and if they never arrive, walls are drawn as before.
+   */
+  async loadFacades() {
+    try {
+      const man = await (await fetch(`${FACADE_URL}manifest.json`)).json(), S = man.size, L = man.layers.slice(0, FAC_N);
+      const data = new Uint8Array(S * S * 4 * FAC_N).fill(128);
+      const cv = new OffscreenCanvas(2 * S, S), cx = cv.getContext('2d', { willReadFrequently: true });
+      await Promise.all(L.map(async (l, i) => {
+        const bmp = await createImageBitmap(await (await fetch(FACADE_URL + l.file)).blob());
+        l.bmp = bmp; l.i = i;
+      }));
+      for (const l of L) {
+        cx.clearRect(0, 0, 2 * S, S); cx.drawImage(l.bmp, 0, 0); l.bmp.close();
+        const px = cx.getImageData(0, 0, 2 * S, S).data, out = data.subarray(l.i * S * S * 4, (l.i + 1) * S * S * 4), fac = l.kind === 'facade';
+        for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+          const a = (y * 2 * S + x) * 4, o = (y * S + x) * 4;
+          out[o] = px[a]; out[o + 1] = px[a + 1]; out[o + 2] = px[a + 2]; out[o + 3] = fac ? px[a + S * 4] : 0;     // (the mask is the right-hand half)
+        }
+        this.uFacA.value[l.i].set(l.w, l.h, l.cols, l.rows);
+        this.uFacB.value[l.i].set(Math.max(l.mean[0], 0.01), Math.max(l.mean[1], 0.01), Math.max(l.mean[2], 0.01), l.kind === 'facade' ? (l.glassTint ? 1 : 0) : l.strength ?? 0.6);
+      }
+      const t = new THREE.DataArrayTexture(data, S, S, FAC_N);
+      t.format = THREE.RGBAFormat; t.type = THREE.UnsignedByteType; t.colorSpace = THREE.SRGBColorSpace;
+      t.wrapS = t.wrapT = THREE.RepeatWrapping; t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter;
+      t.generateMipmaps = true; t.anisotropy = this.renderer.capabilities.getMaxAnisotropy(); t.needsUpdate = true;
+      this.uFacTex.value.dispose(); this.uFacTex.value = t; this.uFacOn.value = 1;
+    } catch (e) { console.warn('wall materials not loaded', e); }
+  }
 
   /** 'low' | 'med' | 'high': how far each level of detail reaches. */
   setQuality(level) {

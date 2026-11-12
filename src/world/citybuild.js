@@ -26,6 +26,9 @@ export const TALL = 35, MID_AREA = 350, MID_H = 12;
 const CHUNK = 60000;
 export const K_WALL = 0, K_FLAT = 1, K_PITCH = 2, K_PLANT = 3, K_UNDER = 4;
 export const S_BLANK = 0, S_HOUSE = 1, S_PUNCHED = 2, S_GLASS = 3, S_RIBBON = 4;
+// Wall materials: layers of the picture array in public/facades (tools/bake-facades.py), numbered from 1; 0 is none.
+// The first six are whole facades, windows and all; the rest are surfaces the shader draws its own windows on.
+export const M_NONE = 0, M_GLASS = 1, M_BAND = 2, M_GRID = 3, M_BRICKF = 4, M_FRAME = 5, M_PIERF = 6, M_BRICK = 7, M_STONE = 8, M_CONC = 9, M_STEEL = 10, M_BOARD = 11;
 
 // ------------------------------------------------------------------ small helpers
 
@@ -211,6 +214,19 @@ function classify(blds, size, tx, ty) {
     else if (kind === 'low') { style = S_PUNCHED; wall = pick(MASONRY, hs, 4); top = pick(FLATROOF, hs, 5); }
     else if (kind === 'mid') { style = r3 < 0.58 ? S_PUNCHED : r3 < 0.82 ? S_RIBBON : S_GLASS; wall = style === S_GLASS ? pick(GLASS, hs, 4) : r4 < 0.6 ? pick(MASONRY, hs, 4) : pick(TOWER, hs, 4); top = pick(FLATROOF, hs, 5); }
     else { style = r3 < 0.55 ? S_GLASS : r3 < 0.82 ? S_RIBBON : S_PUNCHED; wall = style === S_GLASS ? pick(GLASS, hs, 4) : pick(TOWER, hs, 4); top = pick(FLATROOF, hs, 5); }
+    // What the walls are made of. A brick-coloured wall is brick; the rest follows the kind of building.
+    const bricky = (c) => c[0] > c[2] * 1.4;
+    let mat;
+    if (kind === 'house' || kind === 'garage') {
+      mat = M_BOARD;
+      if (kind === 'house' && r4 < 0.2) { wall = pick([MASONRY[0], MASONRY[1], MASONRY[3], MASONRY[6]], hs, 4); mat = M_BRICK; }
+    } else if (kind === 'box') mat = r4 < 0.55 ? M_STEEL : M_CONC;
+    else if (kind === 'low') mat = bricky(wall) ? (H >= 9.5 && r2 < 0.5 ? M_BRICKF : M_BRICK) : r4 < 0.5 ? M_STONE : M_CONC;
+    else if (style === S_GLASS) mat = M_GLASS;
+    else if (style === S_RIBBON) mat = r2 < 0.58 ? M_BAND : M_FRAME;
+    else if (kind === 'mid') mat = bricky(wall) ? (r2 < 0.7 ? M_BRICKF : M_PIERF) : r2 < 0.45 ? M_FRAME : r2 < 0.75 ? M_STONE : M_CONC;
+    else mat = r2 < 0.5 ? M_GRID : r2 < 0.72 ? M_PIERF : r2 < 0.86 ? M_FRAME : M_STONE;
+    b.mat = mat;
     if (b.col && style !== S_GLASS) wall = b.col;
     else if (b.col && style === S_GLASS) wall = b.col.map((v, i) => 0.45 * v + 0.55 * wall[i] * 0.6);
     b.H = H; b.top = b.mh + H; b.kind = kind; b.style = style; b.wall = wall; b.roofCol = top; b.roof = roof; b.eave = eave; b.A = A;
@@ -353,7 +369,7 @@ function box(o, cx, cz, ax, az, hl, hw, y0, y1, G) {
 }
 
 /** A ridged roof over any small footprint: the ridge runs along the footprint's long axis. */
-function gableRoof(o, ring, R, yE, rise, G, wall, style) {
+function gableRoof(o, ring, R, yE, rise, G, wall, style, mat) {
   const bx = -R.az, bz = R.ax, hw = Math.max(R.hw, 0.5);
   const dOf = (x, z) => (x - R.cx) * bx + (z - R.cz) * bz;
   for (const s of [1, -1]) {
@@ -367,7 +383,8 @@ function gableRoof(o, ring, R, yE, rise, G, wall, style) {
     for (let i = 0; i < t.length; i += 3) o.triUp(base + t[i], base + t[i + 1], base + t[i + 2]);
   }
   // the walls go on up to meet it: gable ends, and the odd corner of an L
-  o.kind = K_WALL; o.style = style; o.c = wall;
+  const cen = o.central;
+  o.kind = K_WALL; o.style = style; o.c = wall; o.central = false; o.raw = true; o.kz = mat; o.kw = 0;
   for (let j = 0, n = ring.length; j < n; j += 2) {
     const i = (j + 2) % n, ax = ring[j], az = ring[j + 1], cx = ring[i], cz = ring[i + 1], l = Math.hypot(cx - ax, cz - az);
     if (l < 0.03) continue;
@@ -379,6 +396,7 @@ function gableRoof(o, ring, R, yE, rise, G, wall, style) {
       wallQuad(o, mx, mz, cx, cz, yE, yE, yE + rise, yE + rb, nx, nz, l * t, l, G);
     } else if (ra > 0.05 || rb > 0.05) wallQuad(o, ax, az, cx, cz, yE, yE, yE + ra, yE + rb, nx, nz, 0, l, G);
   }
+  o.raw = false; o.central = cen;
 }
 
 /** A hipped roof over a rectangle. */
@@ -506,14 +524,16 @@ export function buildLevel(tile, level, quad, ground, skip) {
 
       // walls
       o.colour(b.wall, b.seed); o.kind = K_WALL; o.style = b.style + sFlag;
+      o.raw = true; o.kz = b.mat; o.kw = 0;              // (a wall has no use for the roof's offset: it carries its material there)
       const u1 = walls(o, ring, y0, yE, G, size, b.cut);
       if (holes) for (const h of holes) walls(o, h, y0, yE, G, size, b.cut, u1);
+      o.raw = false;
       // roof
       o.colour(b.roofCol, b.seed); o.style = sFlag; o.central = central;
       if (pitched && R) {
         o.kind = K_PITCH;
         if (b.roof === 'hip' && isRect(ring, R)) hipRoof(o, R, yE, rise, G);
-        else gableRoof(o, ring, R, yE, rise, G, b.wall, S_BLANK + sFlag);
+        else gableRoof(o, ring, R, yE, rise, G, b.wall, S_BLANK + sFlag, b.mat);
       } else { o.kind = K_FLAT; flatRoof(o, ring, holes, yE, G); }
       o.central = false;
       if (b.mh > 0 && !tallOnly) { o.kind = K_UNDER; o.colour(b.wall, b.seed); flatRoof(o, ring, holes, y0, G, true); }
@@ -527,7 +547,9 @@ export function buildLevel(tile, level, quad, ground, skip) {
           for (let i = 0; i < ring.length; i += 2) { p[i] = b.cx + (ring[i] - b.cx) * s; p[i + 1] = b.cz + (ring[i + 1] - b.cz) * s; if (!inRing(p[i], p[i + 1], b.ring)) { ok = false; break; } if (holes) for (const h of holes) if (inRing(p[i], p[i + 1], h)) ok = false; }
           if (ok && inRing(b.cx, b.cz, b.ring)) {
             o.kind = K_WALL; o.style = S_BLANK; o.colour(b.style === S_GLASS ? [0.2, 0.21, 0.22] : b.wall.map((v) => v * 0.8), b.seed);
+            o.raw = true; o.kz = b.style === S_GLASS ? M_NONE : M_CONC; o.kw = 0;
             walls(o, p, yE, yE + ph, G, size, false);
+            o.raw = false;
             o.kind = K_FLAT; o.colour(b.roofCol, b.seed); flatRoof(o, p, null, yE + ph, G);
             crown = yE + ph;
           }

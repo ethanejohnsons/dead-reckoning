@@ -117,8 +117,14 @@ and builds each tile (`src/world/cities.worker.js`, `citybuild.js`, `mvt.js`);
   next to towers: the skyline.
 
 A building without a mapped height gets one from its footprint and from how tall
-its neighbours are. Walls, windows and roofs are drawn in the shader; a roof takes
-its tone from the satellite picture under it. Windows are lit after dark, and
+its neighbours are. Its walls are photographed materials from
+[ambientCG](https://ambientcg.com) (CC0), in `public/facades` (baked by
+`tools/bake-facades.py`): towers and office blocks take a whole facade with its
+windows (glass curtain wall, banded glass, brick, concrete frame), in the
+building's own colour; houses, shops and sheds take a surface (boards, brick,
+stone, concrete, steel sheeting) and the shader draws their windows on it. The
+map says nothing about what a building is made of, so the choice follows its
+size and shape. A roof takes its tone from the satellite picture under it. Windows are lit after dark, and
 buildings over 60 m carry red obstruction lights. Buildings inside an aerodrome's
 boundary are left to the airfield. Flying into one ends the flight. If the tile
 server cannot be reached the game carries on without buildings and tries again

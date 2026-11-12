@@ -1,0 +1,193 @@
+{
+ "size": 512,
+ "source": "ambientCG (ambientcg.com), CC0 1.0",
+ "layers": [
+  {
+   "id": "Facade001",
+   "file": "00-facade001.jpg",
+   "kind": "facade",
+   "w": 37.0,
+   "h": 37.0,
+   "cols": 16,
+   "rows": 10,
+   "mean": [
+    0.0668,
+    0.0809,
+    0.0944
+   ],
+   "glassTint": true,
+   "strength": 1.0,
+   "glass": 0.893
+  },
+  {
+   "id": "Facade006",
+   "file": "01-facade006.jpg",
+   "kind": "facade",
+   "w": 29.6,
+   "h": 29.6,
+   "cols": 14,
+   "rows": 8,
+   "mean": [
+    0.6823,
+    0.6835,
+    0.6835
+   ],
+   "glassTint": false,
+   "strength": 1.0,
+   "glass": 0.698
+  },
+  {
+   "id": "Facade014",
+   "file": "02-facade014.jpg",
+   "kind": "facade",
+   "w": 115.2,
+   "h": 115.2,
+   "cols": 32,
+   "rows": 32,
+   "mean": [
+    0.2229,
+    0.1957,
+    0.1814
+   ],
+   "glassTint": false,
+   "strength": 1.0,
+   "glass": 0.372
+  },
+  {
+   "id": "Facade018A",
+   "file": "03-facade018a.jpg",
+   "kind": "facade",
+   "w": 20.4,
+   "h": 20.4,
+   "cols": 6,
+   "rows": 6,
+   "mean": [
+    0.2841,
+    0.2104,
+    0.1765
+   ],
+   "glassTint": false,
+   "strength": 1.0,
+   "glass": 0.518
+  },
+  {
+   "id": "Facade019A",
+   "file": "04-facade019a.jpg",
+   "kind": "facade",
+   "w": 20.4,
+   "h": 20.4,
+   "cols": 6,
+   "rows": 6,
+   "mean": [
+    0.1171,
+    0.1154,
+    0.1093
+   ],
+   "glassTint": false,
+   "strength": 1.0,
+   "glass": 0.518
+  },
+  {
+   "id": "Facade020A",
+   "file": "05-facade020a.jpg",
+   "kind": "facade",
+   "w": 20.4,
+   "h": 20.4,
+   "cols": 6,
+   "rows": 6,
+   "mean": [
+    0.1334,
+    0.1082,
+    0.095
+   ],
+   "glassTint": false,
+   "strength": 1.0,
+   "glass": 0.518
+  },
+  {
+   "id": "Bricks085",
+   "file": "06-bricks085.jpg",
+   "kind": "cladding",
+   "w": 2.4,
+   "h": 2.4,
+   "cols": 0,
+   "rows": 0,
+   "mean": [
+    0.3104,
+    0.1989,
+    0.144
+   ],
+   "glassTint": false,
+   "strength": 0.8,
+   "glass": 0.0
+  },
+  {
+   "id": "Bricks066",
+   "file": "07-bricks066.jpg",
+   "kind": "cladding",
+   "w": 3.6,
+   "h": 3.6,
+   "cols": 0,
+   "rows": 0,
+   "mean": [
+    0.24,
+    0.2399,
+    0.238
+   ],
+   "glassTint": false,
+   "strength": 0.6,
+   "glass": 0.0
+  },
+  {
+   "id": "Concrete031",
+   "file": "08-concrete031.jpg",
+   "kind": "cladding",
+   "w": 4.8,
+   "h": 4.8,
+   "cols": 0,
+   "rows": 0,
+   "mean": [
+    0.1272,
+    0.1194,
+    0.1073
+   ],
+   "glassTint": false,
+   "strength": 0.6,
+   "glass": 0.0
+  },
+  {
+   "id": "CorrugatedSteel007A",
+   "file": "09-corrugatedsteel007a.jpg",
+   "kind": "cladding",
+   "w": 3.0,
+   "h": 3.0,
+   "cols": 0,
+   "rows": 0,
+   "mean": [
+    0.2092,
+    0.4023,
+    0.4738
+   ],
+   "glassTint": false,
+   "strength": 0.7,
+   "glass": 0.0
+  },
+  {
+   "id": "WoodSiding013",
+   "file": "10-woodsiding013.jpg",
+   "kind": "cladding",
+   "w": 1.6,
+   "h": 1.6,
+   "cols": 0,
+   "rows": 0,
+   "mean": [
+    0.136,
+    0.1003,
+    0.0607
+   ],
+   "glassTint": false,
+   "strength": 0.3,
+   "glass": 0.0
+  }
+ ]
+}
