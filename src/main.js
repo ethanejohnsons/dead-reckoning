@@ -879,7 +879,10 @@ function updateHud(dt) {
   const t0 = performance.now();
   const pit = S.view === 'cockpit';
   if (pit !== pitShown) { pitShown = pit; document.body.classList.toggle('pit', pit); }      // in the cockpit the panel folds to a strip at the top, clear of the dials
-  panel.update(dt, { ac, wx, ap, accel: S.timeAccel, magVar: REGION.magVar, hour: weather.hour, flight: S.flight, running: !S.paused && !S.busy, pit });
+  // Where the player is going, if they have pinned it on the map: the flight panel points the way.
+  let nav = null;
+  if (chart.pin) { const p = toWorld(chart.pin.lat, chart.pin.lon); nav = { x: p.x, z: p.z, label: chart.pin.field || 'Pin' }; }
+  panel.update(dt, { ac, wx, ap, accel: S.timeAccel, magVar: REGION.magVar, hour: weather.hour, flight: S.flight, running: !S.paused && !S.busy, pit, nav });
   if (weather.trans && !wxChange) wxChange = { to: weather.kind, secs: weather.trans.seconds, left: weather.trans.remaining, flight: S.flight };   // a change started elsewhere (debug handle, evolving weather)
   if (wxChange && !S.paused) {
     wxChange.left = weather.trans ? weather.trans.remaining : wxChange.left - dt * S.timeAccel;        // the weather model's own clock when it has one

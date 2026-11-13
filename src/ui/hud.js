@@ -37,20 +37,22 @@ const LOW_AGL = 760;           // meters above ground under which the height abo
 export class FlightPanel {
   constructor() {
     this.t = {};
-    for (const k of ['Clk', 'Tod', 'Spd', 'Hdg', 'Alt', 'Vs', 'Pwr', 'Rpm', 'Flap', 'Agl', 'Wind', 'Oat', 'ApHdg', 'ApAlt', 'AccelV', 'SpdLbl']) this.t[k] = slot('fp' + k);
+    for (const k of ['Clk', 'Tod', 'Spd', 'Hdg', 'Alt', 'Vs', 'Pwr', 'Rpm', 'Flap', 'Agl', 'Wind', 'Oat', 'ApHdg', 'ApAlt', 'AccelV', 'SpdLbl', 'NavLbl', 'NavHdg', 'NavDist', 'NavEte']) this.t[k] = slot('fp' + k);
     this.ball = $('fpBall').style; this.vsBar = $('fpVsBar').style; this.pwrBar = $('fpPwrBar').style; this.arrow = $('fpWindArrow').style;
     this.spdState = state($('fpSpdCell')); this.altState = state($('fpAltCell')); this.vsState = state($('fpVsCell'));
     this.flapOn = state($('fpFlapBox')); this.low = state($('fpAltCell').querySelector('.lbl'));
     this.apShown = shown($('fpAp')); this.accelShown = shown($('fpAccel')); this.arrowShown = shown($('fpWindArrow'));
+    this.navShown = shown($('fpNav')); this.navArrow = $('fpNavArrow').style; this.navRel = 0;
     this.vs = 0; this.rel = 0; this.fastT = 0; this.slowT = 0; this.flight = null; this.elapsed = 0;
-    this.k = { bank: 1e9, pitch: 1e9, vs: 1e9, pwr: 1e9, rel: 1e9 };
+    this.k = { bank: 1e9, pitch: 1e9, vs: 1e9, pwr: 1e9, rel: 1e9, nav: 1e9 };
   }
 
   /**
    * d: { ac (aircraft), wx (weather at the aircraft), ap (autopilot), accel (time acceleration),
    *      magVar (degrees east), hour (time of day), flight (any object that is new for each flight: the
    *      stopwatch restarts with it), running (false while paused),
-   *      pit (true in the cockpit, where only the strip is kept up to date) }
+   *      pit (true in the cockpit, where only the strip is kept up to date),
+   *      nav (where the player is going, if they have said: { x, z, label }, a world position and a word for it) }
    */
   update(dt, d) {
     const { ac, wx, ap, pit } = d, t = this.t, k = this.k;
@@ -73,6 +75,15 @@ export class FlightPanel {
       this.rel += ((((to - this.rel) % 360) + 540) % 360 - 180) * ease;
       const rel = Math.round(this.rel);
       if (rel !== k.rel) { k.rel = rel; this.arrow.transform = `rotate(${rel}deg)`; }
+    }
+
+    // To the pin: an arrow that points at it, with the nose at the top (shown in the cockpit too: it is how the way is found).
+    const nav = d.nav;
+    if (nav) {
+      const to = Math.atan2(nav.x - ac.pos.x, -(nav.z - ac.pos.z)) * R2D - ac.heading;
+      this.navRel += ((((to - this.navRel) % 360) + 540) % 360 - 180) * ease;
+      const rel = Math.round(this.navRel);
+      if (rel !== k.nav) { k.nav = rel; this.navArrow.transform = `rotate(${rel}deg)`; }
     }
 
     // ---- ten times a second: the figures
@@ -110,6 +121,16 @@ export class FlightPanel {
       this.spdState(spd); this.altState(gnd); this.vsState(gnd);
       t.SpdLbl(spd === 'alert' ? 'Stall' : spd === 'caution' ? 'Slow' : 'Speed');
 
+      // To the pin: the heading to steer (magnetic, like the compass), how far, and how long at the speed made good toward it.
+      this.navShown(!!nav);
+      if (nav) {
+        const dx = nav.x - ac.pos.x, dz = nav.z - ac.pos.z, dist = Math.hypot(dx, dz), nm = dist / 1852;
+        const closing = dist > 1 ? (ac.vel.x * dx + ac.vel.z * dz) / dist : 0, mins = closing > 8 ? dist / closing / 60 : -1;
+        t.NavLbl(nav.label);
+        t.NavHdg(hdg3(Math.atan2(dx, -dz) * R2D - d.magVar) + '°');
+        t.NavDist(`${nm < 10 ? nm.toFixed(1) : Math.round(nm)} NM`);
+        t.NavEte(mins < 0 ? '' : mins < 1 ? 'under a min' : mins < 90 ? `${Math.round(mins)} min` : `${Math.floor(mins / 60)} h ${String(Math.round(mins % 60)).padStart(2, '0')}`);
+      }
       this.apShown(ap.on);
       if (ap.on) { t.ApHdg(hdg3(ap.hdg - d.magVar) + '°'); t.ApAlt(thousands(Math.round((ap.alt * FT) / 100) * 100) + ' ft'); }
       this.accelShown(d.accel > 1);

@@ -258,7 +258,8 @@ whether to start on the runway or already in the air over the field, then
 press Fly. Or press Map and click an airfield to start from it, or click
 anywhere else on the continent to drop a pin and press Fly from pin to start in
 the air over that spot; the same works from the
-map in flight (`M`), where the pin also shows as a bearing and distance. `W`/`S` pitch, `A`/`D` roll, `Q`/`E` rudder, `R`/`F` faster and
+map in flight (`M`). While a pin is set, the flight panel points the way to it:
+an arrow, the heading to steer, the distance and the time at your present speed. `W`/`S` pitch, `A`/`D` roll, `Q`/`E` rudder, `R`/`F` faster and
 slower; flaps, brakes and fuel take care of themselves. `C` switches between the
 chase view and the cockpit (drag to look around, wheel to zoom). `G` hands the
 aircraft to the autopilot, and `T` speeds time up: ×2, ×4, ×8, ×16, ×32, ×64,

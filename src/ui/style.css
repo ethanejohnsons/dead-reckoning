@@ -183,6 +183,9 @@ kbd { display: inline-block; min-width: 1.6rem; padding: 0.08rem 0.4rem; font: 6
 #fp { position: absolute; left: 50%; bottom: 0.9rem; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 0.35rem; }
 .fp-ann { display: flex; gap: 0.35rem; }
 .ann { padding: 0.2rem 0.65rem; font-size: var(--t-xs); font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; white-space: nowrap; color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 2rem; }
+.ann.nav { display: inline-flex; align-items: center; gap: 0.1rem; }
+.ann.nav[hidden] { display: none; }
+.ann.nav .arrow { width: 0.8rem; height: 0.8rem; margin-right: 0.35rem; }
 .ann b { margin-left: 0.3rem; color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: 0.02em; text-transform: none; }
 .fp-body { display: flex; align-items: stretch; height: 3.9rem; padding: 0 0.3rem; contain: layout style; white-space: nowrap; }
 .fp-cell { position: relative; display: flex; flex-direction: column; justify-content: center; gap: 0.2rem; padding: 0 0.8rem; }

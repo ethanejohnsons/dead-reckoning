@@ -27,6 +27,7 @@
     <!-- The flight panel. In the cockpit it folds down to speed, heading and altitude along the top edge. -->
     <div id="fp" aria-label="Flight panel">
       <div class="fp-ann">
+        <span id="fpNav" class="ann nav" hidden title="To the pin on the map: which way it lies from the nose, the heading to steer, how far, and how long at this speed"><svg id="fpNavArrow" class="arrow" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5l4.2 6H9.3v7H6.7v-7H3.8z" /></svg><span id="fpNavLbl">Pin</span><b id="fpNavHdg"></b><b id="fpNavDist"></b><b id="fpNavEte"></b></span>
         <span id="fpAp" class="ann" hidden>Autopilot <b id="fpApHdg"></b> <b id="fpApAlt"></b></span>
         <span id="fpAccel" class="ann" hidden>Time <b id="fpAccelV"></b></span>
       </div>
