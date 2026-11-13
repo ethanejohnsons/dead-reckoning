@@ -111,7 +111,7 @@ vec4 beads(vec2 p, float scale, float amount, float t, float stretch, float slid
   float life = fract(t * (0.03 + 0.05 * r.x) + r.y * 7.0);
   float rad = (0.1 + 0.2 * h21(id + 9.1)) * smoothstep(0.0, 0.05, life) * (1.0 - smoothstep(0.85, 1.0, life));
   vec2 d = f - (r - 0.5) * 0.28;
-  float a = atan(d.y, d.x);
+  float a = atan(d.y, d.x + 1.0e-6);
   rad *= 1.0 + 0.13 * sin(a * 3.0 + r.x * 20.0) + 0.07 * sin(a * 5.0 + r.y * 13.0);   // no drop is a circle
   vec2 n = d / max(rad, 1.0e-4);
   return vec4(n, (1.0 - smoothstep(0.7, 1.0, length(n))) * on, 0.0);
@@ -214,7 +214,7 @@ void main() {
           float a = amt * wind;
           if (ws) {
             vec2 rel = p - vec2(-0.3, 0.0); float rr = max(length(rel), 1.0e-3);
-            ey = rel / rr; ex = vec2(-ey.y, ey.x); qw = vec2(atan(rel.y, rel.x) * 0.6, rr);
+            ey = rel / rr; ex = vec2(-ey.y, ey.x); qw = vec2(atan(rel.y, rel.x + 1.0e-6) * 0.6, rr);
             // The propwash scours a patch low in the middle of the screen nearly dry.
             a *= 1.0 - 0.75 * exp(-dot(p - vec2(0.1, 0.0), p - vec2(0.1, 0.0)) / 0.045);
           } else { ey = normalize(vec2(1.0, 0.16 * sd)); ex = vec2(-ey.y, ey.x); qw = vec2(dot(p, ex), dot(p, ey)); }
@@ -234,7 +234,7 @@ void main() {
         drop.xy = s * (length(drop.xy) / max(length(s), 1.0e-6));
         drop.z *= open; trail *= open;
         mist = (uMist * (1.0 - clamp(max(drop.z, trail) * 1.5, 0.0, 1.0)) + heavy * 0.35) * open;
-        uv -= normalize(toPx * flow) * trail * 0.004 * (1.0 - drop.z) / ac;      // a wet track bends the view a touch
+        uv -= normalize(toPx * flow + vec2(1.0e-6, 0.0)) * trail * 0.004 * (1.0 - drop.z) / ac;      // a wet track bends the view a touch
       }
       // Frost feathers in from the edge of each pane; the middle is the last to go.
       if (uIce > 0.01) {
@@ -306,7 +306,7 @@ void main() {
   col += uSunCol * rays * rays * uRayGain * airDepth;
   if (vSunVis > 0.002) {
     vec2 sd = (vUv - uSun) * ac, cdir = (vec2(0.5) - uSun) * ac;
-    float r = length(sd), ang = atan(sd.y, sd.x);
+    float r = length(sd), ang = atan(sd.y, sd.x + 1.0e-6);      // (atan(0, 0) is undefined: the pixel at the sun's very center)
     // Starburst: diffraction off a seven-bladed iris gives fourteen spikes, no two quite alike.
     float sp = abs(cos(ang * 7.0 + 0.4));
     float star = pow(sp, 90.0) * (0.6 + 0.4 * cos(ang * 3.0 + 1.0)) * exp(-r * 6.0) * 0.5 + pow(abs(cos(ang * 3.5 + 1.3)), 240.0) * exp(-r * 4.2) * 0.25;

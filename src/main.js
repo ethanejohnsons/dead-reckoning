@@ -364,11 +364,13 @@ function placeAt(a) {
 }
 
 /** "Start in the air": from the runway spot placeAt chose (or over any point, on any heading), lift the aircraft
- *  to cruise, high enough to clear whatever lies in the first few kilometers ahead. */
+ *  to cruise, high enough to clear whatever lies ahead and whatever stands close by on any side. */
 function placeAloft(x = ac.pos.x, z = ac.pos.z, hdg = ac.heading) {
   const h = hdg * D2R;
   let top = groundHeight(x, z);
-  for (let d = 300; d <= 7000; d += 300) top = Math.max(top, groundHeight(x + Math.sin(h) * d, z - Math.cos(h) * d));
+  // the way ahead for 9 km, and everything within 4 km whichever way the pilot turns first (a valley's walls)
+  for (let d = 300; d <= 9000; d += 300) top = Math.max(top, groundHeight(x + Math.sin(h) * d, z - Math.cos(h) * d));
+  for (let a = 0; a < 6.2832; a += 0.3927) for (let d = 500; d <= 4000; d += 500) top = Math.max(top, groundHeight(x + Math.sin(a) * d, z - Math.cos(a) * d));
   const alt = Math.max(groundHeight(x, z) + 450, top + 250);
   ac.placeInAir(x, alt, z, hdg, 54);                       // about 105 knots, cruise power
   ac.fuel = ac.spec.fuelCap; ap.on = false;
@@ -527,7 +529,13 @@ function bindUI() {
   input.on('debug', () => { if (flying()) toggleDebugPanel(); });
   click('mapBtn', () => { if (flying()) toggleChart(); });
   click('btnMap', () => { if (S.mode === 'splash') toggleChart(); });
-  click('chartFly', () => { if (chart.pin && !S.busy && (S.mode === 'splash' || flying())) { if (S.mode === 'splash') read('o'); startFlight(chart.pin); } });
+  click('chartFly', () => {
+    const pin = chart.pin;
+    if (!pin || S.busy || !(S.mode === 'splash' || flying())) return;
+    if (S.mode === 'splash') read('o');
+    // A pin on an airfield starts the flight from that airfield, on the runway or over it as the Start choice says; any other, in the air over the pin.
+    if (pin.field && fieldById(pin.field)) { S.opts.field = pin.field; fill(); syncPickers(); startFlight(); } else startFlight(pin);
+  });
   click('menuBtn', () => { if (S.mode === 'flying') togglePause(true); });
   bindWeatherPanel();
   // After any click or change in the HUD and its panels, hand the keyboard back to the aircraft.
@@ -577,10 +585,13 @@ function drawChart() {
   let say = inFlight && near.airport ? `${Math.round(near.dist / NM)} NM from ${near.airport.name}` : '';
   if (pin) {
     const p = toWorld(pin.lat, pin.lon), dx = p.x - ac.pos.x, dz = p.z - ac.pos.z;
-    say = inFlight ? `Pin ${String(Math.round(magnetic((Math.atan2(dx, -dz) / D2R + 360) % 360)) || 360).padStart(3, '0')}° ${Math.round(Math.hypot(dx, dz) / NM)} NM` : `Pin at ${fmtPlace(pin.lat, pin.lon)}`;
-  } else if (!inFlight) say = 'Click anywhere to drop a pin';
+    const what = pin.field ? `${fieldById(pin.field)?.name || pin.field} (${pin.field})` : 'Pin';
+    say = inFlight ? `${what} ${String(Math.round(magnetic((Math.atan2(dx, -dz) / D2R + 360) % 360)) || 360).padStart(3, '0')}° ${Math.round(Math.hypot(dx, dz) / NM)} NM` : pin.field ? what : `Pin at ${fmtPlace(pin.lat, pin.lon)}`;
+  } else if (!inFlight) say = 'Click an airfield, or anywhere to drop a pin';
   if (say !== chartSaid) { chartSaid = say; $('chartInfo').textContent = say; }
   if ($('chartFly').hidden !== !pin) $('chartFly').hidden = !pin;
+  const go = pin?.field ? `Fly from ${pin.field}` : 'Fly from pin';
+  if ($('chartFly').textContent !== go) $('chartFly').textContent = go;
 }
 
 // ------------------------------------------------------------------ weather panel and debug tools

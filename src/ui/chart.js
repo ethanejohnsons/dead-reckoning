@@ -130,7 +130,7 @@ export class Chart {
     this.over = null;                                    // the map of the continent, once loadOverview has it
     this.cx = 0; this.cz = 0; this.scale = 0.0016;       // pixels per meter
     this.showWx = false;
-    this.pin = null;                                     // { lat, lon }: kept by latitude and longitude, so it stays put when the world moves
+    this.pin = null;                                     // { lat, lon, field? }: kept by latitude and longitude, so it stays put when the world moves; field: the airfield it was dropped on
   }
 
   /** The world rectangle the map can be moved over: the continent when its map is loaded, else the window. */
@@ -163,6 +163,13 @@ export class Chart {
   /** Drop the pin at a point of the viewport; a click on the pin itself takes it away. Returns the pin (or null). */
   pinAt(px, py, w, h) {
     if (this.pin) { const p = toWorld(this.pin.lat, this.pin.lon); if (Math.hypot((p.x - this.cx) * this.scale + w / 2 - px, (p.z - this.cz) * this.scale + h / 2 - py) < 14) return (this.pin = null); }
+    // A click on an airfield pins the airfield itself (the pin then carries its code, and a flight from it starts there).
+    let best = null, bd = 13;
+    for (const f of FIELDS) {
+      const p = toWorld(f.lat, f.lon), d = Math.hypot((p.x - this.cx) * this.scale + w / 2 - px, (p.z - this.cz) * this.scale + h / 2 - py);
+      if (d < bd) { bd = d; best = f; }
+    }
+    if (best) return (this.pin = { lat: best.lat, lon: best.lon, field: best.id });
     const q = this.worldAt(px, py, w, h), ll = toLatLon(q.x, q.z);
     return (this.pin = { lat: ll.lat, lon: ll.lon });
   }

@@ -43,6 +43,10 @@ function vehicleGeometry() {
   return g;
 }
 
+// The size of a vehicle by its kind (length, width, height, m): the GLSL of every pass below starts from it.
+const SIZE_GLSL = /* glsl */`
+vec3 vehicleSize(float kind) { return kind < 0.5 ? vec3(4.5, 1.8, 1.42) : kind < 1.5 ? vec3(4.9, 1.95, 1.75) : kind < 2.5 ? vec3(6.2, 2.1, 2.5) : vec3(15.5, 2.5, 3.9); }`;
+
 const VERT = /* glsl */`
 attribute float aPart;
 attribute vec4 aP;            // where it stands, relative to the mesh; kind (0 car, 1 tall car or pickup, 2 van, 3 truck) + fade / 2
@@ -50,10 +54,11 @@ attribute vec4 aD;            // the way it faces (unit vector); paint, packed
 centroid varying vec3 vWorld, vN, vPaint;
 centroid varying vec3 vL;     // position in the vehicle: across, up, along (-0.5 .. 0.5, 0 .. 1, -0.5 .. 0.5)
 flat varying vec2 vKind;      // kind, part
+${SIZE_GLSL}
 void main() {
   float kind = floor(aP.w), show = fract(aP.w) * 2.0;
   // length, width, height; where the cabin starts and ends along the body, and how far it is drawn in from the sides
-  vec3 size = kind < 0.5 ? vec3(4.5, 1.8, 1.42) : kind < 1.5 ? vec3(4.9, 1.95, 1.75) : kind < 2.5 ? vec3(6.2, 2.1, 2.5) : vec3(15.5, 2.5, 3.9);
+  vec3 size = vehicleSize(kind);
   vec3 p = position;
   if (aPart > 0.5) {
     vec2 cab = kind < 0.5 ? vec2(-0.3, 0.14) : kind < 1.5 ? vec2(-0.42, 0.16) : kind < 2.5 ? vec2(-0.5, 0.36) : vec2(-0.5, 0.33);
@@ -103,6 +108,77 @@ void main() {
   gl_FragColor = outc;
 }`;
 
+// The shadow a vehicle throws: a soft-edged dark patch on the road under it, pushed away from the sun by its
+// height (the sun's shadow maps do not take in the traffic). Under cloud and at night what is left is the
+// darkness under the sills. Blended over the road like the road itself, never written to depth.
+const SHADOW_VERT = /* glsl */`
+attribute vec4 aP, aD;
+uniform vec3 uSunDir;
+centroid varying vec3 vWorld;
+centroid varying vec2 vQ;
+flat varying vec3 vHalf;      // half the patch across and along (m); how much of the vehicle is shown
+${SIZE_GLSL}
+void main() {
+  float kind = floor(aP.w), show = fract(aP.w) * 2.0;
+  vec3 size = vehicleSize(kind);
+  vec2 fl = aD.xz / max(length(aD.xz), 1e-4);
+  vec3 f = vec3(fl.x, 0.0, fl.y), r = vec3(f.z, 0.0, -f.x);
+  float up = step(0.03, uSunDir.y);
+  vec2 away = -uSunDir.xz / max(uSunDir.y, 0.35) * size.z * 0.4 * up;
+  vec2 half2 = vec2(size.y, size.x) * 0.5 + 0.35 + 0.25 * size.z * up;
+  vec3 wp = (modelMatrix * vec4(aP.xyz, 1.0)).xyz + vec3(away.x, 0.05, away.y) + r * (position.x * 2.0 * half2.x) + f * (position.z * 2.0 * half2.y);
+  vWorld = wp; vQ = position.xz * 2.0; vHalf = vec3(half2, show);
+  gl_Position = projectionMatrix * viewMatrix * vec4(wp, 1.0);
+  if (show < 0.02) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+}`;
+const shadowFrag = (LIGHT_GLSL) => /* glsl */`
+uniform float uLamps;
+centroid varying vec3 vWorld;
+centroid varying vec2 vQ;
+flat varying vec3 vHalf;
+${LIGHT_GLSL}
+void main() {
+  vec2 d = (1.0 - abs(vQ)) * vHalf.xy;                         // meters in from the patch's edge
+  float a = smoothstep(0.0, 0.8, min(d.x, d.y));
+  float sun = step(0.03, uSunDir.y) * terrainLight(vWorld, regionHeight(vWorld.xz)).x * (1.0 - 0.9 * cloudShadow(vWorld));
+  gl_FragColor = vec4(vec3(0.0), a * mix(0.2, 0.58, sun) * vHalf.z * (1.0 - 0.6 * uLamps));
+}`;
+
+// Headlamps and tail lamps after dark, as the lamps on the towers are drawn: a soft round spot at each end of a
+// vehicle that never shrinks below a pixel or two (it dims instead), so a road reads as a string of white and red
+// points from as far off as its vehicles are drawn. Each is seen only from the end it is on. Added to the picture.
+const GLOW_VERT = /* glsl */`
+attribute vec4 aP, aD;
+attribute float aEnd;         // 1 the front, -1 the back
+uniform float uLamps, uViewH;
+varying vec3 vCol;
+varying vec2 vQ;
+${SIZE_GLSL}
+void main() {
+  float kind = floor(aP.w), show = fract(aP.w) * 2.0;
+  vec3 size = vehicleSize(kind), f = normalize(aD.xyz + vec3(0.0, 0.0, 1e-5));
+  vec3 c = (modelMatrix * vec4(aP.xyz, 1.0)).xyz + f * (aEnd * size.x * 0.5) + vec3(0.0, 0.65, 0.0);
+  vec3 toCam = cameraPosition - c;
+  float dist = max(length(toCam), 0.5), facing = dot(toCam / dist, f) * aEnd;
+  float vis = smoothstep(-0.05, 0.3, facing) * uLamps * show;
+  vec4 clip = projectionMatrix * viewMatrix * vec4(c, 1.0);
+  float pxm = 2.0 * max(clip.w, 0.1) / (uViewH * projectionMatrix[1][1]);      // meters to a pixel at the lamp
+  float lamp = aEnd > 0.0 ? 0.5 : 0.38, rad = max(lamp, 1.6 * pxm);
+  vCol = (aEnd > 0.0 ? vec3(1.0, 0.93, 0.78) * 5.0 : vec3(1.0, 0.07, 0.03) * 1.4) * vis * pow(min(1.0, lamp / rad), 1.2);
+  vQ = position.xy;
+  clip.xy += position.xy * rad * vec2(projectionMatrix[0][0], projectionMatrix[1][1]);
+  gl_Position = vis < 0.003 ? vec4(2.0, 2.0, 2.0, 1.0) : clip;
+}`;
+const GLOW_FRAG = /* glsl */`
+varying vec3 vCol;
+varying vec2 vQ;
+void main() {
+  float r2 = dot(vQ, vQ);
+  if (r2 > 1.0) discard;
+  float a = exp(-r2 * 3.5) - 0.03;
+  gl_FragColor = vec4(vCol * max(a, 0.0), 0.0);
+}`;
+
 export class Traffic {
   /** group: where the mesh goes; glsl: { light, atmo } the lighting code of the city shaders; uniforms: what that code reads. */
   constructor(group, glsl, uniforms) {
@@ -115,6 +191,27 @@ export class Traffic {
     this.mesh = new THREE.Mesh(g, new THREE.ShaderMaterial({ uniforms: { ...uniforms, uLamps: this.uLamps }, vertexShader: VERT, fragmentShader: frag(glsl.light, glsl.atmo) }));
     this.mesh.frustumCulled = false; this.mesh.visible = false; this.mesh.userData.traffic = true;
     group.add(this.mesh);
+    // The same vehicles twice more, from the same numbers: their shadows on the road, and their lamps at night.
+    const inst = (geo) => { geo.setAttribute('aP', new THREE.InterleavedBufferAttribute(ib, 4, 0)); geo.setAttribute('aD', new THREE.InterleavedBufferAttribute(ib, 4, 4)); geo.instanceCount = 0; return geo; };
+    const sg = new THREE.InstancedBufferGeometry();
+    sg.setAttribute('position', new THREE.Float32BufferAttribute([-0.5, 0, -0.5, 0.5, 0, -0.5, 0.5, 0, 0.5, -0.5, 0, 0.5], 3)); sg.setIndex([0, 2, 1, 0, 3, 2]);
+    this.shadow = new THREE.Mesh(inst(sg), new THREE.ShaderMaterial({
+      uniforms: { ...uniforms, uLamps: this.uLamps }, vertexShader: SHADOW_VERT, fragmentShader: shadowFrag(glsl.light), side: THREE.DoubleSide,
+      transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -12,
+    }));
+    this.shadow.frustumCulled = false; this.shadow.visible = false; this.shadow.renderOrder = -7;            // (over the roads, which are -8)
+    group.add(this.shadow);
+    const gg = new THREE.InstancedBufferGeometry();
+    gg.setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0, -1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0], 3));
+    gg.setAttribute('aEnd', new THREE.Float32BufferAttribute([1, 1, 1, 1, -1, -1, -1, -1], 1)); gg.setIndex([0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7]);
+    this.uViewH = { value: 1080 };
+    this.glow = new THREE.Mesh(inst(gg), new THREE.ShaderMaterial({
+      uniforms: { uLamps: this.uLamps, uViewH: this.uViewH }, vertexShader: GLOW_VERT, fragmentShader: GLOW_FRAG, side: THREE.DoubleSide, transparent: true, depthWrite: false,
+      blending: THREE.CustomBlending, blendEquation: THREE.AddEquation, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor, blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor,
+    }));
+    this.glow.frustumCulled = false; this.glow.visible = false; this.glow.renderOrder = 5;
+    this.glow.onBeforeRender = (r) => { const rt = r.getRenderTarget(); this.uViewH.value = rt ? rt.height : r.domElement.height; };
+    group.add(this.glow);
     this.sets = new Set();                // the pieces of road that have vehicles, a set to a quarter of a tile
     this.enabled = true; this.count = 0;
   }
@@ -158,7 +255,7 @@ export class Traffic {
     return set;
   }
   remove(set) { if (set) this.sets.delete(set); }
-  clear() { this.sets.clear(); this.mesh.geometry.instanceCount = 0; this.mesh.visible = false; }
+  clear() { this.sets.clear(); for (const m of [this.mesh, this.shadow, this.glow]) { m.geometry.instanceCount = 0; m.visible = false; } }
 
   /**
    * Move every vehicle of the sets marked `on` to where it is at `time` (s), and draw those within `far` of the camera
@@ -192,11 +289,13 @@ export class Traffic {
       }
     }
     this.count = n;
-    this.mesh.visible = n > 0;
-    this.mesh.geometry.instanceCount = n;
-    if (!n) return;
-    this.mesh.position.set(ox, 0, oz); this.mesh.updateMatrixWorld(true);
     this.uLamps.value = Math.min(1, Math.max(0, (night - 0.15) / 0.35));
+    for (const m of [this.mesh, this.shadow, this.glow]) {
+      m.visible = n > 0 && (m !== this.glow || this.uLamps.value > 0);
+      m.geometry.instanceCount = n;
+      if (n) { m.position.set(ox, 0, oz); m.updateMatrixWorld(true); }
+    }
+    if (!n) return;
     this.buffer.clearUpdateRanges?.(); this.buffer.addUpdateRange?.(0, n * 8); this.buffer.needsUpdate = true;
   }
 }

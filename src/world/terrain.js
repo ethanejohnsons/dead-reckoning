@@ -60,6 +60,10 @@ function along(table, x) {
 // are treeless far to the south, the Mackenzie carries the trees nearly to the Arctic Ocean, and Hudson Bay
 // and the Labrador Sea push the line south again.
 const ARCTIC = [[-172, 50], [-164, 55], [-159, 60], [-152, 66.5], [-140, 68.5], [-130, 68.5], [-115, 66], [-100, 61], [-95, 59.5], [-85, 56.5], [-78, 57], [-70, 58], [-62, 56.5], [-55, 53]];
+// The temperature of an ordinary summer's day at sea level, by latitude (deg C): the tropics, the mid-latitudes
+// (15.5 at 45 N), the Arctic coast a little above freezing.
+const SEA_TEMP = [[8, 29], [20, 27.5], [30, 24], [38, 19.5], [45, 15.5], [52, 13], [60, 10], [66, 7], [72, 4], [80, 1]];
+export const seaTempAt = (lat) => along(SEA_TEMP, Math.abs(lat));
 // The tree line in the interior of the continent, by latitude (m).
 const TREELINE = [[15, 4000], [35.4, 3900], [39, 3500], [48, 2500], [53, 2150], [60, 1300], [65, 800], [69, 200]];
 // The latitude at which the prairie gives way to the north woods and the boreal forest, by longitude: from the
@@ -170,10 +174,14 @@ export function buildWorld(base, urban) {
     // Ranges are wetter than the country they stand in: forest begins a few hundred meters above the valley floor.
     moist[k] = clamp(lowlandMoisture(ll.lat, ll.lon) + 0.5 * smoothstep(150, 700, terr[k] - low[k]), 0, 1);
     // The plains and plateaux are as warm as the lowlands (the ground heats the air wherever it lies), up to
-    // a point; only what stands above them is colder. So an ordinary day is about 15 C at any airfield's door.
-    tsea[k] = 15.5 + 0.0065 * Math.min(low[k], 2000);
+    // a point; only what stands above them is colder. So an ordinary day at an airfield's door is as warm as its
+    // latitude makes the lowlands: about 15 C in Minnesota or Colorado, 27 C in the tropics, a few degrees on the Arctic coast.
+    tsea[k] = seaTempAt(ll.lat) + 0.0065 * Math.min(low[k], 2000);
     // Snow lies where the air is under about 2 C, and never lower than 650 m above the tree line on an ordinary day.
-    snow[k] = Math.min((tsea[k] - 2.2) / 0.0065, Math.max(treelineAt(ll.lat, ll.lon), 0) + 650);
+    // (In the tropics the snow line stands higher than the cold alone would put it, near 4,800 m: the volcanoes of Mexico
+    // carry snow, Mauna Kea on an ordinary day does not.)
+    const tropic = smoothstep(30, 20, Math.abs(ll.lat));
+    snow[k] = Math.min((tsea[k] - 2.2) / 0.0065 + 900 * tropic, Math.max(treelineAt(ll.lat, ll.lon), 0) + 650 + 1200 * tropic);
   }
   boxBlur(moist, MN, 1, 2);                                // biome edges are not razor sharp
   world.moist = moist; world.tsea = tsea; world.snow = snow; world.low = low;

@@ -697,7 +697,7 @@ void main() {
   float r0 = el < ${ELS[1]}.0 ? 0.0 : el < ${ELS[2]}.0 ? 1.0 : 2.0;
   float e0 = r0 < 0.5 ? ${ELS[0]}.0 : r0 < 1.5 ? ${ELS[1]}.0 : ${ELS[2]}.0, e1 = r0 < 0.5 ? ${ELS[1]}.0 : r0 < 1.5 ? ${ELS[2]}.0 : ${ELS[3]}.0;
   float eb = smoothstep(0.3, 0.7, (el - e0) / (e1 - e0)), elR = radians(el);
-  float az = fract(atan(vt.x, vt.z) / 6.2831853) * NA, a0 = floor(az), ab = smoothstep(0.3, 0.7, az - a0);
+  float az = fract(atan(vt.x, vt.z + 1.0e-6) / 6.2831853) * NA, a0 = floor(az), ab = smoothstep(0.3, 0.7, az - a0);
   // The card is as tall as the tree looks from this height (the baked view is stretched that little to fit).
   vec2 half0 = vec2(var.x, (var.y * cos(elR)) * ${FIT.toFixed(2)} + var.x * sin(elR));
   float halfW = half0.x * girth * s * sz.y, halfH = half0.y * s;
@@ -709,7 +709,7 @@ void main() {
   // by the spacing of the trees still drawn. Seen across level ground that changes nothing; on a mountainside
   // that faces the camera it is what keeps the thinned forest closed.
   vec3 gn = normalize(vec3(-aC.x * 2.0, 1.0, -aC.y * 2.0)), back = -v - gn * dot(-v, gn);
-  float lean = ${CELL.toFixed(1)} * (inversesqrt(keep * uLod.x) - inversesqrt(uLod.x)) * (1.0 - mod(flags, 2.0));
+  float lean = ${CELL.toFixed(1)} * (inversesqrt(max(keep * uLod.x, 1.0e-4)) - inversesqrt(max(uLod.x, 1.0e-4))) * (1.0 - mod(flags, 2.0));
   vec3 wp = C + right * (corner.x * halfW * mw) + up * (corner.y * halfH * mh) + back * (lean * (corner.y * 0.5 + 0.5));
   float lod = clamp(log2(uAtlas.z * pix / (2.0 * halfH)), 0.0, uAtlas.w);
   // a tree of a few pixels is one of a crowd: its own tint goes
@@ -774,7 +774,7 @@ void main() {
     B = mix(B, B2, eb);
   }
   float q = 1.0 / max(A.a, 0.004);
-  vec3 N = normalize(B.rgb * q * 2.0 - 1.0);
+  vec3 N = normalize(B.rgb * q * 2.0 - 1.0 + vec3(0.0, 0.0, 1.0e-4));
   // height of this pixel in the tree, from where it lies on the card and how deep
   float y = vDim.z + vDf.x * ((cuv.y * 2.0 - 1.0) * vDim.x) + vDf.y * ((B.a * q * 2.0 - 1.0) * vDim.y);
   float hRel = mix(clamp(y / (2.0 * vDim.z), 0.0, 1.0), 0.7, smoothstep(4.5, 6.5, lod));
@@ -881,7 +881,7 @@ void main() {
   vec3 lt = vec3(cy * L.x - sy * L.z, L.y, sy * L.x + cy * L.z);
   float el = degrees(asin(clamp(lt.y, 0.0, 1.0)));
   float row = el < 18.0 ? 0.0 : el < 42.5 ? 1.0 : el < 68.5 ? 2.0 : 3.0;
-  float a0 = mod(floor(fract(atan(lt.x, lt.z) / 6.2831853) * NA + 0.5), NA);
+  float a0 = mod(floor(fract(atan(lt.x, lt.z + 1.0e-6) / 6.2831853) * NA + 0.5), NA);
   float elS = asin(L.y);
   vec2 half0 = vec2(var.x, (var.y * cos(elS)) * ${FIT.toFixed(2)} + var.x * sin(elS));
   float halfW = half0.x * girth * s, halfH = half0.y * s;

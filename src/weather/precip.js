@@ -68,7 +68,7 @@ void main() {
   vec3 vdir = normalize(a + s * 0.5);
   vec3 sp = s - vdir * dot(s, vdir);
   float len = length(sp);
-  vec3 ax = len > 1.0e-4 ? sp / len : normalize(cross(vdir, vec3(1.0, 0.0, 0.0)));
+  vec3 ax = len > 1.0e-4 ? sp / len : normalize(cross(vdir, vec3(1.0, 0.0, 0.0)) + vec3(0.0, 1.0e-5, 0.0));
   vec3 side = cross(vdir, ax);
   vec3 pv = a + s * aCorner.y + ax * rad * (aCorner.y * 2.0 - 1.0) + side * rad * aCorner.x;
   vLocal = vec3(aCorner.x, aCorner.y > 0.5 ? len / rad + 1.0 : -1.0, len / rad);
@@ -217,7 +217,7 @@ void main() {
   vec3 vdir = normalize(a + s * 0.5);
   vec3 sp = s - vdir * dot(s, vdir);
   float len = length(sp);
-  vec3 ax = len > 1.0e-4 ? sp / len : normalize(cross(vdir, vec3(1.0, 0.0, 0.0)));
+  vec3 ax = len > 1.0e-4 ? sp / len : normalize(cross(vdir, vec3(1.0, 0.0, 0.0)) + vec3(0.0, 1.0e-5, 0.0));
   vec3 side = cross(vdir, ax);
   vec3 pv = a + s * aCorner.y + ax * rad * (aCorner.y * 2.0 - 1.0) + side * rad * aCorner.x;
   vLocal = vec3(aCorner.x, aCorner.y > 0.5 ? len / rad + 1.0 : -1.0, len / rad);
@@ -247,7 +247,7 @@ varying vec3 vUv;
 varying float vA;
 void main() {
   // A bruise of crushed ice: a bright core, a splash of short rays around it, a faint ring where the spray lands.
-  float r = length(vUv.xy), ang = atan(vUv.y, vUv.x);
+  float r = length(vUv.xy), ang = atan(vUv.y, vUv.x + 1.0e-6);
   float rays = pow(abs(sin(ang * (3.0 + floor(vUv.z * 4.0)) + vUv.z * 40.0)), 6.0) * (0.6 + 0.4 * sin(ang * 11.0 + vUv.z * 90.0));
   float a = (1.0 - smoothstep(0.0, 0.3, r)) + rays * (1.0 - smoothstep(0.15, 0.95, r)) * 0.7 + 0.25 * (1.0 - smoothstep(0.0, 0.12, abs(r - 0.6))) * (1.0 - vA);
   a = clamp(a, 0.0, 1.0) * vA * (1.0 - smoothstep(0.85, 1.0, r));

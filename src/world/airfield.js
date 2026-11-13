@@ -202,7 +202,7 @@ float lobe(float ndh, float a) { float a2 = a * a, d = ndh * ndh * (a2 - 1.0) + 
 // along V, for a lamp of unit strength. The streak drawn out toward the viewer is the lobe's own doing at a low angle.
 float glint(vec3 l, vec3 N, vec3 V, float a) {
   float d2 = max(dot(l, l), 0.01); l *= inversesqrt(d2);
-  vec3 H = normalize(l + V);
+  vec3 H = normalize(l + V + vec3(0.0, 1.0e-5, 0.0));
   float F = 0.02 + 0.98 * pow(1.0 - max(dot(V, H), 0.0), 5.0);
   return lobe(max(dot(N, H), 0.0), a) * F * step(0.0, dot(N, l)) / (d2 * (4.0 * max(dot(N, V), 0.0) + 0.06));
 }
@@ -645,7 +645,7 @@ void main() {
   float along = dot(toCam, aDir.xyz);
   if (k > 3.5) {
     // The beacon turns: a white beam and a green one, half a turn apart, each a slow swell as it passes.
-    float a = atan(toCam.x, toCam.z) - uTime * 0.9, b = cos(a);
+    float a = atan(toCam.x, toCam.z + 1.0e-6) - uTime * 0.9, b = cos(a);
     col = b > 0.0 ? color : aCol2; I = pow(abs(b), 48.0);
   } else if (k > 2.5) { col = along < 0.0 ? aCol2 : color; }
   else if (k > 1.5) {

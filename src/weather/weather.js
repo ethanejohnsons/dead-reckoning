@@ -166,15 +166,15 @@ export class Weather {
   }
 
   /** Read the terrain, moisture and sea-level temperature grids from the world (again whenever its window moves).
-   *  The world gives a sea-level temperature that makes an ordinary day about 15 C at any field's elevation;
-   *  on top of that it is a couple of degrees colder toward the pole across the window. */
+   *  The world gives a sea-level temperature that makes an ordinary day as warm at any field's elevation as its
+   *  latitude makes the lowlands (world/terrain.js: seaTempAt), colder toward the pole. */
   readTerrain() {
-    const N = WX_N, H = WORLD_HALF, hs = this.hemi || (REGION.lat0 < 0 ? -1 : 1);
+    const N = WX_N, H = WORLD_HALF;
     for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
       const x = ((i + 0.5) / N) * 2 * H - H, z = ((j + 0.5) / N) * 2 * H - H;
       const k = j * N + i;
       this.terr[k] = Math.max(0, baseHeight(x, z));
-      this.moist[k] = moisture(x, z); this.tsea[k] = seaLevelTemp(x, z) + 2.2 * hs * (z / LAND_HALF);
+      this.moist[k] = moisture(x, z); this.tsea[k] = seaLevelTemp(x, z);
     }
   }
 

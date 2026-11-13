@@ -94,7 +94,7 @@ void main() {
   vec3 ext = exp(-uTau / (yc + 0.025 * exp(-11.0 * yc))) * smoothstep(-0.002, 0.004, yh);
   if (uMilky.g > 0.0 && yh > 0.0) {
     vec3 e = uToEq * d;
-    vec3 m = texture2D(tMilky, vec2(0.5 - atan(e.y, e.x) * 0.15915494, 0.5 + asin(clamp(e.z, -1.0, 1.0)) * 0.31830989)).rgb;
+    vec3 m = texture2D(tMilky, vec2(0.5 - atan(e.y, e.x + 1.0e-6) * 0.15915494, 0.5 + asin(clamp(e.z, -1.0, 1.0)) * 0.31830989)).rgb;
     col += m * m * uMilky * ext;
   }
   float s = dot(d, uSunPos);

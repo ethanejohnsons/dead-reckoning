@@ -53,7 +53,7 @@ void main() {
   vec3 Pl = posAt(uvc - vec2(t.x, 0.0)), Pr = posAt(uvc + vec2(t.x, 0.0)), Pd = posAt(uvc - vec2(0.0, t.y)), Pu = posAt(uvc + vec2(0.0, t.y));
   vec3 dx = abs(Pl.z - P.z) < abs(Pr.z - P.z) ? P - Pl : Pr - P;
   vec3 dy = abs(Pd.z - P.z) < abs(Pu.z - P.z) ? P - Pd : Pu - P;
-  vec3 N = normalize(cross(dx, dy));
+  vec3 N = normalize(cross(dx, dy) + vec3(0.0, 0.0, 1.0e-9));
   vec3 V = normalize(-P);
   // The radius grows with distance, so it covers the same patch of screen: struts
   // and wing roots up close, a hangar and its apron a few hundred meters off.
@@ -73,7 +73,7 @@ void main() {
     vec2 om = vec2(cos(phi), sin(phi));
     vec3 dirV = vec3(om, 0.0);
     vec3 ortho = dirV - dot(dirV, V) * V;
-    vec3 axis = normalize(cross(dirV, V));
+    vec3 axis = normalize(cross(dirV, V) + vec3(1.0e-6, 0.0, 0.0));
     vec3 pN = N - axis * dot(N, axis);
     float pl = max(length(pN), 1.0e-5);
     float n = sign(dot(ortho, pN)) * acos(clamp(dot(pN, V) / pl, 0.0, 1.0));

@@ -20,7 +20,8 @@ connection while it runs: terrain is streamed, not bundled.
 
 ## Hosting
 
-There is no server side: `dist/` (about 8 MB) can be served by any web server,
+There is no server side: `dist/` (about 18 MB, 11 of it the airfields, each
+fetched only when it comes into view) can be served by any web server,
 from the top of a domain. For a sub-path, build with
 `npx vite build --base=/your/path/`.
 
@@ -65,10 +66,11 @@ climate rules stop at the two countries. (The plane the world lies on is Web
 Mercator, so the far Arctic is stretched, and a flight across the 180th
 meridian is not provided for.)
 
-What grows where no satellite picture has loaded, where the tree line is and
-how readily the picture's dark green is taken for woodland come from a rough
-climate of the continent in `src/world/terrain.js` (`lowlandMoisture`,
-`treelineAt`): prairie and plowed country keep trees to their shelter belts,
+What grows where no satellite picture has loaded, where the tree line is, how
+warm an ordinary day is (59°F in Minnesota, the low 80s in the tropics, a few
+degrees above freezing on the Arctic coast) and how readily the picture's dark
+green is taken for woodland come from a rough climate of the continent in
+`src/world/terrain.js` (`lowlandMoisture`, `treelineAt`, `seaTempAt`): prairie and plowed country keep trees to their shelter belts,
 river bottoms and towns, however green the crops are in the picture. Magnetic
 variation is interpolated from a table of values around the continent
 (`magVarAt` in `src/world/geo.js`), good to a degree or two.
@@ -253,8 +255,9 @@ Pick an airfield (the list is grouped by state and province, then Mexico,
 Central America and the Caribbean; type a name, a
 city, a state or a code to search it), a weather system, a time of day and
 whether to start on the runway or already in the air over the field, then
-press Fly. Or press Map, click anywhere on the continent to drop a pin, and
-press Fly from pin to start in the air over that spot; the same works from the
+press Fly. Or press Map and click an airfield to start from it, or click
+anywhere else on the continent to drop a pin and press Fly from pin to start in
+the air over that spot; the same works from the
 map in flight (`M`), where the pin also shows as a bearing and distance. `W`/`S` pitch, `A`/`D` roll, `Q`/`E` rudder, `R`/`F` faster and
 slower; flaps, brakes and fuel take care of themselves. `C` switches between the
 chase view and the cockpit (drag to look around, wheel to zoom). `G` hands the
