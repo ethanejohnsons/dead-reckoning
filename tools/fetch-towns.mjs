@@ -5,6 +5,9 @@
 //
 //   node tools/fetch-towns.mjs [--cache DIR] [--offline] [--skip-missing] [--endpoint URL]
 //                                             (--skip-missing: an interim bake from the boxes already in the cache, when the server is down)
+//   node tools/fetch-towns.mjs --geonames FILE          (a second source, for when no Overpass server answers: fills the boxes
+//                                                        the file in public/data has no towns in from GeoNames' cities1000.txt,
+//                                                        download.geonames.org/export/dump, CC BY 4.0; no network; the rest is kept)
 //   node tools/fetch-towns.mjs --natural-earth FILE     (fallback: Natural Earth's populated places, public domain;
 //                                                        ne_10m_populated_places_simple.geojson; far fewer places, no suburbs)
 //
@@ -37,11 +40,27 @@ const BOXES = [
 ];
 const MIN_POP = 1500;
 
-const NE = opt('--natural-earth', null);
+const NE = opt('--natural-earth', null), GEONAMES = opt('--geonames', null);
 const inBoxes = (lat, lon) => BOXES.some(([s, w, n, e]) => lat > s && lat <= n && lon > w && lon <= e);
 const towns = [];
 let defaulted = 0, credit = '© OpenStreetMap contributors, ODbL 1.0 (openstreetmap.org/copyright)';
-if (NE) {
+if (GEONAMES) {
+  // Keep what is baked; where a box has nothing in it, take GeoNames' places there (tab-separated: id, name, ascii name,
+  // other names, latitude, longitude, feature class, feature code, country, ..., population in the fifteenth column).
+  const have = JSON.parse(await readFile(OUT, 'utf8'));
+  towns.push(...have.towns);
+  const empty = BOXES.filter(([s, w, n, e]) => !have.towns.some((t) => t[1] > s && t[1] <= n && t[2] > w && t[2] <= e));
+  let added = 0;
+  for (const line of (await readFile(GEONAMES, 'utf8')).split('\n')) {
+    const c = line.split('\t');
+    if (c.length < 15 || c[6] !== 'P') continue;
+    const lat = +c[4], lon = +c[5], pop = +c[14];
+    if (!(pop >= MIN_POP) || !empty.some(([s, w, n, e]) => lat > s && lat <= n && lon > w && lon <= e)) continue;
+    towns.push([c[1].slice(0, 40), +lat.toFixed(4), +lon.toFixed(4), pop]); added++;
+  }
+  process.stderr.write(`GeoNames: ${added} places in the ${empty.length} boxes that had none (${empty.map((b) => b.join(',')).join(' | ')})\n`);
+  credit = have.credit.includes('GeoNames') || !added ? have.credit : `${have.credit}; where OpenStreetMap had not been asked yet: GeoNames (geonames.org), CC BY 4.0`;
+} else if (NE) {
   credit = 'Made with Natural Earth (naturalearthdata.com), public domain';
   for (const f of JSON.parse(await readFile(NE, 'utf8')).features) {
     const p = f.properties;

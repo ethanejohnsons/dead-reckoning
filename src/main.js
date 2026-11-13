@@ -15,7 +15,7 @@ import { Sky } from './world/sky.js';
 import { STARS_CREDIT } from './world/stars.js';
 import { skyRadiance } from './world/atmosphere.js';
 import { Airfields } from './world/airfield.js';
-import { TownLights, loadTowns, placeTowns } from './world/towns.js';
+import { TownLights, loadTowns, placeTowns, TOWNS_ATTRIBUTION } from './world/towns.js';
 import { Cities, CITY_ATTRIBUTION } from './world/cities.js';
 import { Imagery, IMAGERY_ATTRIBUTION } from './world/imagery.js';
 import { GroundLight } from './world/groundlight.js';
@@ -123,7 +123,7 @@ function updateStream(dt) {
 
 async function boot() {
   $('splash').classList.add('loading');
-  $('credit').innerHTML = `${dem.ATTRIBUTION}<br>${IMAGERY_ATTRIBUTION}<br>${OSM_ATTRIBUTION}<br>${CITY_ATTRIBUTION}<br>${STARS_CREDIT}`;
+  $('credit').innerHTML = `${dem.ATTRIBUTION}<br>${IMAGERY_ATTRIBUTION}<br>${OSM_ATTRIBUTION}<br>${TOWNS_ATTRIBUTION}<br>${CITY_ATTRIBUTION}<br>${STARS_CREDIT}`;
   if (!fieldById(S.opts.field)) S.opts.field = DEFAULT_FIELD;
   await loadTowns();
   await loadWorld(placeOfField(fieldById(S.opts.field)));

@@ -10,6 +10,8 @@ import { baseHeight, baseWater, isWater, setTownDensity, BN } from './terrain.js
 import { mulberry32 } from '../core/noise.js';
 
 const DATA_URL = `${import.meta.env.BASE_URL}data/towns.json`;
+/** The credit for the towns that are not OpenStreetMap's (tools/fetch-towns.mjs --geonames), for the title screen. */
+export const TOWNS_ATTRIBUTION = 'Towns of Hawaii, Mexico, Central America and the Caribbean: GeoNames (geonames.org), CC BY 4.0';
 const CN = 128;                       // coarse "is there a town about" grid (4 km cells)
 const MAX_LIGHTS = 170000;
 

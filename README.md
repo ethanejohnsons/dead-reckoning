@@ -122,7 +122,8 @@ index of them all to `src/world/airfield-index.js`:
 node tools/fetch-airfields.mjs            # the fields of the list not baked yet: a batch per Overpass request, with pauses
 node tools/fetch-airfields.mjs --all      # every field again (--offline: from the cached answers)
 node tools/fetch-airfields.mjs --source api   # the same from the main OpenStreetMap API, a field at a time, when no Overpass server answers
-node tools/fetch-towns.mjs                # towns and cities (seventeen requests) -> public/data/towns.json
+node tools/fetch-towns.mjs                # towns and cities (a request for each box of the map) -> public/data/towns.json
+node tools/fetch-towns.mjs --geonames cities1000.txt   # fill the boxes that have no towns yet from GeoNames, with no network
 ```
 
 The scripts keep the raw answers in a cache directory outside the repository
@@ -130,6 +131,11 @@ The scripts keep the raw answers in a cache directory outside the repository
 had and what was filled in (missing widths, surfaces, designators and building
 heights get defaults by runway length and building size; the big hubs are
 simplified harder and keep only their larger buildings).
+
+The towns of Hawaii, of Mexico below the Tropic, of Central America and of the
+Caribbean in `public/data/towns.json` are from [GeoNames](https://www.geonames.org)
+(`cities1000`, CC BY 4.0), taken while no Overpass server answered; its credit
+is on the title screen too.
 
 `src/world/airfield-index.js`, `public/airfields/*.json` and
 `public/data/towns.json` are a derived database of OpenStreetMap data,
