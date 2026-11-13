@@ -1,4 +1,4 @@
-// Materials and surface detail for the cabin: tiling grain textures (cloth, vinyl, carpet, moulded plastic,
+// Materials and surface detail for the cabin: tiling grain textures (cloth, vinyl, carpet, molded plastic,
 // perforated headliner) made once and shared by every variant, a material whose ambient light is dimmed by
 // baked contact shading, box-projected texture coordinates, and the contact-shading bake itself.
 
@@ -43,7 +43,7 @@ function grainHeight(kind, S) {
     } else if (kind === 'perf') {      // perforated headliner: a grid of small holes
       const px = (u * 24) % 1 - 0.5, py = (v * 24) % 1 - 0.5;
       h[i] = 0.62 - 0.5 * (1 - sstep(0.1, 0.2, Math.hypot(px, py))) + 0.06 * (n3[i] - 0.5) + 0.05 * (n1[i] - 0.5);
-    } else {                           // moulded plastic: fine stipple
+    } else {                           // molded plastic: fine stipple
       h[i] = 0.5 + 0.2 * (n3[i] - 0.5) + 0.12 * (r() - 0.5) + 0.06 * (n1[i] - 0.5);
     }
   }
@@ -53,7 +53,7 @@ function grainTextures(kind) {
   const S = kind === 'cloth' || kind === 'carpet' ? 512 : 256, h = grainHeight(kind, S);
   const [cc, gc] = canvas(S, S), [nc, gn] = canvas(S, S), ci = gc.createImageData(S, S), ni = gn.createImageData(S, S);
   const str = { cloth: 2.6, vinyl: 1.5, carpet: 3.2, perf: 2.4, plastic: 1.1 }[kind] || 1.2;
-  const depth = { cloth: 0.3, vinyl: 0.12, carpet: 0.55, perf: 0.5, plastic: 0.08 }[kind] || 0.1;   // how much the colour follows the height
+  const depth = { cloth: 0.3, vinyl: 0.12, carpet: 0.55, perf: 0.5, plastic: 0.08 }[kind] || 0.1;   // how much the color follows the height
   for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
     const i = y * S + x, o = i * 4;
     const dx = h[y * S + ((x + 1) % S)] - h[y * S + ((x + S - 1) % S)], dy = h[((y + 1) % S) * S + x] - h[((y + S - 1) % S) * S + x];
@@ -66,7 +66,7 @@ function grainTextures(kind) {
   const mk = (cv, srgb) => { const t = new THREE.CanvasTexture(cv); t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8; return t; };
   return [mk(cc, true), mk(nc, false)];
 }
-/** Colour (a grey that multiplies the surface colour) and normal map of a tiling grain: 'cloth' | 'vinyl' | 'carpet' | 'perf' | 'plastic'. */
+/** Color (a gray that multiplies the surface color) and normal map of a tiling grain: 'cloth' | 'vinyl' | 'carpet' | 'perf' | 'plastic'. */
 export function grain(kind) {
   if (!SHARED.has(kind + ':map')) { const [m, n] = grainTextures(kind); m.userData.shared = n.userData.shared = true; SHARED.set(kind + ':map', m); SHARED.set(kind + ':normal', n); }
   return { map: SHARED.get(kind + ':map'), normalMap: SHARED.get(kind + ':normal') };
@@ -92,7 +92,7 @@ export function cabinMat(opts = {}) {
   m.customProgramCacheKey = () => 'cabin';
   return m;
 }
-/** A cabin material with one of the tiling grains; `scale` is the size of one tile in metres. */
+/** A cabin material with one of the tiling grains; `scale` is the size of one tile in meters. */
 export function grainMat(kind, tile, { bump = 1, ...opts } = {}) {
   const g = grain(kind), m = cabinMat({ ...g, normalScale: new THREE.Vector2(bump, bump), ...opts });
   m.userData.tile = tile;
@@ -101,7 +101,7 @@ export function grainMat(kind, tile, { bump = 1, ...opts } = {}) {
 
 // ---------------------------------------------------------------- geometry finishing
 
-/** Box-projected texture coordinates in metres / tile, chosen per triangle (the geometry must be non-indexed). */
+/** Box-projected texture coordinates in meters / tile, chosen per triangle (the geometry must be non-indexed). */
 export function boxUv(geo, tile) {
   const p = geo.attributes.position, n = geo.attributes.normal, uv = new Float32Array(p.count * 2), s = 1 / tile;
   for (let i = 0; i < p.count; i += 3) {
@@ -123,7 +123,7 @@ export function flatAO(geo, v = 1) {
 
 /**
  * Bake soft contact shading into a geometry's `ao` attribute.
- *   boxes   occluders as [cx, cy, cz, hx, hy, hz] (centre, half-size): seats, people, the panel, the pedestal
+ *   boxes   occluders as [cx, cy, cz, hx, hy, hz] (center, half-size): seats, people, the panel, the pedestal
  *   room    (x, y, z) -> 0..1, how open that part of the cabin is to the windows before any occluder
  * Each vertex is tested a little way out along its normal against every box, so a surface darkens where it
  * comes close to another: the seat on the floor, the body in the seat, the yoke shaft at the panel.

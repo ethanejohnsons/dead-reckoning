@@ -1,5 +1,5 @@
 // Depth-aware half of the post stack: the passes that need to know where things
-// are, not just what colour they came out.
+// are, not just what color they came out.
 //
 //   AO_FRAG       horizon-based ambient occlusion at half resolution
 //   SCENE_FRAG    applies the occlusion, mirrors the world in open water, bends the
@@ -7,10 +7,10 @@
 //   TAA_FRAG      temporal anti-aliasing (reprojection, variance clip, sharp history)
 //   MBLUR_FRAG    camera motion blur that leaves the aircraft alone
 //   FOCUS_FRAG    autofocus: a 1x1 target that eases toward what is in the middle
-//   TILE_FRAG     widest circle of confusion in each neighbourhood
-//   DOF_FRAG      depth of field as a scatter-as-gather disc blur at half resolution
+//   TILE_FRAG     widest circle of confusion in each neighborhood
+//   DOF_FRAG      depth of field as a scatter-as-gather disk blur at half resolution
 //
-// Depth is three.js's ordinary 0..1 depth; z everywhere below is metres in front
+// Depth is three.js's ordinary 0..1 depth; z everywhere below is meters in front
 // of the camera. Positions are kept relative to the camera so nothing depends on
 // how far from the world origin the flight has wandered.
 
@@ -34,8 +34,8 @@ uniform vec2 uRes;             // full-resolution size
 uniform float uFrame;
 in vec2 vUv;
 out vec4 outColor;             // r: how much of the sky dome each point can see, g: its distance
-// Position of whatever the depth buffer holds at uv. The lookup is snapped to the centre of
-// its texel: on ground seen at a shallow angle, half a texel of mismatch is metres of height.
+// Position of whatever the depth buffer holds at uv. The lookup is snapped to the center of
+// its texel: on ground seen at a shallow angle, half a texel of mismatch is meters of height.
 vec3 posAt(vec2 uv) {
   ivec2 p = clamp(ivec2(uv * uRes), ivec2(0), ivec2(uRes) - 1);
   return viewPos((vec2(p) + 0.5) / uRes, linZ(texelFetch(tDepth, p, 0).r));
@@ -48,18 +48,18 @@ void main() {
   if (z > 600.0) { outColor = vec4(1.0, min(z, 60000.0), 0.0, 1.0); return; }      // not used beyond this (see where it is applied in SCENE_FRAG): nothing to work out
   vec2 uvc = (vec2(p0) + 0.5) / uRes, t = 1.0 / uRes;
   vec3 P = viewPos(uvc, z);
-  // Surface normal from depth, each axis taken across whichever neighbour lies on the same surface.
+  // Surface normal from depth, each axis taken across whichever neighbor lies on the same surface.
   vec3 Pl = posAt(uvc - vec2(t.x, 0.0)), Pr = posAt(uvc + vec2(t.x, 0.0)), Pd = posAt(uvc - vec2(0.0, t.y)), Pu = posAt(uvc + vec2(0.0, t.y));
   vec3 dx = abs(Pl.z - P.z) < abs(Pr.z - P.z) ? P - Pl : Pr - P;
   vec3 dy = abs(Pd.z - P.z) < abs(Pu.z - P.z) ? P - Pd : Pu - P;
   vec3 N = normalize(cross(dx, dy));
   vec3 V = normalize(-P);
   // The radius grows with distance, so it covers the same patch of screen: struts
-  // and wing roots up close, a hangar and its apron a few hundred metres off.
+  // and wing roots up close, a hangar and its apron a few hundred meters off.
   float rW = max(z * 0.09, 0.3);
   float rS = min(rW / (z * 2.0 * uProj.w), 0.16);
   rW = rS * z * 2.0 * uProj.w;
-  // The dice are rolled once per pixel and then turned a quarter of the way round each frame, in the order that
+  // The dice are rolled once per pixel and then turned a quarter of the way around each frame, in the order that
   // evens out soonest (0, 2, 1, 3 quarters): any four frames running hold every direction and every step equally.
   // A fresh roll every frame left the temporal filter a slow boil under the aircraft and round buildings, which
   // the eye picks up; what is left now repeats every four frames, too fast to see.
@@ -84,7 +84,7 @@ void main() {
       vec2 o = om * asp * max(rS * s, 1.6 / uRes.y);                      // never the texel we started on
       vec3 h0 = posAt(uvc + o) - P, h1 = posAt(uvc - o) - P;
       float l0 = max(length(h0), 1.0e-6 * z), l1 = max(length(h1), 1.0e-6 * z);
-      // Anything further than the radius is somebody else's business: no halo round the aircraft.
+      // Anything further than the radius is somebody else's business: no halo around the aircraft.
       float w0 = clamp(2.0 - 2.0 * l0 / rW, 0.0, 1.0) * step(1.0e-5 * z, l0), w1 = clamp(2.0 - 2.0 * l1 / rW, 0.0, 1.0) * step(1.0e-5 * z, l1);
       hc0 = max(hc0, mix(low0, dot(h0 / l0, V), w0));
       hc1 = max(hc1, mix(low1, dot(h1 / l1, V), w1));
@@ -208,7 +208,7 @@ void main() {
 
   vec4 c = texture(tHdr, uHeat > 0.0 ? vUv + heat(vUv, z) : vUv);
   if (broken(c.rgb)) {
-    // Rebuild a broken pixel from whichever of its four neighbours are sound.
+    // Rebuild a broken pixel from whichever of its four neighbors are sound.
     vec3 acc = vec3(0.0); float n = 0.0;
     for (int i = 0; i < 4; i++) {
       vec3 s = texture(tHdr, vUv + vec2(i == 0 ? 1.0 : i == 1 ? -1.0 : 0.0, i == 2 ? 1.0 : i == 3 ? -1.0 : 0.0) / uRes).rgb;
@@ -238,9 +238,9 @@ void main() {
       // Occlusion belongs to the surface, not to the air in front of it: fade it with haze
       // and cloud, where the depth buffer runs out of precision, and in direct sun.
       float fade = exp(-uFog * z) * cloudT * (1.0 - smoothstep(0.02, 0.06, 0.7e-6 * z / uProj.x));
-      // And it belongs to what is near. A few hundred metres off, a house is a handful of this pass's texels: the
+      // And it belongs to what is near. A few hundred meters off, a house is a handful of this pass's texels: the
       // occlusion it found between the houses of a town changed with every step of the camera (measured: the
-      // ground and walls it touched flickered half as much again at 500 m, twice as much past a kilometre), as it
+      // ground and walls it touched flickered half as much again at 500 m, twice as much past a kilometer), as it
       // did on the trees' cards. Out there the land's own baked occlusion and the buildings' own shading stand in.
       fade *= 1.0 - smoothstep(200.0, 600.0, z);
       float lit = smoothstep(0.25, 1.0, luma(col) / (luma(uSunCol) * 0.25 + 0.01));
@@ -270,7 +270,7 @@ uniform vec2 uJitter;           // this frame's sub-pixel offset, pixels
 uniform float uBlend, uReset, uPrecip, uSubject;
 in vec2 vUv;
 out vec4 outColor;
-// Work in a compressed range so one bright pixel cannot outvote its neighbours.
+// Work in a compressed range so one bright pixel cannot outvote its neighbors.
 vec3 tm(vec3 c) { return c / (1.0 + max(c.r, max(c.g, c.b))); }
 vec3 itm(vec3 c) { return c / max(1.0 - max(c.r, max(c.g, c.b)), 1.0e-3); }
 vec3 hs(vec2 uv) { return tm(texture(tHist, uv).rgb); }
@@ -289,11 +289,11 @@ void main() {
   vec4 cur4 = texelFetch(tCur, px, 0);
   if (uReset > 0.5) { outColor = cur4; return; }
   vec3 cur = tm(cur4.rgb);
-  // The nearest surface in the neighbourhood decides the motion, so an edge carries its own history.
+  // The nearest surface in the neighborhood decides the motion, so an edge carries its own history.
   vec4 v = texelFetch(tVel, px, 0);
   vec3 m1 = cur, m2 = cur * cur, lo = cur, hi = cur;
-  // This frame was drawn a fraction of a pixel off-centre. Each neighbour's sample is weighted by how
-  // close it really fell to this pixel's centre, so a star or a distant lamp smaller than a pixel feeds
+  // This frame was drawn a fraction of a pixel off-center. Each neighbor's sample is weighted by how
+  // close it really fell to this pixel's center, so a star or a distant lamp smaller than a pixel feeds
   // two or three pixels every frame instead of one pixel on one frame in eight (which twinkles).
   float wf = exp(-2.29 * dot(uJitter, uJitter));
   vec3 flt = cur * wf;
@@ -311,17 +311,17 @@ void main() {
   // The aircraft seen from inside (uSubject 1) is the one thing looked at closely, and it is drawn with four
   // samples a pixel already. Its history counts for less there, is clipped tighter (needles, cards and digits
   // move inside it, which the reprojection knows nothing of), and the present is taken as drawn instead of
-  // smoothed over its neighbours: the panel stays sharp and nothing on it trails.
+  // smoothed over its neighbors: the panel stays sharp and nothing on it trails.
   float own = v.b * uSubject;
   float keep = 1.0 - max(uBlend, 0.22 * own);
   if (huv.x < 0.0 || huv.y < 0.0 || huv.x > 1.0 || huv.y > 1.0) keep = 0.0;
   vec3 hist = history(huv);
   if (any(isnan(hist)) || any(isinf(hist))) { hist = cur; keep = 0.0; }      // never let a bad pixel live on in the history
-  // Clip the history to what the neighbourhood looks like now.
+  // Clip the history to what the neighborhood looks like now.
   vec3 mu = m1 / 9.0, sg = sqrt(max(m2 / 9.0 - mu * mu, 0.0));
-  // A lone bright point (a star, a runway light a few pixels across) is nearly all of its neighbourhood's
+  // A lone bright point (a star, a runway light a few pixels across) is nearly all of its neighborhood's
   // variance. A tight clip would cut its history each time the jitter carries it over a pixel boundary,
-  // and it would twinkle. There, open the clip out to everything the neighbourhood holds.
+  // and it would twinkle. There, open the clip out to everything the neighborhood holds.
   float iso = smoothstep(1.0, 2.0, max(sg.r, max(sg.g, sg.b)) / max(max(mu.r, max(mu.g, mu.b)), 1.0e-4));
   vec3 dv = (hist - mu) / (mix(sg * mix(1.2, 0.85, own), max(hi - mu, mu - lo), iso) + 1.0e-4);
   float ma = max(abs(dv.x), max(abs(dv.y), abs(dv.z)));

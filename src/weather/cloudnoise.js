@@ -1,21 +1,21 @@
 // Tiling noise volumes for cloud shapes.
 //
-// The shapes are built as a ladder of octaves a factor of two apart, from kilometres down to a few
-// metres, and no one texture can hold that: a 128^3 volume resolves four octaves (4, 8, 16 and 32
+// The shapes are built as a ladder of octaves a factor of two apart, from kilometers down to a few
+// meters, and no one texture can hold that: a 128^3 volume resolves four octaves (4, 8, 16 and 32
 // cells to the tile). So there are two volumes, and the renderer reads the second one at more than
 // one scale and rotation (see LOBE_SCALE / FINE_SCALE in weather.js).
 //
 // makeCloudNoise()  128^3 RGBA base volume, shared by the renderer (3D texture) and the flight
 //                   model (is the aircraft inside cloud?):
-//   R: Perlin-Worley shape, octaves at 4, 8, 16, 32 cells, histogram-equalised so that a coverage
+//   R: Perlin-Worley shape, octaves at 4, 8, 16, 32 cells, histogram-equalized so that a coverage
 //      threshold of c covers a fraction c of the sky
-//   G: cellular (round Worley billows at 8, 16, 32 cells), equalised
-//   B: wispy Perlin (8, 16 cells) for cirrus, fibres and the bend of the sampling domain
-//   A: very low frequency Perlin (2, 4 cells), equalised: slow variation
+//   G: cellular (around Worley billows at 8, 16, 32 cells), equalized
+//   B: wispy Perlin (8, 16 cells) for cirrus, fibers and the bend of the sampling domain
+//   A: very low frequency Perlin (2, 4 cells), equalized: slow variation
 //   .detail: the detail volume below (made on first use), so the flight model can reach it too
-// makeDetailNoise() 128^3 RGBA lobe volume, every channel equalised (mean 0.5):
+// makeDetailNoise() 128^3 RGBA lobe volume, every channel equalized (mean 0.5):
 //   R: billows, low (4, 8 cells): round heads with sharp creases between   G: billows, high (16, 32)
-//   B: wisps, low (4, 8, 16): ragged shreds (plain gradient noise)          A: wisps, high (16, 32): fibres (broad ridges, unbent)
+//   B: wisps, low (4, 8, 16): ragged shreds (plain gradient noise)          A: wisps, high (16, 32): fibers (broad ridges, unbent)
 // makeCurlNoise()   128^2 RGBA 2D curl field (RG coarse, BA fine). Only the high cloud reads it now, to
 //                   bend its bands a little; the cloud volumes are no longer stirred with it
 //
@@ -127,11 +127,11 @@ function cycled(src, S) {
 }
 
 /** Map a float field to bytes with a flat histogram, written to data[i * stride + ch]. */
-function equalise(field, data, stride, ch) {
-  const lut = equaliser(field);
+function equalize(field, data, stride, ch) {
+  const lut = equalizer(field);
   for (let i = 0; i < field.length; i++) data[i * stride + ch] = lut.map[((field[i] - lut.lo) * lut.k) | 0];
 }
-function equaliser(field) {
+function equalizer(field) {
   let lo = Infinity, hi = -Infinity;
   for (let i = 0; i < field.length; i++) { const v = field[i]; if (v < lo) lo = v; if (v > hi) hi = v; }
   const B = 16384, hist = new Uint32Array(B + 1), k = (B - 1) / Math.max(hi - lo, 1e-9);
@@ -142,8 +142,8 @@ function equaliser(field) {
   return { lo, k, map };
 }
 /** The same, in place, to floats 0..1. */
-function equalised(field) {
-  const lut = equaliser(field);
+function equalized(field) {
+  const lut = equalizer(field);
   for (let i = 0; i < field.length; i++) field[i] = lut.map[((field[i] - lut.lo) * lut.k) | 0] / 255;
   return field;
 }
@@ -168,16 +168,16 @@ export function makeCloudNoise() {
   const shape = magnify(l32, 32, 4);
   addScaled(shape, magnify(l64, 64, 2), 1);
   addTiled(shape, S, t64, 64, 1);
-  equalise(shape, data, 4, 0);
+  equalize(shape, data, 4, 0);
   // G: cells alone.
   const cell = magnify(G.b8, 64, 2);
   addTiled(cell, S, addScaled(addScaled(new Float32Array(64 * 64 * 64), G.b8t, g), G.b16t, g * g), 64, 1, 23, 41, 11);
-  equalise(cell, data, 4, 1);
+  equalize(cell, data, 4, 1);
   // B: wisps.
   const wisp = magnify(addScaled(perlinGrid(64, 8, rnd), perlinGrid(64, 16, rnd), 0.5), 64, 2);
   for (let i = 0; i < N; i++) data[i * 4 + 2] = Math.max(0, Math.min(255, (0.5 + wisp[i] * 0.6) * 255));
   // A: slow.
-  equalise(magnify(addScaled(perlinGrid(32, 2, rnd), perlinGrid(32, 4, rnd), 0.5), 32, 4), data, 4, 3);
+  equalize(magnify(addScaled(perlinGrid(32, 2, rnd), perlinGrid(32, 4, rnd), 0.5), 32, 4), data, 4, 3);
   Object.defineProperty(data, 'detail', { get: makeDetailNoise });
   return data;
 }
@@ -188,24 +188,24 @@ export function makeDetailNoise() {
   const data = new Uint8Array(N * 4);
   const put = (field, ch) => { for (let i = 0; i < N; i++) data[i * 4 + ch] = Math.min(255, field[i] * 256); };
   // Billows: low octaves magnified, high octaves tiled twice. (The grids are the base volume's, with their axes cycled.)
-  put(magnify(equalised(addScaled(addScaled(new Float32Array(HN), billowGrid(H, 4, rnd), 1), cycled(G.b8, H), g)), H, 2), 0);
+  put(magnify(equalized(addScaled(addScaled(new Float32Array(HN), billowGrid(H, 4, rnd), 1), cycled(G.b8, H), g)), H, 2), 0);
   const hi = new Float32Array(N);
-  addTiled(hi, S, equalised(addScaled(addScaled(new Float32Array(HN), cycled(G.b8t, H), 1), cycled(G.b16t, H), g)), H, 1);
+  addTiled(hi, S, equalized(addScaled(addScaled(new Float32Array(HN), cycled(G.b8t, H), 1), cycled(G.b16t, H), g)), H, 1);
   put(hi, 1);
   // Wisps: what is left of cloud that is evaporating. Its large pieces are ragged shreds with no grain to
   // them (plain gradient noise, three octaves); only its fine pieces are fibrous (broad ridges of gradient
-  // noise, half and half with the plain kind, so the fibres do not join up into veins). Neither is read
-  // through a bent domain: bent ridges are curls, and curls a few hundred metres across on the underside
+  // noise, half and half with the plain kind, so the fibers do not join up into veins). Neither is read
+  // through a bent domain: bent ridges are curls, and curls a few hundred meters across on the underside
   // of a cloud are marbled paper, not cloud.
-  const shreds = equalised(addScaled(addScaled(perlinGrid(H, 4, rnd), perlinGrid(H, 8, rnd), g), perlinGrid(H, 16, rnd), g * g));
+  const shreds = equalized(addScaled(addScaled(perlinGrid(H, 4, rnd), perlinGrid(H, 8, rnd), g), perlinGrid(H, 16, rnd), g * g));
   put(magnify(shreds, H, 2), 2);
-  const fibres = (fa, fb) => {
+  const fibers = (fa, fb) => {
     const a = perlinGrid(H, fa, rnd), b = perlinGrid(H, fb, rnd), p = addScaled(perlinGrid(H, fa, rnd), perlinGrid(H, fb, rnd), g), out = new Float32Array(HN);
     for (let o = 0; o < HN; o++) out[o] = 1 - Math.min(1, Math.abs(a[o]) * 2.2) + g * (1 - Math.min(1, Math.abs(b[o]) * 2.2)) + 1.1 * p[o];
-    return equalised(out);
+    return equalized(out);
   };
   const wh = new Float32Array(N);
-  addTiled(wh, S, fibres(8, 16), H, 1);
+  addTiled(wh, S, fibers(8, 16), H, 1);
   put(wh, 3);
   shared = null;
   return (detailData = data);

@@ -32,7 +32,7 @@ function shown(el) { let last = !el.hidden; return (on) => { if (on !== last) { 
 
 const PITCH_EM = 0.025;        // the horizon moves this many ball diameters per degree of pitch: 20 degrees reaches the rim
 const VS_FULL = 1500;          // ft/min at which the climb bar is full
-const LOW_AGL = 760;           // metres above ground under which the height above ground is shown (2,500 ft)
+const LOW_AGL = 760;           // meters above ground under which the height above ground is shown (2,500 ft)
 
 export class FlightPanel {
   constructor() {
@@ -122,7 +122,7 @@ export class FlightPanel {
         const kt = Math.hypot(wx.x, wx.z) * KT, calm = kt < 1.5;
         this.arrowShown(!calm);
         t.Wind(calm ? 'calm' : `${hdg3(Math.atan2(-wx.x, wx.z) * R2D - d.magVar)}° ${Math.round(kt)} kt`);
-        t.Oat(`${Math.round(wx.temp) || 0}°C`);
+        t.Oat(`${fahrenheit(wx.temp)}°F`);
       }
     }
   }
@@ -130,22 +130,36 @@ export class FlightPanel {
 
 // ------------------------------------------------------------------ the weather in plain words
 
-const COMPASS = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
+const COMPASS = ['north', 'northeast', 'east', 'southeast', 'south', 'southwest', 'west', 'northwest'];
 const feet = (m, step) => thousands(Math.max(0, Math.round((m * FT) / step) * step));
+
+/** Degrees Fahrenheit, to the degree, from degrees Celsius (what the weather model works in). */
+export const fahrenheit = (c) => Math.round((c || 0) * 1.8 + 32) || 0;
+/** A visibility in meters as a pilot in the United States hears it: statute miles, fractions of a mile, then feet. */
+export function visibilityWords(m) {
+  const mi = m / 1609.344;
+  if (mi >= 30) return 'More than 30 miles';
+  if (mi >= 6) return `${Math.round(mi)} miles`;
+  if (mi >= 1.25) return `${(Math.round(mi * 2) / 2).toString()} miles`;
+  if (mi >= 0.875) return '1 mile';
+  if (mi >= 0.2) return `${['1/4', '1/2', '3/4'][Math.min(2, Math.max(0, Math.round(mi * 4) - 1))]} mile`;
+  return `${Math.max(100, Math.round((m * 3.281) / 100) * 100).toLocaleString()} ft`;
+}
 
 /**
  * What the weather is doing where the aircraft is, for the Weather panel.
- * wx: the sample main.js keeps (wind x/z, temp, visibility, precip, snow, hail, turb, cloud, col); alt: metres.
+ * wx: the sample main.js keeps (wind x/z, temp, visibility, precip, snow, hail, turb, cloud, col); alt: meters.
  * Returns { head, cloud, vis, wind, fallLabel, fall, air }, or null before the first sample.
  */
 export function weatherWords(wx, alt) {
+  const miles = visibilityWords;
   const c = wx.col;
   if (!c) return null;
   const inCloud = wx.cloud > 0, fog = c.fog > 0.3 && alt < c.top, storm = c.cell > 0.3 || c.front > 0.35;
-  const sky = c.cov < 0.06 ? 'Clear sky' : c.cov < 0.3 ? 'A few clouds' : c.cov < 0.55 ? 'Scattered cloud' : c.cov < 0.88 ? 'Broken cloud' : 'Overcast';
+  const sky = c.cov < 0.06 ? 'Clear sky' : c.cov < 0.3 ? 'A few clouds' : c.cov < 0.55 ? 'Scattered clouds' : c.cov < 0.88 ? 'Broken clouds' : 'Overcast';
   const cloud = fog ? `Fog up to ${feet(c.top, 100)} ft`
     : c.cov < 0.06 ? 'None'
-      : `${sky.replace(' cloud', '')}, base ${feet(c.base, 100)} ft, tops ${feet(c.top, 500)} ft`;
+      : `${sky.replace(' clouds', '')}, bases ${feet(c.base, 100)} ft, tops ${feet(c.top, 500)} ft`;
 
   const p = wx.precip, hail = (wx.hail || 0) > 0.05;
   const amount = p < 0.05 ? '' : p < 0.3 ? 'Light' : p < 0.65 ? 'Steady' : 'Heavy';
@@ -153,18 +167,15 @@ export function weatherWords(wx, alt) {
   const fall = (amount ? amount : 'None') + (hail ? (amount ? ', with hail' : ' but hail') : '');
 
   const v = wx.visibility;
-  const vis = inCloud ? 'Next to nothing: in cloud'
-    : fog ? `${(0.3 + (1 - c.fog) * 2).toFixed(1)} km, in fog`
-      : v >= 50000 ? 'More than 50 km' : v >= 10000 ? `${Math.round(v / 1000)} km` : v >= 1000 ? `${(v / 1000).toFixed(1)} km` : `${Math.max(50, Math.round(v / 50) * 50)} m`;
+  const vis = inCloud ? 'Near zero: in the clouds' : fog ? `${miles((0.3 + (1 - c.fog) * 2) * 1000)}, in fog` : miles(v);
 
   const kt = Math.hypot(wx.x, wx.z) * KT, from = (Math.atan2(-wx.x, wx.z) * R2D + 360) % 360;
   const bumps = wx.turb > 0.5 ? ', rough air' : wx.turb > 0.2 ? ', a few bumps' : '';
   const wind = kt < 1.5 ? 'Calm' + bumps : `From the ${COMPASS[Math.round(from / 45) % 8]} at ${Math.round(kt)} kt${bumps}`;
 
-  const temp = Math.round(wx.temp) || 0;
-  const air = `${temp}°C${temp <= 0 ? ', freezing' : ''}`;
+  const air = `${fahrenheit(wx.temp)}°F${wx.temp <= 0 ? ', freezing' : ''}`;
 
-  const first = inCloud ? 'In cloud' : storm ? 'Thunderstorm' : fog ? 'Fog' : sky;
+  const first = inCloud ? 'In the clouds' : storm ? 'Thunderstorm' : fog ? 'Fog' : sky;
   const second = hail ? (amount ? `${amount.toLowerCase()} ${kind} and hail` : 'hail') : amount ? `${amount.toLowerCase()} ${kind}` : kt >= 34 ? 'gale' : kt >= 22 ? 'strong wind' : '';
   return { head: second ? `${first}, ${second}` : first, cloud, vis, wind, fallLabel: wx.snow ? 'Snow' : 'Rain', fall, air };
 }

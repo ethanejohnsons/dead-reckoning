@@ -3,10 +3,14 @@
 // (fetched by the game when the field comes into its window of the world) and the index of all of them in
 // src/world/airfield-index.js (the menu, the chart and the search for which fields a window holds).
 //
-//   node tools/fetch-airfields.mjs [--cache DIR] [--offline] [--only ID,ID] [--endpoint URL] [--skip-buildings]
+//   node tools/fetch-airfields.mjs [--cache DIR] [--offline] [--all] [--only ID,ID] [--endpoint URL] [--skip-buildings]
+//
+// Only the fields of the list that are not baked yet are fetched (no entry in the index, or no file): the
+// rest keep their files, and their index entries are carried over with the list's wording. --all fetches
+// every field again; --only names the ones to fetch.
 //
 // The list of fields is tools/airfield-list.mjs. The Overpass API is asked a batch of fields at a time
-// (aeroway features round each, then the buildings inside each aerodrome boundary), with a pause between
+// (aeroway features around each, then the buildings inside each airport boundary), with a pause between
 // requests, and the raw answers are kept in a cache directory outside the repository (default: the system
 // temp directory). --offline rebuilds from that cache without touching the network.
 //
@@ -31,6 +35,7 @@ const opt = (name, dflt) => { const i = args.indexOf(name); return i >= 0 && arg
 const CACHE = opt('--cache', join(tmpdir(), 'airfield-osm-cache'));
 const OFFLINE = flag('--offline');
 const ONLY = opt('--only', '').split(',').filter(Boolean);
+const ALL = flag('--all');
 const SKIP_BUILDINGS = flag('--skip-buildings');      // an interim bake: buildings only where their answer is already cached
 const ENDPOINT = opt('--endpoint', 'https://overpass-api.de/api/interpreter');      // any Overpass API server
 const USER_AGENT = 'airfield-geometry-fetch/1.0';
@@ -99,7 +104,7 @@ function simplify(pts, tol) {
   }
   return pts.filter((_, i) => keep[i]);
 }
-/** Simplify a closed ring (first point not repeated). Split at the two points farthest apart so no corner is favoured. */
+/** Simplify a closed ring (first point not repeated). Split at the two points farthest apart so no corner is favored. */
 function simplifyRing(ring, tol) {
   if (ring.length < 5) return ring.slice();
   let a = 0, b = 0, far = -1;
@@ -132,7 +137,7 @@ function hull(points) {
   for (const q of p.reverse()) { while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], q) <= 0) upper.pop(); upper.push(q); }
   return lower.slice(0, -1).concat(upper.slice(0, -1));
 }
-/** Push a ring's points outward from its centroid by about `m` metres (enough for a loose search fence). */
+/** Push a ring's points outward from its centroid by about `m` meters (enough for a loose search fence). */
 function inflate(ring, m) {
   const c = centroid(ring);
   return ring.map((p) => { const d = dist(p, c) || 1; return [p[0] + ((p[0] - c[0]) / d) * m, p[1] + ((p[1] - c[1]) / d) * m]; });
@@ -141,8 +146,8 @@ function inflate(ring, m) {
 // ---------------------------------------------------------------- OSM helpers
 
 const num = (v) => { if (v == null) return null; const m = String(v).replace(',', '.').match(/-?\d+(\.\d+)?/); return m ? +m[0] : null; };
-/** Metres from a tag that may carry a unit (ft, ', m). */
-function metres(v) {
+/** Meters from a tag that may carry a unit (ft, ', m). */
+function meters(v) {
   const n = num(v);
   if (n == null) return null;
   return /ft|feet|'/.test(String(v)) ? n * 0.3048 : n;
@@ -162,11 +167,15 @@ const flat = (pts) => pts.flatMap((p) => [round1(p[0]), round1(p[1])]);
 
 // ---------------------------------------------------------------- main
 
-// Each field has its own flat frame: metres east (+x) and south (+z) of its listed position, on a Mercator
+// Each field has its own flat frame: meters east (+x) and south (+z) of its listed position, on a Mercator
 // plane true to scale there. The game scales it to its window of the world when it loads the field.
 const R_EARTH = 6378137;
 const mercY = (lat) => R_EARTH * Math.log(Math.tan(Math.PI / 4 + (lat * D2R) / 2));
-const fields = AIRFIELD_LIST.filter((f) => !ONLY.length || ONLY.includes(f.id)).map((f) => ({ ...f, k: Math.cos(f.lat * D2R), my: mercY(f.lat), magVar: magVarAt(f.lat, f.lon) }));
+// What is baked already: the index as it stands, and the files beside it.
+let baked = new Map();
+try { baked = new Map((await import('../src/world/airfield-index.js')).AIRFIELD_INDEX.map((e) => [e.id, e])); } catch { /* no index yet */ }
+const wanted = (f) => (ONLY.length ? ONLY.includes(f.id) : ALL || !baked.has(f.id) || !existsSync(join(OUT_DIR, `${f.id}.json`)));
+const fields = AIRFIELD_LIST.filter(wanted).map((f) => ({ ...f, k: Math.cos(f.lat * D2R), my: mercY(f.lat), magVar: magVarAt(f.lat, f.lon) }));
 const local = (f, lat, lon) => [R_EARTH * (lon - f.lon) * D2R * f.k, -(mercY(lat) - f.my) * f.k];
 function toLatLonLocal(f, x, z) {
   return { lat: (2 * Math.atan(Math.exp((f.my - z / f.k) / R_EARTH)) - Math.PI / 2) / D2R, lon: f.lon + x / f.k / R_EARTH / D2R };
@@ -232,12 +241,12 @@ for (const f of fields) {
       cands.push({ ring, a: Math.abs(area(ring)), tags: el.tags });
     }
   }
-  // The field's own aerodrome is the one that holds (or lies nearest) the listed position.
+  // The field's own airport is the one that holds (or lies nearest) the listed position.
   cands.sort((p, q) => (inside([0, 0], q.ring) - inside([0, 0], p.ring)) || dist(centroid(p.ring), [0, 0]) - dist(centroid(q.ring), [0, 0]));
   if (cands.length) { f.boundary = cands[0].ring; f.adTags = cands[0].tags; }
 }
 
-// Runways first: the fence for a field without a mapped boundary is drawn round them.
+// Runways first: the fence for a field without a mapped boundary is drawn around them.
 function lineOf(f, el) { return el.geometry.map((g) => local(f, g.lat, g.lon)); }
 for (const f of fields) {
   f.notes = [];
@@ -245,7 +254,7 @@ for (const f of fields) {
   f.rawRunways = f.els.filter((el) => el.tags.aeroway === 'runway' && el.type === 'way' && !isClosed(el)).map((el) => ({ el, pts: lineOf(f, el) })).filter((r) => inField(r.pts));
   if (!f.boundary) {
     const pts = f.els.filter((el) => el.type === 'way' && /^(runway|taxiway|apron|hangar|terminal)$/.test(el.tags.aeroway)).flatMap((el) => lineOf(f, el)).filter((p) => dist(p, [0, 0]) < f.radius * 1000);
-    if (pts.length >= 3) { f.boundary = inflate(hull(pts), 120); f.notes.push('no aerodrome boundary in OSM: fenced 120 m round the mapped runways, taxiways and aprons'); }
+    if (pts.length >= 3) { f.boundary = inflate(hull(pts), 120); f.notes.push('no airport boundary in OSM: fenced 120 m around the mapped runways, taxiways and aprons'); }
   }
 }
 
@@ -325,10 +334,11 @@ for (const f of fields) {
     // Designators: the one painted at end a is read flying a -> b.
     let n0, n1;
     const refs = String(t.ref || t.name || '').split(/[/\-–]/).map((s) => s.trim()).filter((s) => /^\d{1,2}[LRC]?$/.test(s));
-    // American designators carry no leading zero (4/22, 9L/27R).
-    const fromHeading = (h) => String(Math.round(magnetic(h) / 10) % 36 || 36);
-    const pad = (s) => s.replace(/^0+(?=\d)/, '');
-    const opposite = (s) => String(((num(s) + 17) % 36) + 1) + ({ L: 'R', R: 'L', C: 'C' }[s.slice(-1)] || '');
+    // American designators carry no leading zero (4/22, 9L/27R); Canadian ones do (08/26).
+    const canada = f.country === 'Canada';
+    const pad = canada ? (s) => s.replace(/^(\d)(?!\d)/, '0$1') : (s) => s.replace(/^0+(?=\d)/, '');
+    const fromHeading = (h) => pad(String(Math.round(magnetic(h) / 10) % 36 || 36));
+    const opposite = (s) => pad(String(((num(s) + 17) % 36) + 1) + ({ L: 'R', R: 'L', C: 'C' }[s.slice(-1)] || ''));
     if (refs.length === 2) {
       const e0 = angDiff(num(refs[0]) * 10, magnetic(hdgAB)), e1 = angDiff(num(refs[1]) * 10, magnetic(hdgAB));
       [n0, n1] = (e0 <= e1 ? refs : [refs[1], refs[0]]).map(pad);
@@ -342,17 +352,17 @@ for (const f of fields) {
     } else { n0 = fromHeading(hdgAB); n1 = fromHeading(hdgAB + 180); d.push('n'); }
     let surface = surfaceOf(t.surface);
     if (!surface) d.push('s');
-    let width = metres(t.width);
+    let width = meters(t.width);
     if (!(width >= 5 && width <= 90)) { width = null; d.push('w'); }
-    runways.push({ n: [n0, n1], a, b, len, hdg: hdgAB, w: width, s: surface, d, bend: r.bend, lenTag: metres(t.length), lit: t.lit === 'yes', dt: r.dt.map((v) => Math.round(v)) });
+    runways.push({ n: [n0, n1], a, b, len, hdg: hdgAB, w: width, s: surface, d, bend: r.bend, lenTag: meters(t.length), lit: t.lit === 'yes', dt: r.dt.map((v) => Math.round(v)) });
   }
-  // Main runway: the longest sealed one, else the longest. An untagged surface counts as sealed for now if
+  // Main runway: the longest paved one, else the longest. An untagged surface counts as paved for now if
   // the old table called the field paved.
   const rank = (r) => r.len * (paved(r.s) || (r.s === null && r.len >= 900) ? 4 : r.s === 'gravel' ? 2 : 1);
   runways.sort((p, q) => rank(q) - rank(p));
   // Defaults for what the map leaves out.
   runways.forEach((r, i) => {
-    // An untagged strip of 900 m or more is taken to be sealed (nearly all such runways in these states are); a shorter one is grass.
+    // An untagged strip of 900 m or more is taken to be paved (nearly all such runways in these states are); a shorter one is grass.
     if (r.s === null) r.s = r.len >= 900 ? 'asphalt' : 'grass';
     if (r.w === null) r.w = paved(r.s) ? (r.len >= 2400 ? 46 : r.len >= 1500 ? 30 : r.len >= 900 ? 23 : 18) : r.s === 'gravel' ? 20 : 30;
   });
@@ -366,7 +376,7 @@ for (const f of fields) {
     if (el.type !== 'way' || isClosed(el)) continue;
     const pts = simplify(lineOf(f, el), TOL.tw);
     if (!within(pts)) continue;
-    let w = metres(el.tags.width); const d = [];
+    let w = meters(el.tags.width); const d = [];
     let s = surfaceOf(el.tags.surface);
     if (aw === 'stopway') {
       // Takes after the runway it continues.
@@ -421,7 +431,7 @@ for (const f of fields) {
       const tower = /tower/.test(aw || '') || t.man_made === 'tower' || t.building === 'tower' || /control_tower|airport_control/.test(`${t.building} ${t['tower:type']} ${t.service}`);
       if (A < (tower ? 12 : TOL.minB)) continue;                      // garden sheds and kiosks
       if (area(ring) < 0) ring.reverse();
-      let h = metres(t.height) ?? (num(t['building:levels']) ? num(t['building:levels']) * 3.4 + 1 : null);
+      let h = meters(t.height) ?? (num(t['building:levels']) ? num(t['building:levels']) * 3.4 + 1 : null);
       const kind = tower ? 'c' : aw === 'terminal' || /terminal/.test(t.building) ? 't' : aw === 'hangar' || /hangar/.test(t.building) ? 'h' : 'b';
       const d = [];
       if (!(h >= 2 && h <= 110)) {
@@ -495,13 +505,20 @@ for (const f of fields) {
   for (const r of runways) reach = Math.max(reach, dist(r.a, [0, 0]), dist(r.b, [0, 0]));
   for (const b of buildings) for (const q of b.p) reach = Math.max(reach, dist(q, [0, 0]));
   const ll = toLatLonLocal(f, mid[0], mid[1]);
-  index.push({ id: f.id, name: f.name, city: f.city, state: f.state, lat: +ll.lat.toFixed(5), lon: +ll.lon.toFixed(5), numbers: main.n, hdg: Math.round(main.hdg), len: Math.round(main.len),
+  index.push({ id: f.id, name: f.name, city: f.city, state: f.state, country: f.country, lat: +ll.lat.toFixed(5), lon: +ll.lon.toFixed(5), numbers: main.n, hdg: Math.round(main.hdg), len: Math.round(main.len),
     surface: paved(main.s) ? 'paved' : main.s, traffic: f.traffic, big: f.size === 2 ? 1 : 0, reach: Math.round(reach + 400), blurb: f.blurb });
 }
 
 // ---------------------------------------------------------------- write
 
-if (!ONLY.length) {
+{
+  // The index follows the list: a field fetched in this run takes its new entry, one baked before keeps
+  // its old one (with the list's name, place and blurb), one that could not be baked is left out.
+  const fresh = new Map(index.map((e) => [e.id, e])), merged = [];
+  for (const f of AIRFIELD_LIST) {
+    const e = fresh.get(f.id) || (baked.has(f.id) && existsSync(join(OUT_DIR, `${f.id}.json`)) ? { ...baked.get(f.id), name: f.name, city: f.city, state: f.state, country: f.country, traffic: f.traffic, blurb: f.blurb } : null);
+    if (e) merged.push({ id: e.id, name: e.name, city: e.city, state: e.state, country: e.country, lat: e.lat, lon: e.lon, numbers: e.numbers, hdg: e.hdg, len: e.len, surface: e.surface, traffic: e.traffic, big: e.big, reach: e.reach, blurb: e.blurb });
+  }
   const header = `// GENERATED by tools/fetch-airfields.mjs from tools/airfield-list.mjs. Do not edit by hand: run the script again.
 //
 // The index of the game's airfields: where each one is and what its main runway is. The full geometry of a
@@ -514,24 +531,24 @@ if (!ONLY.length) {
 //
 // lat, lon: midpoint of the main runway. numbers: its designators; hdg: true heading flying from the first
 // to the second (deg); len: pavement length (m). reach: how far the field extends from its listed position (m).
-// A field's file holds, in metres east (+x) and south (+z) of ll (true to scale at the field), points as flat [x0, z0, x1, z1, ...]:
+// A field's file holds, in meters east (+x) and south (+z) of ll (true to scale at the field), points as flat [x0, z0, x1, z1, ...]:
 //   rw    runways: n designators (n[0] is painted at end a), a/b the two ends of the pavement, w width, s surface,
 //         dt how far each landing threshold is displaced in from a and b
-//   tw    taxiway centrelines: w width, s surface, p points (stop: a stopway past a runway end; lane: an apron taxilane)
+//   tw    taxiway centerlines: w width, s surface, p points (stop: a stopway past a runway end; lane: an apron taxilane)
 //   ap    aprons: s surface, p outline
 //   bd    buildings, largest first: k kind (t terminal, h hangar, c control tower, b other), h height, p outline
 //   hp helipads, ws windsocks, hold holding positions, papi approach-slope indicators, als approach lights (points)
-//   park  aircraft stand lines; fence the aerodrome boundary
+//   park  aircraft stand lines; fence the airport boundary
 //   d     which values the map did not give and the script filled in: w width, s surface, n designators, h height
 
 export const OSM_ATTRIBUTION = 'Airfields and towns: © OpenStreetMap contributors (openstreetmap.org/copyright)';
 export const DEFAULT_FIELD = '${DEFAULT_FIELD}';
 
 export const AIRFIELD_INDEX = [
-${index.map((r) => `  ${JSON.stringify(r)},`).join('\n')}
+${merged.map((r) => `  ${JSON.stringify(r)},`).join('\n')}
 ];
 `;
   await writeFile(OUT_INDEX, header);
 }
 console.log(report.join('\n\n'));
-console.log(`\n${index.length} of ${fields.length} fields written to ${OUT_DIR} (${(bytes / 1048576).toFixed(2)} MB)${ONLY.length ? '' : ` and indexed in ${OUT_INDEX}`}`);
+console.log(`\n${index.length} of ${fields.length} fields fetched and written to ${OUT_DIR} (${(bytes / 1048576).toFixed(2)} MB); ${AIRFIELD_LIST.length} in the list, indexed in ${OUT_INDEX}`);

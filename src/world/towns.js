@@ -36,7 +36,7 @@ export function placeTowns() {
   const H = WORLD_HALF, cell = (2 * H) / (BN - 1);
   for (const [name, lat, lon, pop] of ALL) {
     const p = toWorld(lat, lon);
-    // About 1,100 people to the square kilometre, American suburbs and all.
+    // About 1,100 people to the square kilometer, American suburbs and all.
     const r = Math.min(22000, Math.max(450, Math.sqrt(pop / (1100 * Math.PI)) * 1000));
     if (Math.abs(p.x) > H + 2 * r || Math.abs(p.z) > H + 2 * r) continue;
     TOWNS.push({ name, x: p.x, z: p.z, r, pop, lights: 0, start: 0 });
@@ -75,6 +75,8 @@ export function townsIn(x0, z0, x1, z1) {
 
 /** The towns of the window (for the chart). */
 export const townList = () => TOWNS;
+/** Every town of the data, biggest first: [name, lat, lon, population] (for the map of the continent). */
+export const allTowns = () => ALL;
 
 export class TownLights {
   constructor(scene) {
@@ -103,7 +105,7 @@ export class TownLights {
     const pos = new Float32Array(total * 3), col = new Float32Array(total * 3);
     for (const t of TOWNS) {
       for (let i = 0; i < t.lights; i++) {
-        // Denser toward the centre, on the square street grid of an American town.
+        // Denser toward the center, on the square street grid of an American town.
         const a = rnd() * 6.2832, rr = Math.pow(rnd(), 0.75) * t.r;
         let x = t.x + Math.cos(a) * rr, z = t.z + Math.sin(a) * rr;
         if (rnd() < 0.75) { const g = 100; if (rnd() < 0.5) x = Math.round(x / g) * g; else z = Math.round(z / g) * g; }

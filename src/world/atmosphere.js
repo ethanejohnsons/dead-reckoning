@@ -9,19 +9,19 @@
 //   skyRadiance(dir)                 the sky in a direction, from the sky-view table
 //   atmosphereTransmittance(a, b)    light surviving between two points (closed form, as before)
 //   applyAtmosphere(col, eye, p)     col seen through the air between: col * T + inscatter * (1 - T)
-//   atmosphereInscatter(dir, dist)   the colour of that haze alone, from the aerial table
+//   atmosphereInscatter(dir, dist)   the color of that haze alone, from the aerial table
 //   skyIrradiance(n)                 sky light falling on a surface facing n (irradiance / pi), from
 //                                    nine spherical-harmonic coefficients fitted to the sky each frame
 //
 // Where this departs from the paper:
-// - The sky view is stored all round the compass (not folded about the sun), so one table carries the
+// - The sky view is stored all around the compass (not folded about the sun), so one table carries the
 //   sun's sky, the moon's sky and the airglow together, and a reader needs no sun direction.
 // - The aerial-perspective volume is not a camera frustum. It is indexed by world direction and
 //   distance from the camera, so it does not change as the view turns, vertex shaders can read it, and
-//   applyAtmosphere keeps its old (col, eye, point) signature. It holds colour only; transmittance stays
+//   applyAtmosphere keeps its old (col, eye, point) signature. It holds color only; transmittance stays
 //   the closed form over exponential layers, which is exact from fog at 100 m to haze at 200 km.
 // - The weather drives the aerosol: the air mass sets the tables, the local visibility sets the haze in
-//   front of things, and what is not air-mass haze (fog, rain, cloud) glows with the overcast's grey light.
+//   front of things, and what is not air-mass haze (fog, rain, cloud) glows with the overcast's gray light.
 // - Overcast and murk are mixed in when the tables are read (uSkyP.z), as before, so the tables need no
 //   redrawing as cloud cover changes; the horizon stays clearer than the rest under a deck (uAtmSky.y).
 // - Night works in the same units as day: moonlight, airglow and starlight are in their true proportion
@@ -57,7 +57,7 @@ uniform highp sampler2D tAtmSky, tAtmAP;
 uniform vec4 uAtmSky;   // x: sine of the horizon's dip at the tables' height, y: how clear the horizon stays under overcast 0..1
 uniform vec4 uAtmAP;    // x: slices of the aerial table, y: ln of the first slice's distance (m), z: 1 / ln of the ratio between slices, w: half a row of a slice
 
-// The sky in a direction: the sun's and the moon's scattered light and the airglow, greyed by cloud and murk.
+// The sky in a direction: the sun's and the moon's scattered light and the airglow, grayed by cloud and murk.
 vec3 skyRadiance(vec3 dir) {
   float s = dir.y + uAtmSky.x;
   float v = s >= 0.0 ? ${SKY_HORIZON_V.toFixed(2)} + ${(1 - SKY_HORIZON_V).toFixed(2)} * sqrt(s / (1.0 + uAtmSky.x)) : ${SKY_HORIZON_V.toFixed(2)} - ${SKY_HORIZON_V.toFixed(2)} * sqrt(-s / (1.0 - uAtmSky.x));
@@ -66,7 +66,7 @@ vec3 skyRadiance(vec3 dir) {
   return mix(col, uSkyOvc * (0.75 + 0.25 * cz), uSkyP.z * (1.0 - uAtmSky.y * exp(-cz * ${SLOT_K.toFixed(1)})));
 }
 
-// Fraction of light surviving the path from worldPos to camPos, per colour channel.
+// Fraction of light surviving the path from worldPos to camPos, per color channel.
 vec3 atmosphereTransmittance(vec3 camPos, vec3 worldPos) {
   float d = distance(camPos, worldPos);
   float H = uHaze.y, dy = worldPos.y - camPos.y;
@@ -76,7 +76,7 @@ vec3 atmosphereTransmittance(vec3 camPos, vec3 worldPos) {
   return exp(-d * (uHaze.x * avg + uHaze.z * ray * vec3(5.802e-6, 13.558e-6, 33.1e-6)));
 }
 
-// Colour of the haze between the camera and something dist metres away in direction dir (the mean light
+// Color of the haze between the camera and something dist meters away in direction dir (the mean light
 // the air scatters toward the eye along the way; multiply by 1 - transmittance).
 vec3 atmosphereInscatter(vec3 dir, float dist) {
   float w = clamp((log(max(dist, 1.0)) - uAtmAP.y) * uAtmAP.z, 0.0, uAtmAP.x - 1.0), k = floor(w);
@@ -107,12 +107,12 @@ export const horizonDip = (altKm) => Math.sqrt(Math.max(1 - (RG / (RG + Math.max
 
 /**
  * Optical depth from a height (km) along a direction (mu: cosine from the vertical) to the top of the
- * atmosphere, per colour channel: the twin of the transmittance table. Returns false if the ground is in the way.
+ * atmosphere, per color channel: the twin of the transmittance table. Returns false if the ground is in the way.
  */
 export function opticalDepth(altKm, mu, out) {
-  const r = RG + Math.max(altKm, 0), disc = r * r * (mu * mu - 1);
-  if (mu < 0 && disc + RG * RG >= 0) return false;
-  const tMax = -r * mu + Math.sqrt(Math.max(disc + RT * RT, 0)), N = 48, dt = tMax / N;
+  const r = RG + Math.max(altKm, 0), disk = r * r * (mu * mu - 1);
+  if (mu < 0 && disk + RG * RG >= 0) return false;
+  const tMax = -r * mu + Math.sqrt(Math.max(disk + RT * RT, 0)), N = 48, dt = tMax / N;
   let a = 0, b = 0, c = 0;
   for (let i = 0; i < N; i++) {
     const t = (i + 0.5) * dt, h = Math.max(Math.sqrt(r * r + t * t + 2 * r * t * mu) - RG, 0);
@@ -125,8 +125,8 @@ export function opticalDepth(altKm, mu, out) {
 
 const od = [0, 0, 0];
 /**
- * Colour of a light outside the atmosphere after its trip down to a height (km), for an elevation in
- * radians. Below the horizon it keeps the horizon's colour and fades over the width of a low sun.
+ * Color of a light outside the atmosphere after its trip down to a height (km), for an elevation in
+ * radians. Below the horizon it keeps the horizon's color and fades over the width of a low sun.
  */
 export function lightTransmittance(altKm, elev, out) {
   const dip = Math.asin(horizonDip(altKm));
@@ -150,7 +150,7 @@ export function setProbe(rgba, gain) {
   for (let i = 0, j = 0; i < PROBE_W * PROBE_H; i++, j += 4) { p[i * 3] = rgba[j] * k; p[i * 3 + 1] = rgba[j + 1] * k; p[i * 3 + 2] = rgba[j + 2] * k; }
   st.has = true;
 }
-/** Adaptation gain, murk 0..1, how clear the horizon stays under it 0..1, and the overcast's colour (engine units, gain included). */
+/** Adaptation gain, murk 0..1, how clear the horizon stays under it 0..1, and the overcast's color (engine units, gain included). */
 export function setSkyMix(gain, murk, slot, ovc) { st.gain = gain; st.murk = murk; st.slot = slot; st.ovc[0] = ovc.r; st.ovc[1] = ovc.g; st.ovc[2] = ovc.b; }
 
 const c3 = [0, 0, 0];
@@ -198,9 +198,9 @@ const acc = new Float64Array(27);
 /**
  * Fit order-2 spherical harmonics to the sky as it is now (murk and gain included) with the ground's
  * bounce (a THREE.Color: radiance of the lower hemisphere) below, and publish them cosine-convolved in
- * ENV.uSkySH so that skyIrradiance(n) is irradiance / pi. scale and grey tune the result (see sky.js).
+ * ENV.uSkySH so that skyIrradiance(n) is irradiance / pi. scale and gray tune the result (see sky.js).
  */
-export function fitSkyIrradiance(ground, scale = 1, grey = 0) {
+export function fitSkyIrradiance(ground, scale = 1, gray = 0) {
   acc.fill(0);
   const dA = (2 * Math.PI) / PROBE_W;
   for (let j = 0; j < PROBE_H; j++) {
@@ -219,7 +219,7 @@ export function fitSkyIrradiance(ground, scale = 1, grey = 0) {
   for (let k = 0; k < 9; k++) {
     let r = acc[k * 3] * SH_OUT[k] * scale, gg = acc[k * 3 + 1] * SH_OUT[k] * scale, b = acc[k * 3 + 2] * SH_OUT[k] * scale;
     const l = r * 0.25 + gg * 0.6 + b * 0.15;
-    r += (l - r) * grey; gg += (l - gg) * grey; b += (l - b) * grey;
+    r += (l - r) * gray; gg += (l - gg) * gray; b += (l - b) * gray;
     st.sh[k * 3] = r; st.sh[k * 3 + 1] = gg; st.sh[k * 3 + 2] = b;
     u[k].set(r, gg, b);
   }

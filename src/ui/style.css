@@ -1,7 +1,7 @@
 /* Dead Reckoning: the interface.
 
    One language throughout: dark glass laid over the picture, a plain sans for words, tabular figures for
-   numbers, a single cool signal colour for whatever is live or chosen, and amber and red kept for caution
+   numbers, a single cool signal color for whatever is live or chosen, and amber and red kept for caution
    and danger. Nothing here is downloaded: the faces are whatever the system has.
 
    Every size is in rem and the root size follows the window, so the proportions that work at 1920x1080
@@ -90,7 +90,8 @@ kbd { display: inline-block; min-width: 1.6rem; padding: 0.08rem 0.4rem; font: 6
 .pick-opt:first-child { margin-top: 0.25rem; }
 .pick-opt.act { background: var(--fill-2); }
 .pick-opt.sel .pick-n { color: var(--accent); font-weight: 600; }
-.pick-c { font: var(--t-xs) var(--mono); color: var(--faint); }
+.pick-c { font: var(--t-xs) var(--mono); color: var(--faint); white-space: nowrap; }
+.pick-h { margin-right: 0.6rem; font-family: var(--sans, inherit); color: var(--dim); }
 .pick-s { grid-column: 1 / -1; font-size: var(--t-s); line-height: 1.35; color: var(--dim); }
 .pick-none { padding: 0.8rem 0.6rem; color: var(--dim); }
 
@@ -119,6 +120,7 @@ kbd { display: inline-block; min-width: 1.6rem; padding: 0.08rem 0.4rem; font: 6
 .choices label + label::before { content: ""; position: absolute; left: 0; top: 0.5rem; bottom: 0.5rem; width: 1px; background: var(--line); }
 .choices .pick, .choices select { width: 100%; padding: 0; font-size: 1rem; font-weight: 500; letter-spacing: 0; text-transform: none; background: none; border: 0; }
 .choices .btn { align-self: stretch; margin-left: 0.5rem; padding: 0 2.3rem; font-size: 1rem; letter-spacing: 0.06em; }
+.choices .btn.side { padding: 0 1.2rem; font-weight: 500; letter-spacing: 0.02em; }
 .blurb { margin: 0; font-size: var(--t-s); line-height: 1.5; color: var(--dim); }
 .foot { display: flex; align-items: flex-start; justify-content: space-between; gap: 3rem; min-height: 4.2rem; }
 #blurb { flex: 1 1 0; max-width: 66ch; font-size: 0.92rem; color: #d3dae0; text-shadow: 0 1px 0.5rem rgba(0, 0, 0, 0.7); }
@@ -290,6 +292,10 @@ body.chart-open #hud { right: var(--chart-w); }
 #chartInfo { margin-left: 0.4rem; font-size: var(--t-s); color: var(--dim); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 #chart { flex: 1; width: 100%; min-height: 0; cursor: grab; touch-action: none; }
 #chart:active { cursor: grabbing; }
+#chartPanel .chip.go { color: var(--on-accent); background: var(--accent); border-color: var(--accent); font-weight: 600; }
+#chartPanel .chip.go:hover { background: #a3e6f9; border-color: #a3e6f9; }
+body.title.chart-open #splash { right: var(--chart-w); }    /* the title screen makes room for it */
+body.title #chartPanel { z-index: 45; }                     /* over the title screen, where the map picks the place to start */
 @media (max-width: 760px) { :root { --chart-w: 100vw; } body.chart-open #hud { right: 0; } }
 
 /* ---------- debug tools: deliberately not dressed like the game ---------- */

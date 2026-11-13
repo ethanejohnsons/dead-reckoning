@@ -1,4 +1,4 @@
-// Synthesised sound sources. Two kinds live here: the few sounds no free recording covers (the reed stall
+// Synthesized sound sources. Two kinds live here: the few sounds no free recording covers (the reed stall
 // horn, the airframe buffet of a stalled wing, the slow wander of a gusting wind), and plain stand-ins for the
 // recordings, used only when a file fails to load so the game is never silent.
 
@@ -16,7 +16,7 @@ export function rng(seed) {
   };
 }
 
-/** One-pole low-pass run twice round a buffer, so the result is periodic and loops without a seam. */
+/** One-pole low-pass run twice around a buffer, so the result is periodic and loops without a seam. */
 function lowpassPeriodic(d, sampleRate, hz) {
   const k = 1 - Math.exp(-TAU * hz / sampleRate);
   let y = 0;
@@ -27,7 +27,7 @@ function highpassPeriodic(d, sampleRate, hz) {
   let y = 0;
   for (let pass = 0; pass < 2; pass++) for (let i = 0; i < d.length; i++) { y += k * (d[i] - y); if (pass) d[i] -= y; }
 }
-function normalise(d, peak) {
+function normalize(d, peak) {
   let m = 0;
   for (let i = 0; i < d.length; i++) m = Math.max(m, Math.abs(d[i]));
   if (m > 0) for (let i = 0; i < d.length; i++) d[i] *= peak / m;
@@ -49,7 +49,7 @@ export function gustBuffer(ctx, seconds = 29, seed = 7) {
   const parts = [];
   for (const cycles of [2, 3, 5, 7, 11, 17, 26, 41]) parts.push({ w: TAU * cycles / n, a: 1 / Math.pow(cycles, 0.55), p: r() * TAU });
   for (let i = 0; i < n; i++) { let v = 0; for (const p of parts) v += p.a * Math.sin(p.w * i + p.p); d[i] = v; }
-  normalise(d, 1);
+  normalize(d, 1);
   return buf;
 }
 
@@ -68,14 +68,14 @@ export function buffetBuffer(ctx, seconds = 5, seed = 11) {
     e = Math.max(0, e / 2.2);
     d[i] *= 0.25 + e * e;
   }
-  normalise(d, 0.9);
+  normalize(d, 0.9);
   return buf;
 }
 
 /**
  * The waveform of a reed horn. A reed that shuts against its slot once a cycle lets the air through in short
  * puffs, so the spectrum falls slowly at first (it is nearly a pulse train) and faster above a couple of
- * kilohertz. The horn's body is added afterwards with filters.
+ * kilohertz. The horn's body is added afterward with filters.
  */
 export function reedWave(ctx, harmonics = 36) {
   const real = new Float32Array(harmonics + 1), imag = new Float32Array(harmonics + 1);
@@ -87,14 +87,14 @@ export function reedWave(ctx, harmonics = 36) {
 }
 
 /** White, pink or brown noise that loops cleanly. */
-export function noiseBuffer(ctx, seconds, colour = 'white', seed = 3, channels = 2) {
+export function noiseBuffer(ctx, seconds, color = 'white', seed = 3, channels = 2) {
   const sr = ctx.sampleRate, n = Math.round(seconds * sr), buf = ctx.createBuffer(channels, n, sr);
   for (let c = 0; c < channels; c++) {
     const d = buf.getChannelData(c), r = rng(seed + c * 101);
     for (let i = 0; i < n; i++) d[i] = r() * 2 - 1;
-    if (colour === 'pink') { lowpassPeriodic(d, sr, 2400); highpassPeriodic(d, sr, 90); }
-    if (colour === 'brown') { lowpassPeriodic(d, sr, 260); lowpassPeriodic(d, sr, 700); highpassPeriodic(d, sr, 40); }
-    setRms(d, colour === 'white' ? -29 : colour === 'pink' ? -26 : -23);
+    if (color === 'pink') { lowpassPeriodic(d, sr, 2400); highpassPeriodic(d, sr, 90); }
+    if (color === 'brown') { lowpassPeriodic(d, sr, 260); lowpassPeriodic(d, sr, 700); highpassPeriodic(d, sr, 40); }
+    setRms(d, color === 'white' ? -29 : color === 'pink' ? -26 : -23);
   }
   return buf;
 }
@@ -137,6 +137,6 @@ export function standInBurst(ctx, seconds, lowpassHz, decay, seed = 9) {
     y += k * ((r() * 2 - 1) - y); y2 += k * (y - y2);
     d[i] = y2 * Math.min(1, t / 0.012) * Math.exp(-t / decay) * (1 + 0.5 * Math.sin(t * 9 + seed)) * Math.min(1, (seconds - t) / 0.05);
   }
-  normalise(d, 0.6);
+  normalize(d, 0.6);
   return buf;
 }

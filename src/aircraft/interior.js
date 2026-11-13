@@ -74,10 +74,10 @@ function forearmGeo(rgb) {
 }
 
 /**
- * Someone sitting in a seat whose cushion is centred at (x, z). Returns { body, head }: lists of geometry.
- *   o.lean      how far the shoulders sit ahead (-) or behind (+) the hips, metres
+ * Someone sitting in a seat whose cushion is centered at (x, z). Returns { body, head }: lists of geometry.
+ *   o.lean      how far the shoulders sit ahead (-) or behind (+) the hips, meters
  *   o.arms      { L, R }: each null (the arm is animated elsewhere) or [elbow, wrist, handForward, palmNormal, curl]
- *   o.feet      x offsets of the two ankles from the seat centre line
+ *   o.feet      x offsets of the two ankles from the seat center line
  */
 function person(x, z, o) {
   const body = [], head = [], hipZ = z + 0.1, shZ = hipZ + o.lean, shY = 0.265, { shirt, trousers, hair, skin = SKIN } = o;
@@ -134,7 +134,7 @@ function person(x, z, o) {
 
 // ---------------------------------------------------------------- door card texture
 
-/** One door card: stitched vinyl with a cloth panel, a scuffed kick strip, screws. Grey, tinted by the material. */
+/** One door card: stitched vinyl with a cloth panel, a scuffed kick strip, screws. Gray, tinted by the material. */
 function doorTextures() {
   const W = 1024, H = 512, [c, g] = canvas(W, H, '#9a9a9a'), [hc, gh] = canvas(W, H, '#808080');
   let s = 7; const rnd = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
@@ -156,7 +156,7 @@ function doorTextures() {
     g.fillStyle = '#d8d8d8'; g.beginPath(); g.arc(x, y, 8, 0, 7); g.fill(); g.fillStyle = '#404040'; g.fillRect(x - 6, y - 1.2, 12, 2.4); g.fillRect(x - 1.2, y - 6, 2.4, 12);
     gh.fillStyle = '#c0c0c0'; gh.beginPath(); gh.arc(x, y, 8, 0, 7); gh.fill(); gh.fillStyle = '#606060'; gh.fillRect(x - 6, y - 1.2, 12, 2.4);
   }
-  // shoe scuffs low down, hand grime round the handle end, general variation
+  // shoe scuffs low down, hand grime around the handle end, general variation
   g.save(); g.filter = 'blur(1.5px)';
   for (let i = 0; i < 70; i++) { const x = rnd() * W, y = 300 + rnd() * 200, l = 20 + rnd() * 90, a = (rnd() - 0.5) * 0.9; g.strokeStyle = rnd() < 0.6 ? `rgba(225,222,210,${0.05 + rnd() * 0.16})` : `rgba(0,0,0,${0.05 + rnd() * 0.14})`; g.lineWidth = 1 + rnd() * 3; g.beginPath(); g.moveTo(x, y); g.lineTo(x + l * Math.cos(a), y + l * Math.sin(a)); g.stroke(); }
   g.restore();

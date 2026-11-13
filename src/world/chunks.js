@@ -8,7 +8,7 @@
 
 import * as THREE from 'three';
 import * as dem from './dem.js';
-import { metresPerPixel, WORLD_HALF, LAND_HALF } from './geo.js';
+import { metersPerPixel, WORLD_HALF, LAND_HALF } from './geo.js';
 import { flatsIn, applyFlats, flatWeight, baseHeight, baseWater, URBAN, REGION_GLSL, REGION_UNIFORMS } from './terrain.js';
 import { townsIn, urbanDensity } from './towns.js';
 import { mulberry32 } from '../core/noise.js';
@@ -36,9 +36,9 @@ const LAYERS = 1024;                 // patch data textures live in one texture 
 // VERT); a late arrival is the only pop left. They are let go beyond MERGE.
 const SPLIT = 2.3, AHEAD = 2.42, MERGE = 2.7;
 // Elevation zoom for a patch: about 64 source pixels across it. Patches up to 8 km take zoom 11 at the least:
-// from there down the data is the fine survey, in which every lake of a few hectares can be told (water.js);
+// from there down the data is the fine survey, in which every lake of a few acres can be told (water.js);
 // the coarser tiles only show the big ones. (Worked out when a patch is made: the scale follows the window of the world.)
-const zoomFor = (size) => { const z = Math.max(4, Math.min(dem.MAX_Z, Math.round(Math.log2((metresPerPixel(0) * 64) / size)))); return size <= 8192 ? Math.max(z, 11) : z; };
+const zoomFor = (size) => { const z = Math.max(4, Math.min(dem.MAX_Z, Math.round(Math.log2((metersPerPixel(0) * 64) / size)))); return size <= 8192 ? Math.max(z, 11) : z; };
 
 // The towns' built-up density (the grid towns.placeTowns() returns), which a patch in a town is built from.
 // A worker cannot ask towns.js, so a job carries the piece of the grid under its patch; until the game has
@@ -112,7 +112,7 @@ varying vec3 vWorld; varying vec2 vUv, vUvP; centroid varying float vDist, vLaye
 ${LIGHT_GLSL}
 ${REGION_GLSL}
 
-// How far a colour of the picture is hard, bare ground: grey and not dark (roads, roofs, gravel, rock). 0..1.
+// How far a color of the picture is hard, bare ground: gray and not dark (roads, roofs, gravel, rock). 0..1.
 float hardGround(vec3 c) { float mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b)); return (1.0 - smoothstep(0.1, 0.3, (mx - mn) / max(mx, 0.004))) * smoothstep(0.03, 0.08, mx); }
 
 void main() {
@@ -146,7 +146,7 @@ void main() {
   // Conifers hold the mountains and much of the north woods; the rest is broadleaf.
   float conifer = clamp(smoothstep(tl - 1700.0, tl - 1100.0, h) + 0.45 * smoothstep(0.7, 0.86, moist), 0.0, 1.0);
 
-  // open ground: grey-green sagebrush steppe where it is dry, tawny short-grass prairie, green pasture and tall grass where it is wet
+  // open ground: gray-green sagebrush steppe where it is dry, tawny short-grass prairie, green pasture and tall grass where it is wet
   vec3 sage = mix(vec3(0.30, 0.27, 0.185), vec3(0.235, 0.22, 0.15), smoothstep(0.3, 0.75, d3.r + (d2.g - 0.5) * 0.3));
   sage = mix(sage, vec3(0.13, 0.15, 0.105), smoothstep(0.52, 0.72, mix(d2.g, d1.g, nearK) + (d3.r - 0.5) * 0.4) * (0.3 + 0.3 * nearK));   // the brush itself
   vec3 prairie = mix(vec3(0.31, 0.29, 0.14), vec3(0.22, 0.24, 0.10), smoothstep(0.35, 0.7, d3.g + (d2.r - 0.5) * 0.3));
@@ -158,8 +158,8 @@ void main() {
   fields = mix(fields, dot(fields, vec3(0.33)) * vec3(1.25, 1.12, 0.72), smoothstep(0.46, 0.3, mJ) * 0.6);   // drier country: wheat, fallow and stubble
   alb = mix(alb, fields * (0.85 + 0.3 * d2.g), farm * (0.55 + 0.45 * midK));
   // woods: mixed hardwoods, darker and bluer where the conifers take over
-  vec3 bush = mix(mix(vec3(0.040, 0.078, 0.026), vec3(0.060, 0.098, 0.030), d3.r), mix(vec3(0.024, 0.047, 0.027), vec3(0.036, 0.062, 0.030), d3.r), conifer) * (0.7 + 0.6 * mix(d2.g, d1.g, nearK));
-  alb = mix(alb, bush, forest * (1.0 - 0.7 * town));
+  vec3 woods = mix(mix(vec3(0.040, 0.078, 0.026), vec3(0.060, 0.098, 0.030), d3.r), mix(vec3(0.024, 0.047, 0.027), vec3(0.036, 0.062, 0.030), d3.r), conifer) * (0.7 + 0.6 * mix(d2.g, d1.g, nearK));
+  alb = mix(alb, woods, forest * (1.0 - 0.7 * town));
   // towns: a mosaic of roofs, roads and gardens
   vec3 blocks = texture2D(tFields, R2 * vWorld.xz / 610.0).rgb;
   float roofs = mix(d1.g, d0.r, closeK);                       // fine speckle only up close, so it never reads as a grid
@@ -174,7 +174,7 @@ void main() {
   vec4 s1 = texture2D(tDetail, face / vec2(260.0, 38.0)), s2 = texture2D(tDetail, face / vec2(31.0, 190.0));
   float strata = mix(0.5, s1.r * 0.6 + s2.g * 0.4, smoothstep(0.25, 0.6, slope));
   vec3 stone = mix(vec3(0.20, 0.20, 0.205), vec3(0.27, 0.235, 0.19), smoothstep(0.4, 0.7, d4.g)) * (0.55 + 0.5 * mix(d2.r, d1.r, nearK) + 0.55 * strata);
-  stone = mix(stone, stone * vec3(0.8, 0.86, 0.72), forest * 0.6);            // mossy faces in the wet bush
+  stone = mix(stone, stone * vec3(0.8, 0.86, 0.72), forest * 0.6);            // mossy faces in the wet woods
   alb = mix(alb, stone, rock);
   // gravel and sand at the water's edge
   float shore = (1.0 - smoothstep(0.6, 3.5, h - 0.2)) * (1.0 - smoothstep(0.05, 0.2, slope));
@@ -182,12 +182,12 @@ void main() {
   // Snow. The regional map carries the level it lies above on an ordinary day (see snowLine), lower on the faces
   // turned from the sun. Two kinds: the standing snow of the high mountains, whose line climbs on a warm day; and
   // what the weather has laid down. Cold air alone whitens nothing: the snow itself has to fall (uSnow, the pack
-  // round the aircraft; where it rains on the low ground the same weather is taken to be snowing on the heights
+  // around the aircraft; where it rains on the low ground the same weather is taken to be snowing on the heights
   // well above the freezing level). The air's temperature, which the same map gives (150 m a degree), only says
   // where the pack can lie: on ground as cold as where it was measured (uGroundT), not on ground more than a few
   // degrees warmer, the valley under a snowy pass. Fallen, it stays until the weather melts it: the pack decides
   // when the ground turns white and when it clears, not the thermometer. A light fall settles in patches first
-  // and lets the ground show through; melting, it goes grey and sodden before it goes.
+  // and lets the ground show through; melting, it goes gray and sodden before it goes.
   float hSnow = h + (d3.r - 0.5) * 420.0 + (d2.r - 0.5) * 130.0 - (reg.a - 260.0 * (-N.z * uRegion.z));
   float steep = 1.0 - 0.85 * smoothstep(0.5, 0.82, slope);
   float standing = smoothstep(-130.0, 170.0, hSnow - max(uTAnom, 0.0) * 150.0) * steep;
@@ -209,7 +209,7 @@ void main() {
   if (im.a > 0.004) {
     vec3 ph = im.rgb;
     // Near the aircraft the aerial survey is worked into it: the survey's detail (a factor: roofs, roads, furrows,
-    // the crowns of trees) over the satellite's colour, so the tone stays one from the nose to the horizon. The
+    // the crowns of trees) over the satellite's color, so the tone stays one from the nose to the horizon. The
     // survey's own shadows are hard and fall its own way: they are let through at about two thirds strength.
     vec4 det = imageryDetail(vWorld.xz, imGx, imGy);
     vec3 dt = vec3(1.0);
@@ -224,20 +224,20 @@ void main() {
     // Its shadows are deep blue. The sun here casts its own, so on slopes lift them back toward lit ground
     // (flat blue ground is a river or a tarn, and stays).
     float shade = smoothstep(0.03, 0.25, (ph.b - max(ph.r, ph.g)) / max(ph.b, 0.004)) * (1.0 - smoothstep(0.22, 0.45, lum)) * smoothstep(0.04, 0.16, slope);
-    ph = mix(ph, mix(vec3(1.10, 1.0, 0.84), vec3(0.45, 0.8, 0.35), forest) * (lum * 1.6 + 0.012), shade * 0.85);   // shaded bush lifts toward green, not grey
+    ph = mix(ph, mix(vec3(1.10, 1.0, 0.84), vec3(0.45, 0.8, 0.35), forest) * (lum * 1.6 + 0.012), shade * 0.85);   // shaded woods lifts toward green, not gray
     float baked = max(dot(N, normalize(vec3(0.25, 0.72, 0.64 * uRegion.z))), 0.0);
     vec3 photo = ph * dt * 2.9 / mix(1.0, 0.42 + 0.85 * baked, 0.55);
-    // Shoulder. The satellite mosaic is stretched bright (a town centre comes out near white): bare ground, roofs and
+    // Shoulder. The satellite mosaic is stretched bright (a town center comes out near white): bare ground, roofs and
     // concrete are brought down to what they reflect, and only what is as bright as snow is let back up, below white.
     photo = photo / (1.0 + 1.45 * photo) * (1.0 + 0.55 * smoothstep(1.6, 2.9, dot(photo, vec3(0.3, 0.55, 0.15)))) * dt;
-    // Ten metres a pixel goes soft up close: carry the procedural texture over it there, strata on the rock faces.
+    // Ten meters a pixel goes soft up close: carry the procedural texture over it there, strata on the rock faces.
     // Two detail scales on differently rotated grids, faded out on steep faces where a plan-view texture smears.
     float faceK = smoothstep(0.25, 0.5, slope);
     float fine = mix(d1.r, texture2D(tDetail, R3 * vWorld.xz / 71.0).g, smoothstep(250.0, 900.0, vDist));
     float amp = mix(0.52, 0.86, nearK);                           // stronger grain close to the ground, where the photo is softest
     // (where the survey has given real detail the invented grain steps back, and the finest of it, all finer than
-    // the survey's own metre, reaches further out instead: it is what the last few hundred metres are made of)
-    // (two grids of it, turned against each other, so that at a few hundred metres it does not read as a weave)
+    // the survey's own meter, reaches further out instead: it is what the last few hundred meters are made of)
+    // (two grids of it, turned against each other, so that at a few hundred meters it does not read as a weave)
     float grit = mix(d0.g, 0.5 * (d0.g + texture2D(tDetail, R2 * vWorld.xz / 7.3).r), det.a);
     photo *= mix(1.0, 1.0 - 0.5 * amp + amp * fine, exp(-vDist / 2200.0) * (1.0 - 0.8 * faceK) * (1.0 - 0.7 * det.a)) * mix(1.0, 0.66 + 0.68 * grit, max(closeK, det.a * exp(-vDist / 260.0)));
     photo *= mix(1.0, 0.72 + 0.56 * strata, faceK * midK);
@@ -245,15 +245,15 @@ void main() {
     float woodsP = smoothstep(0.05, 0.024, dot(im.rgb, vec3(0.3, 0.55, 0.15))) * step(im.r, im.g * 1.1) * step(im.b, im.g * 1.15);
     photo *= mix(1.0, 0.6, woodsP * (1.0 - smoothstep(3500.0, 9000.0, vDist)));
     // Its own snow and ice are already in the picture; only add what the weather has laid down. The country still
-    // shows through it: roads are cleared and driven grey, and what was dark in the picture (woods, most of all past
+    // shows through it: roads are cleared and driven gray, and what was dark in the picture (woods, most of all past
     // where the trees themselves are drawn) stays darker than the open fields.
     float lumP = dot(im.rgb, vec3(0.3, 0.55, 0.15)), hardP = hardGround(im.rgb);
     vec3 photoSnow = mix(photo, snowCol * (1.0 - 0.3 * hardP), fresh * mix(0.5, 1.0, smoothstep(0.02, 0.06, lumP)) * (1.0 - 0.5 * hardP));
     alb = mix(mix(alb, snowCol, snow), photoSnow, im.a);     // im.a: an arriving tile fades in over the rules
   } else alb = mix(alb, snowCol, snow);
 
-  // Wet ground is darker and its colour deeper. hard is what takes a sheen when wet: rock, and in the picture
-  // whatever is grey and not dark (roads, roofs, gravel, bare rock).
+  // Wet ground is darker and its color deeper. hard is what takes a sheen when wet: rock, and in the picture
+  // whatever is gray and not dark (roads, roofs, gravel, bare rock).
   float wetG = wetNow * (1.0 - snow), hard = im.a > 0.5 ? max(rock, hardGround(im.rgb)) : rock;
   if (wetG > 0.004) alb = mix(vec3(dot(alb, vec3(0.3, 0.55, 0.15))), alb, 1.0 + 0.22 * wetG) * mix(1.0, mix(0.8, 0.62, hard), wetG);
 
@@ -308,13 +308,13 @@ void main() {
     float depth = mix(max(-reg.r, 0.0), 40.0, lake);
     vec3 sea = mix(vec3(0.045, 0.19, 0.20), vec3(0.008, 0.035, 0.07), 1.0 - exp(-depth / 14.0));
     vec3 lakeC = mix(vec3(0.014, 0.045, 0.062), vec3(0.016, 0.075, 0.10), openWater);                    // dark inland water, bluer out on the big lakes
-    // The picture lends the water its colour near the shore (shallows, silt); well out on a big lake the mosaic of
-    // satellite passes shows its seams, so there the water keeps its own colour.
+    // The picture lends the water its color near the shore (shallows, silt); well out on a big lake the mosaic of
+    // satellite passes shows its seams, so there the water keeps its own color.
     vec3 body = mix(mix(sea, lakeC, lake), im.rgb * 3.2, 0.6 * im.a * (1.0 - 0.9 * openWater)) * (uSunCol * max(L.y, 0.0) * shadow * 0.75 + mix(uAmbGround, uAmbSky, 0.85) * 1.2);
-    // Storm water is darker and greyer, lit along its crests and dark in its troughs.
+    // Storm water is darker and grayer, lit along its crests and dark in its troughs.
     body = mix(body, vec3(dot(body, vec3(0.3, 0.55, 0.15))) * vec3(0.86, 1.0, 0.96), 0.4 * rough) * (1.0 - 0.2 * rough);
     body *= 1.0 + (s4.r - 0.5) * 1.6 * rough * exp(-vDist / 8000.0);
-    // White horses. Each is a stretch of one contour of a smooth, drifting field, on the side that faces down the
+    // Whitecaps. Each is a stretch of one contour of a smooth, drifting field, on the side that faces down the
     // wind: a thin curved crest with a lace of foam left behind it, where the long seas and the gusts stand highest.
     // The crests move through that mask, so they form, run a while and die. (A threshold on stretched noise drew
     // them in the rows and columns of its lattice.) Past the range where one can be told from the next they become
@@ -334,7 +334,7 @@ void main() {
       caps = mix(far, near, 1.0 - smoothstep(0.012, 0.05, sqrt(fwidth(cu.x) * fwidth(cu.y))));
     }
     // Surf breaks on the sea's edge and, in a wind, on the shores of the great lakes; never on a river bank or
-    // round a pond. (Drawn wherever the water mask was partial, it traced the mask's own texels along sheltered
+    // around a pond. (Drawn wherever the water mask was partial, it traced the mask's own texels along sheltered
     // banks as a line of pale dashes.)
     float surfK = max(1.0 - lake, smoothstep(0.08, 0.5, openWater) * smoothstep(3.0, 10.0, uWind));
     float surf = surfK < 0.01 ? 0.0 : surfK * smoothstep(0.35, 0.5, ch.a) * (1.0 - smoothstep(0.55, 0.95, ch.a)) * smoothstep(0.35, 0.6, d1.g + 0.5 * (texture2D(tDetail, R2 * vWorld.xz / 140.0 + uTime * vec2(0.008, 0.005)).r - 0.5));
@@ -390,7 +390,7 @@ function makeDetailTexture() {
 /**
  * A tiling patchwork of Midwestern cropland, four miles to the side: square sections split into quarters and
  * strips, in corn and soybean greens, small grain, hay and bare earth, with farmsteads, section roads and the
- * odd centre-pivot circle.
+ * odd center-pivot circle.
  */
 function makeFieldsTexture() {
   const S = 1024, c = document.createElement('canvas'); c.width = c.height = S;
@@ -444,7 +444,7 @@ function makeIndex() {
 }
 function makeUv() {
   const uv = new Float32Array((V * V + 4 * V) * 2), edge = [(k) => k, (k) => N * V + k, (k) => k * V, (k) => k * V + N];
-  // Texel centres sit exactly on the patch lattice, so neighbouring patches agree along their shared edge.
+  // Texel centers sit exactly on the patch lattice, so neighboring patches agree along their shared edge.
   const tc = (t) => (t * (TN - 1) + 0.5) / TN;
   for (let j = 0; j < V; j++) for (let i = 0; i < V; i++) { uv[(j * V + i) * 2] = tc(i / N); uv[(j * V + i) * 2 + 1] = tc(j / N); }
   for (let e = 0; e < 4; e++) for (let k = 0; k < V; k++) { const s = edge[e](k) * 2, d = (V * V + e * V + k) * 2; uv[d] = uv[s]; uv[d + 1] = uv[s + 1]; }
@@ -466,7 +466,7 @@ class Node {
     this.parent = parent; this.quarter = quarter;      // quarter of the parent: 1 = east half, 2 = south half
     this.mesh = null; this.trees = null; this.children = null;
     this.queued = false; this.midY = 0; this.prio = 0;
-    this.job = null;                                   // its build, while that is with a worker or waiting to be shown: { cancelled, result }
+    this.job = null;                                   // its build, while that is with a worker or waiting to be shown: { canceled, result }
   }
 }
 
@@ -508,7 +508,7 @@ export class Terrain {
     });
   }
 
-  /** Let go of every patch (and its trees): the window of the world is about to move. Call init() again afterwards. */
+  /** Let go of every patch (and its trees): the window of the world is about to move. Call init() again afterward. */
   reset() {
     if (this.root) this.dispose(this.root);              // (cancels what the workers still have of it)
     this.root = null; this.queue.length = 0; this.shown.length = 0; this.done.length = 0;
@@ -608,7 +608,7 @@ export class Terrain {
   /** Hand a patch to a worker. Its answer waits in `done` until a frame has room to show it. */
   send(node) {
     node.layer = this.free.pop();
-    const job = this.prepare(node), state = node.job = { cancelled: false, result: null };
+    const job = this.prepare(node), state = node.job = { canceled: false, result: null };
     if (job.urban && job.urban.fn) { node.job = null; this.apply(node, buildPatch(job)); return; }     // (no grid to send: see setUrbanGrid)
     const flats = job.flats, step = node.size / (TN - 1), transfer = buffersOf(job);
     job.flats = null;
@@ -616,12 +616,12 @@ export class Terrain {
     pool.run({ t: 'patch', job, flats, rect: [node.x0 - step, node.z0 - step, node.x0 + node.size + step, node.z0 + node.size + step] }, transfer).then((r) => {
       this.flying--;
       perf.worker('patch build', r.ms);
-      if (state.cancelled) { this.stats.dropped++; return; }
+      if (state.canceled) { this.stats.dropped++; return; }
       state.result = r; this.done.push(node);
       if (this.nudge) { const f = this.nudge; this.nudge = null; f(); }
     }, (r) => {
       this.flying--;
-      if (state.cancelled) return;
+      if (state.canceled) return;
       if (!r.dead) console.warn('A terrain patch could not be built in a worker:', r.err);
       node.job = null; node.queued = false; this.free.push(node.layer);         // back in the queue at the next walk
     });
@@ -662,7 +662,7 @@ export class Terrain {
   dispose(node) {
     node.queued = false;
     // a build still with a worker, or back and waiting its turn: its answer is dropped, its layer is free again
-    if (node.job) { node.job.cancelled = true; node.job = null; this.free.push(node.layer); }
+    if (node.job) { node.job.canceled = true; node.job = null; this.free.push(node.layer); }
     if (node.children) { for (const c of node.children) this.dispose(c); node.children = null; }
     if (node.mesh) {
       this.group.remove(node.mesh); node.mesh.geometry.dispose(); node.mesh = null; this.chunkCount--; this.free.push(node.layer);

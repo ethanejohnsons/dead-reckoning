@@ -47,7 +47,7 @@ export const uploads = {
     this.t0 = now();
     this.late = false;
     if (lastFrameMs > 0 && lastFrameMs < 250) {
-      // the usual frame time follows slowly, and downwards at once: a hitch does not teach it anything
+      // the usual frame time follows slowly, and downward at once: a hitch does not teach it anything
       this.late = lastFrameMs > Math.max(this.usual * 1.35, this.usual + 4);
       this.usual += (Math.min(lastFrameMs, this.usual * 1.35) - this.usual) * 0.05;
     }

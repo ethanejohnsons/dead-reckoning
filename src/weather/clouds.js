@@ -81,8 +81,8 @@ Site getSite(vec3 p) {
   Site s;
   s.cov = a.r; s.conv = a.g; s.precip = a.b; s.base = b.r * TEX_ALT; s.top = b.g * TEX_ALT;
   // Fog banks are drawn from their own outlines (see fogDensity), not from the weather map: the map can only say
-  // "layer cloud with its base at sea level" two kilometres to the texel, which climbs the hillsides and stops at
-  // valley mouths. Inside a bank and for a few kilometres round it the map's layer is that stand-in, and is dropped.
+  // "layer cloud with its base at sea level" two kilometers to the texel, which climbs the hillsides and stops at
+  // valley mouths. Inside a bank and for a few kilometers around it the map's layer is that stand-in, and is dropped.
   s.fog = 0.0; s.ftop = -1.0e9;
   #if FOG
   float fw = 0.0, ft = 0.0, sup = 0.0;
@@ -122,11 +122,11 @@ Site getSite(vec3 p) {
 }
 // The scales above the base noise. Bend the sampling domain with a slow, smooth field at a scale
 // that shares no period with the noise tiles, so cells shear, stretch and merge instead of sitting
-// side by side (it moves a sample by up to 850 m but changes by no more than a fifth of a metre per
-// metre: shapes lean and stretch, they are never turned or folded. Eddies used to stir the domain as
-// well, at half a metre per metre, and what they drew was hooks and curls no convective cloud has);
-// let the amount of cloud swell and thin in clusters a few kilometres across (meso)
-// and again over tens of kilometres (vary), so a field has a few large clouds, many small ones and
+// side by side (it moves a sample by up to 850 m but changes by no more than a fifth of a meter per
+// meter: shapes lean and stretch, they are never turned or folded. Eddies used to stir the domain as
+// well, at half a meter per meter, and what they drew was hooks and curls no convective cloud has);
+// let the amount of cloud swell and thin in clusters a few kilometers across (meso)
+// and again over tens of kilometers (vary), so a field has a few large clouds, many small ones and
 // clear lanes, and the tile never repeats visibly; and let some clouds be knobbly and others smooth.
 void siteNoise(inout Site s, vec3 p) {
   vec4 wv = textureLod(tNoise, (p + vec3(uDriftW.x, 0.0, uDriftW.y)) / WS, 0.0);
@@ -163,12 +163,12 @@ float cellCover(float rho, float rhoA, float hc, float ph, float skirt, float ta
 
 // Cloud extinction (1/m).
 //   s     the site (weather and slow noise) the sample belongs to
-//   fp    sample footprint in metres (pixel size at this distance); picks mip levels
+//   fp    sample footprint in meters (pixel size at this distance); picks mip levels
 //   tier  -1: probe (returns > 0 where cloud is possible)  0: shape, the lobes' average
-//         1: + lobes down to 60 m (what Weather.density() returns)    2: + fine detail down to a few metres
+//         1: + lobes down to 60 m (what Weather.density() returns)    2: + fine detail down to a few meters
 // The cloud is where a noise field stands above a threshold field. The threshold is the design:
 // it says how much of the sky is filled at each height (a dome over every cell of the noise for
-// cumulus, a slab with a rolling top for layer cloud, a tower, shoulders and anvil round a storm
+// cumulus, a slab with a rolling top for layer cloud, a tower, shoulders and anvil around a storm
 // cell); the noise says where. The noise is a ladder of octaves a factor of two apart, each about
 // 0.6 of the one above: 3.2 km to 400 m in the base volume (clusters and lanes come from the slower
 // fields in the site), 460 to 57 m and then 34 to 4 m from the lobe volume read at two scales and
@@ -186,7 +186,7 @@ float layerDensity(vec3 p, Site s, float fp, int tier) {
   if (!inG && !inC) return tier < 0 ? -1.0 : 0.0;
   float cv = smoothstep(0.1, 0.5, s.conv);
   float hh = mix(clamp(h, 0.0, 1.0), clamp(hc, 0.0, 1.0), s.cw), cve = max(cv, s.cw);
-  float hm = mix(clamp(h, 0.0, 1.0) * thick, clamp(hc, 0.0, 1.0) * cthick, s.cw);       // metres above the base
+  float hm = mix(clamp(h, 0.0, 1.0) * thick, clamp(hc, 0.0, 1.0) * cthick, s.cw);       // meters above the base
   // Towers lean downwind as they rise.
   vec3 q = p;
   q.xz += uShear * (hh * hh * mix(thick, cthick, s.cw) * 0.2 * mix(s.conv, 1.0, s.cw)) + s.warp;
@@ -200,7 +200,7 @@ float layerDensity(vec3 p, Site s, float fp, int tier) {
     deep = smoothstep(5000.0, 8000.0, thick);
     // Cumulus: a flat base, and a dome over each cell of the noise, taller the stronger the cell.
     float tC = (0.12 + ce) * h * h + 0.05 * (1.0 - smoothstep(0.0, 200.0, h * thick)) - 0.45 * deep * smoothstep(0.76, 0.9, h) * (1.0 - smoothstep(0.95, 1.0, h)) + 1.0 - smoothstep(0.0, 0.035 + rag * 1.6, h);
-    // Layer cloud: a slab whose top rolls over a few hundred metres, in sheets where it is deep.
+    // Layer cloud: a slab whose top rolls over a few hundred meters, in sheets where it is deep.
     float zt = clamp(450.0 / thick, 0.06, 0.5), zb = clamp(110.0 / thick, 0.02, 0.2) + rag * 1.3;
     float tS = smoothstep(1.0 - zt, 1.0, h) + 1.0 - smoothstep(0.0, zb, h) + 0.3 * smoothstep(2000.0, 4000.0, thick) * (0.5 - 0.5 * cos(h * thick * 0.0037));
     // The top of a layer is a pavement of cells, each a low dome, with narrow clefts between them; half of
@@ -227,8 +227,8 @@ float layerDensity(vec3 p, Site s, float fp, int tier) {
   und *= anv;
   #if CELLS
   if (anv > 0.0) {
-    // An anvil is a smooth sheet, not a heap, combed out along the wind into fibres at two widths;
-    // on its underside the fibres give way to mammatus, pouches a few hundred metres across hanging in patches.
+    // An anvil is a smooth sheet, not a heap, combed out along the wind into fibers at two widths;
+    // on its underside the fibers give way to mammatus, pouches a few hundred meters across hanging in patches.
     vec2 f = vec2(dot(p.xz, uAniso), dot(p.xz, vec2(-uAniso.y, uAniso.x))) + uDriftS;
     float streak = textureLod(tNoise, vec3(f.x / 14600.0, p.y / 7300.0, f.y / 1825.0), clamp(log2(fd / 14.0), 0.0, 6.0)).b;
     float fib = textureLod(tDetail, vec3(f.x / 3650.0, p.y / 1825.0, f.y / 608.3333), clamp(log2(fd / 4.8), 0.0, 7.0)).b;
@@ -253,7 +253,7 @@ float layerDensity(vec3 p, Site s, float fp, int tier) {
   // grows as the square of the distance from the head's middle, so heads are domes and meet in plain
   // V-shaped creases. (The volume's values are spread evenly, which makes the shortfall b go as the cube
   // of that distance: the dome is b to the power 2/3, 0.61 on average. Its square, as this was, is the
-  // sixth power: a flat-topped boulder with a slot round it, and every slot dark.) A wisp leaves only
+  // sixth power: a flat-topped boulder with a slot around it, and every slot dark.) A wisp leaves only
   // its shreds (0.70 on average). The threshold is moved by that average, so the cloud's surface lies
   // where the design put it whether or not the octaves are resolved.
   float cutAvg = mix(0.61, 0.70, tw);
@@ -262,7 +262,7 @@ float layerDensity(vec3 p, Site s, float fp, int tier) {
   if (tier < 0) return y + 0.04 + 0.05 * lod;
   if (y <= 0.0) return 0.0;
   // Density climbs from the surface inward, and how quickly is most of what tells a growing cloud from
-  // a dying one: within about ten metres on the crown of a young turret (a hard edge), over thirty on
+  // a dying one: within about ten meters on the crown of a young turret (a hard edge), over thirty on
   // its lower flanks, over a hundred wherever the cloud is old (a ragged, translucent fringe),
   // over a couple of hundred where it is layered or anvil. Never thinner than two or three pixels:
   // a far cloud has no hard outline against the sky.
@@ -302,8 +302,8 @@ float layerDensity(vec3 p, Site s, float fp, int tier) {
 }
 
 // Fog: a bank standing on the ground and the water, as deep as its top allows, so valleys and lakes fill and
-// the hills stand out of it. The top rolls gently (sheets a hundred metres deep, a kilometre or two across) and
-// frays into wisps; under it the fog is thick everywhere, in denser and thinner patches a few hundred metres
+// the hills stand out of it. The top rolls gently (sheets a hundred meters deep, a kilometer or two across) and
+// frays into wisps; under it the fog is thick everywhere, in denser and thinner patches a few hundred meters
 // across (visibility from about 150 m to 400 m); toward the edge of the bank it breaks up.
 float fogDensity(vec3 p, Site s, float fp, int tier) {
   float dy = s.ftop - p.y;
@@ -359,7 +359,7 @@ export const CLOUD_SHADOW_GLSL = '#define CELLS 1\n#define FOG 1\n' + DENSITY_GL
   .replace(/\buDrift([NMDCWVS])\b/g, 'uCloudDrift$1').replace(/\buShear\b/g, 'uCloudShear').replace(/\buAniso\b/g, 'uCloudAniso').replace(/\buFog(Bank|Amt)\b/g, 'uCloudFog$1') + /* glsl */`
 uniform float uCloudCells;                                  // 1 while there are storm cells
 float cloudShadowDepth(vec3 p) {
-  vec3 L = uSunDir / max(uSunDir.y, 0.12);                 // along the sun's ray, one metre up per unit
+  vec3 L = uSunDir / max(uSunDir.y, 0.12);                 // along the sun's ray, one meter up per unit
   float od = 0.0;
   Site a = getSite(p + L * max(1200.0 - p.y, 100.0));      // the weather where the ray is about at cloud base
   if (a.hi > a.lo) {
@@ -374,7 +374,7 @@ float cloudShadowDepth(vec3 p) {
     }
   }
   if (uCloudCells > 0.5) {
-    // A storm's anvil lies ten kilometres up, so the one in the way is far sunward of the ground it shades.
+    // A storm's anvil lies ten kilometers up, so the one in the way is far sunward of the ground it shades.
     Site c = getSite(p + L * (9600.0 - p.y));
     if (c.cw > 0.001) {
       vec3 q = p + L * (mix(c.cwb, c.ctop, 0.87) - p.y);
@@ -432,7 +432,7 @@ float overhead(Site s, float y) {
 float lightDepth(vec3 p, Site s, float fp) {
   float od = 0.0, st = 22.0, t = 0.0;
   #if LIGHT_SITE
-  // The weather changes along the way (a storm cell's flank is clear air a kilometre sunward of
+  // The weather changes along the way (a storm cell's flank is clear air a kilometer sunward of
   // where it is solid): take it at the far end as well and read each sample in between.
   Site s2 = getSite(p + uSunDir * 1500.0);
   #endif
@@ -458,7 +458,7 @@ float lightDepth(vec3 p, Site s, float fp) {
   return od;
 }
 
-// Optical depth over the first few hundred metres straight up from p, and (far) a rough figure for
+// Optical depth over the first few hundred meters straight up from p, and (far) a rough figure for
 // the rest of the cloud overhead. side: the same toward the sky opposite the sun, the fill light
 // that models a shaded flank.
 float skyDepth(vec3 p, Site s, float fp, out float side, out float far) {
@@ -509,13 +509,13 @@ void main() {
   // Scene depth under this cloud texel. A texel covers several screen pixels, and at a silhouette
   // (wing against cloud, ridge against fog) those pixels lie on two surfaces. There, alternate
   // texels in a checkerboard march to the nearest and to the farthest surface under them, so the
-  // composite always finds a neighbour that was marched to the surface it is drawing.
+  // composite always finds a neighbor that was marched to the surface it is drawing.
   ivec2 dsz = textureSize(tDepth, 0), dmx = dsz - 1, dc = ivec2(vUv * vec2(dsz));
-  // The player's own aircraft is the exception. It is always a few metres from the eye, far
+  // The player's own aircraft is the exception. It is always a few meters from the eye, far
   // smaller than any cloud, and its thin, antialiased, sub-pixel-jittered outline is exactly what a
   // coarse cloud buffer cannot follow. So the march looks straight through it, to whatever lies
   // behind, and the cloud buffer has no edge there at all; the composite puts the aircraft back
-  // on top at full resolution, with the coverage the rasteriser gave it.
+  // on top at full resolution, with the coverage the rasterizer gave it.
   float depth = backDepth(clamp(dc, ivec2(0), dmx));
   bool own = depth < 0.0;
   float dMin = own ? 2.0 : depth, dMax = depth, bend = 0.0;
@@ -539,7 +539,7 @@ void main() {
   // scaled like this it is the size of a depth step relative to the distance. Rough ground bends
   // too, so the two surfaces must also be far enough apart that the composite would tell them
   // apart; anything closer is one surface, and splitting it would print the checkerboard in the haze.
-  // (With the cockpit's near plane a few centimetres out, the far distance has only a handful of
+  // (With the cockpit's near plane a few centimeters out, the far distance has only a handful of
   // depth values left; a step of one or two of those is rounding, not a silhouette.)
   if (dMax - dMin > 6.0e-7 && bend * linearZ(depth) * (uFar - uNear) / (uFar * uNear) > 0.08 && linearZ(dMax) > 1.15 * linearZ(dMin)) {
     ivec2 pc = ivec2(gl_FragCoord.xy);
@@ -568,8 +568,8 @@ void main() {
   vec3 airK = vec3(mix(1.0, 0.4, uSkyP.z));
   // Light that is not straight from the sun, from the sky model's own irradiance: the sky overhead on
   // what faces up, the low sky and the land (the half of each a wall facing away from the sun sees) on
-  // a cloud's sides, and the land's own brightness on what faces down. Greyed a little: sunlit cloud
-  // and ground round about light the shaded side of a cloud as well as the blue sky does.
+  // a cloud's sides, and the land's own brightness on what faces down. Grayed a little: sunlit cloud
+  // and ground around about light the shaded side of a cloud as well as the blue sky does.
   vec2 awayH = -uSunDir.xz / max(length(uSunDir.xz), 0.05);
   vec3 ambUp = uAmbSky, ambSide = desat(skyIrradiance(vec3(awayH.x, 0.0, awayH.y)), 0.2), ambDn = desat(uAmbGround, 0.1);
   // Two-phase march: long cheap strides probe for cloud; on a hit the ray goes back to the last
@@ -579,7 +579,7 @@ void main() {
   // where the samples fall, never in how much air they stand for.
   const float MINC = 64.0, MINF = 16.0;
   if (t1 > t0) {
-    // The fraction is spread evenly over neighbouring pixels and advanced by the golden ratio each
+    // The fraction is spread evenly over neighboring pixels and advanced by the golden ratio each
     // frame: evenly spread in time too, which is what the temporal pass needs to converge.
     float jit = fract(ign(gl_FragCoord.xy) + uFrame * 0.61803399);
     float t = t0;                   // start of the stride about to be taken
@@ -665,7 +665,7 @@ void main() {
         if (inLayer) { d = cloudDensity(p, w, fpF, 2); anv = gAnvil; hL = gH; fogS = gFog; }
         if (d > 0.0 && wasClear && !held && anchors < 3) {
           // First sample inside a cloud. One stride here can be most of the way to opaque, so where
-          // in it the sample happened to fall would decide the colour of the whole lit skin, and
+          // in it the sample happened to fall would decide the color of the whole lit skin, and
           // that changes every frame. Instead find the surface (bisect between the last clear
           // sample and this one) and restart there with short strides sampled at their middles:
           // the samples now sit at fixed depths under the surface, the same every frame.
@@ -701,7 +701,7 @@ void main() {
           float sd, far;
           float up = skyDepth(pl, w, pix, sd, far);
           #if SKY_STEPS < 2
-          sd = d * 110.0 * exp(-0.12 * od);                  // (no sample behind on this tier: as much cloud as there is here for a hundred metres, less the deeper in shade this is)
+          sd = d * 110.0 * exp(-0.12 * od);                  // (no sample behind on this tier: as much cloud as there is here for a hundred meters, less the deeper in shade this is)
           #endif
           // Sunlight. What comes straight through and what has been scattered a few times: three octaves
           // of the usual approximation (Wrenninge, Kulla and Lundqvist 2013, as in Hillaire 2016), each
@@ -709,7 +709,7 @@ void main() {
           // after those are light that has forgotten where it came from, and their sum is replaced by
           // what diffusion gives for it: under an optical depth tau toward the sun, with tb more cloud
           // behind to send light back, (1 + 2 GAMMA tb) / (1 + GAMMA (tau + tb)). That is what a slab
-          // lets through, 1 / (1 + GAMMA tau), at its far side (a kilometre of cumulus passes a fifth of
+          // lets through, 1 / (1 + GAMMA tau), at its far side (a kilometer of cumulus passes a fifth of
           // the sunlight, and that light, not the blue sky, is what its base and its shaded side are
           // seen by); and at the lit face it is why a deep cloud is brilliant and a shred of one is not.
           // Nothing here asks how deep a crease the sample is in: a crease is darker by the cloud that
@@ -767,7 +767,7 @@ void main() {
   #endif
 
   // High cloud above everything the aircraft can reach, as two thin sheets (looked up once a pixel, not marched).
-  // Cirrus at ten kilometres: where the slow noise allows it, in bands drawn out along the wind, and
+  // Cirrus at ten kilometers: where the slow noise allows it, in bands drawn out along the wind, and
   // within the bands in threads (noise read stretched fifteen to one), bent a little by a field of slow eddies.
   const float yCi = 10400.0, yAc = 6600.0;
   vec2 gx = uAniso, gz = vec2(-uAniso.y, uAniso.x);
@@ -778,7 +778,7 @@ void main() {
       float ci = texture(tWxA, pc.xz / (2.0 * uWxHalf) + 0.5).a;
       vec2 q = pc.xz + uDriftCi;
       vec2 f = vec2(dot(q, gx), dot(q, gz));
-      // (The eddies bend the bands by a tenth of a metre per metre at most. At six times that, as it was, the threads were the grain of a plank.)
+      // (The eddies bend the bands by a tenth of a meter per meter at most. At six times that, as it was, the threads were the grain of a plank.)
       vec4 cw = texture(tCurl, f / vec2(61000.0, 30500.0)) - 0.5;
       f += vec2(cw.r * 700.0, cw.g * 450.0);
       float band = texture(tNoise, vec3(f.x / 27000.0, 0.31, f.y / 9000.0)).b * 0.6 + texture(tNoise, vec3(f.x / 9000.0, 0.71, f.y / 2700.0)).b * 0.4;
@@ -791,7 +791,7 @@ void main() {
       T *= 1.0 - a;
     }
   }
-  // Altocumulus (and cirrocumulus) at six and a half kilometres: patches of small rounded elements, some of
+  // Altocumulus (and cirrocumulus) at six and a half kilometers: patches of small arounded elements, some of
   // them marshalled into ripples across the wind. Each element is brighter at its thin rim than in its middle from below.
   if (T > 0.01 && uCamPos.y < yAc - 300.0 && rd.y > 0.02) {
     float tc = (yAc - uCamPos.y) / rd.y;
@@ -874,7 +874,7 @@ float same(float da, float db, float ta, float tb) {
 void main() {
   ivec2 px = ivec2(gl_FragCoord.xy), mx = textureSize(tCur, 0) - 1;
   vec4 cur = texelFetch(tCur, px, 0), aux = texelFetch(tCurAux, px, 0);
-  // What the neighbourhood sees now, counting only texels marched to the same surface as this
+  // What the neighborhood sees now, counting only texels marched to the same surface as this
   // one (at a silhouette every other texel belongs to the surface behind or in front).
   vec4 m1 = cur, m2 = cur * cur, nLo = cur, nHi = cur;
   float wn = 1.0, fw = 1.02 - cur.a, fi = fw / max(aux.r, 1.0);
@@ -895,7 +895,7 @@ void main() {
   // Where this cloud was on last frame's screen. It is placed at the distance of the cloud front
   // around here, each texel counting by how opaque it is: the edge of a cloud then moves with
   // the cloud rather than with what lies behind it, and one ray that grazed a faint wisp on
-  // this frame cannot drag its neighbours' history out of place.
+  // this frame cannot drag its neighbors' history out of place.
   vec4 v = uProjInv * vec4(vUv * 2.0 - 1.0, 1.0, 1.0);
   vec3 rd = normalize((uCamWorld * vec4(v.xyz / v.w, 0.0)).xyz);
   vec4 clip = uPrevVP * vec4(rd * front + uCamDelta, 1.0);
@@ -919,17 +919,17 @@ void main() {
   hist /= max(hw, 1.0e-5); hFront /= max(hw, 1.0e-5); hVar /= max(hw, 1.0e-5); hCount = hCount / max(hw, 1.0e-5) * valid;
   if (agree > 0.99) hist = sharpSample(tHist, huv);
   if (valid <= 0.0) { hist = cur; hFront = aux.r; hCount = 0.0; hVar = 0.0; }    // nothing usable: start again from this frame
-  // Hold the history to what the neighbourhood shows now (mean and spread), to stop trails.
+  // Hold the history to what the neighborhood shows now (mean and spread), to stop trails.
   // Thin cloud is the exception: there a ray finds cloud on some frames and none on others, the
-  // neighbourhood often shows no cloud at all, and clamping to it would throw the history away
+  // neighborhood often shows no cloud at all, and clamping to it would throw the history away
   // every frame and leave the raw speckle. Where the history says this spot flickers, the box
-  // widens by that much (and the colour by the light that comes with that much opacity).
+  // widens by that much (and the color by the light that comes with that much opacity).
   float tsd = sqrt(max(hVar, 0.0)) * valid;
   vec3 per = min(hist.rgb / max(1.0 - hist.a, 0.05), 40.0);          // light per unit of opacity
   float lref = max(dot(per, vec3(0.3, 0.5, 0.2)), 0.02);
   vec4 box = sd * (1.5 + 3.0 / wn) + 0.004 + 2.0 * tsd * vec4(per, 1.0);
   vec4 hRaw = hist;
-  // But never past the least and the most the texels round about hold on this frame (two texels out
+  // But never past the least and the most the texels around about hold on this frame (two texels out
   // each way: twenty-five rays, which the sampling pattern spreads evenly through their strides, so
   // thin cloud that is really there shows in some of them, and its history, their mean, lies between).
   // What does not show in any of them is cloud that has gone. A history that differs from every frame
@@ -948,7 +948,7 @@ void main() {
 
   // Each texel counts the frames it has accumulated. A new one (just uncovered, or after a
   // reset) takes a plain running average, which converges as fast as the samples allow, and
-  // while one frame still weighs heavily in it the neighbourhood mean stands in for the raw sample.
+  // while one frame still weighs heavily in it the neighborhood mean stands in for the raw sample.
   // How long a history may run depends on how fast it is sliding across the screen: every
   // resampling softens it a little, so moving cloud keeps a short one, while cloud that is
   // (nearly) still, most of the sky from a cruising aircraft, keeps averaging for several times
@@ -963,7 +963,7 @@ void main() {
   // share of what a fully opaque cloud here would show.
   float dT = cur.a - hist.a, dL = dot(cur.rgb - hist.rgb, vec3(0.3, 0.5, 0.2)) / lref, sL = dot(sd.rgb, vec3(0.3, 0.5, 0.2)) / lref;
   float var = mix((1.0 - alpha) * (hVar + alpha * (dT * dT + dL * dL)), sd.a * sd.a + sL * sL, fresh);
-  // Flickering spots also take the neighbourhood mean, in proportion: nine evenly spread samples instead of one.
+  // Flickering spots also take the neighborhood mean, in proportion: nine evenly spread samples instead of one.
   cur = mix(cur, m1, max(fresh, 0.7 * smoothstep(0.04, 0.2, tsd)));
   outColor = mix(hist, cur, alpha);
   outAux = vec4(mix(hFront, aux.r, max(alpha, 0.5)), aux.g, hCount + 1.0, var);
@@ -1013,7 +1013,7 @@ uniform float uNear, uFar, uNearSigma, uSubjDist;
 in vec2 vUv;
 layout(location = 0) out vec4 outColor;      // rgb: HDR scene with clouds, a: how much open sky shows here (for sun rays)
 // The cloud between the eye and what this pixel shows (rgb: its light, a: how much shows through it),
-// for the post stack. On the player's aircraft that is the few metres of air in front of it, not the
+// for the post stack. On the player's aircraft that is the few meters of air in front of it, not the
 // cloud behind, which is what the cloud buffer holds there: taken from that, post-processing would
 // treat the aircraft as lying behind the cloud (no temporal antialiasing, a misty glow laid over it).
 layout(location = 1) out vec4 outFront;
@@ -1060,8 +1060,8 @@ void main() {
   ivec2 px = ivec2(gl_FragCoord.xy), mx = textureSize(tDepth, 0) - 1;
   vec3 s = texelFetch(tScene, px, 0).rgb;
   float depth = texelFetch(tDepth, px, 0).r, d0 = viewDepth(depth);
-  // The player's own aircraft, drawn alone: its colour times its coverage of this pixel, and that
-  // coverage (which also counts the glass and the propeller disc for as much as they hide).
+  // The player's own aircraft, drawn alone: its color times its coverage of this pixel, and that
+  // coverage (which also counts the glass and the propeller disk for as much as they hide).
   vec4 A = texelFetch(tSubject, px, 0);
   float rawS = texelFetch(tSubjDepth, px, 0).r;
   bool hitS = rawS < 0.9999999, own = hitS && rawS <= depth + 2.0e-6;
@@ -1085,11 +1085,11 @@ void main() {
   vec4 ahead = c;
   float open = (own ? rawF : depth) >= 0.9999999 ? c.a : 0.0;
   if (A.a < 0.002 && match(dn, df) < 0.5) {
-    // A silhouette pixel. The scene colour here is already an antialiased blend of the surface in
+    // A silhouette pixel. The scene color here is already an antialiased blend of the surface in
     // front and whatever is behind it, but its depth is only one of the two, and cloud laid over
     // the whole pixel for that one depth leaves a hard, wrongly tinted rim (a strut in fog turns
     // into a dotted line). So work out how much of the pixel each surface covers, from where its
-    // colour lies between a pixel further onto the front surface and one further onto the back,
+    // color lies between a pixel further onto the front surface and one further onto the back,
     // and give each share the cloud that belongs in front of it.
     bool front = match(d0, dn) > 0.5;
     ivec2 o = front ? of : on;                                    // which way the other surface lies
@@ -1100,7 +1100,7 @@ void main() {
     float e2 = dot(e, e), f = front ? 1.0 : 0.0;
     if (e2 > 2.0e-3 * (dot(sN, sN) + dot(sF, sF)) + 1.0e-7) {
       float g = clamp(dot(s - sF, e) / e2, 0.0, 1.0);
-      vec3 off = s - sF - g * e;                                  // how far the colour is from being a blend of the two
+      vec3 off = s - sF - g * e;                                  // how far the color is from being a blend of the two
       f = mix(g, f, smoothstep(0.02, 0.1, dot(off, off) / e2));
     }
     vec4 cN = front ? c : cloudAt(dn), cF = front ? cloudAt(df) : c;
@@ -1109,10 +1109,10 @@ void main() {
     ahead = mix(cF, cN, f);
   }
   if (A.a >= 0.002) {
-    // A pixel the aircraft covers, wholly or in part. The aircraft's share sees only the few metres
+    // A pixel the aircraft covers, wholly or in part. The aircraft's share sees only the few meters
     // of air between the eye and itself (clear, unless the eye is inside cloud: then a smooth fog
     // from the density around the camera); everything else in the pixel is behind the whole
-    // cloud. Along the outline the two shares are exactly the rasteriser's antialiasing.
+    // cloud. Along the outline the two shares are exactly the rasterizer's antialiasing.
     float Tn = exp(-uNearSigma * (hitS ? min(uNear * uFar / (uFar - rawS * (uFar - uNear)), 300.0) : uSubjDist));
     vec3 Sn = c.rgb / max(1.0 - c.a, 0.03);
     vec3 rest = s - A.rgb;
@@ -1329,14 +1329,14 @@ void main() { outColor = vec4(cloudShadowDepth(texelFetch(tPts, ivec2(gl_FragCoo
 
   /**
    * Draw the player's own aircraft (fx.subject) alone into subjectRT, lit and shadowed exactly as
-   * in the scene: colour times coverage in rgb, coverage in alpha, and its depth. The cloud march
+   * in the scene: color times coverage in rgb, coverage in alpha, and its depth. The cloud march
    * uses the depth to look through the aircraft; the composite uses the rest to lay it back on top.
    */
   renderSubject(scene, camera) {
     const r = this.renderer, rt = this.subjectRT, subj = this.fx.subject?.isObject3D && !this.ignoreSubject ? this.fx.subject : null;
     // Only the part of the screen the aircraft can touch is cleared, drawn and resolved (clearing and
     // resolving a whole multisampled target is wasted on the chase view, where the aircraft covers a
-    // third of it at most): the rectangle round its bounding box, together with last frame's, so
+    // third of it at most): the rectangle around its bounding box, together with last frame's, so
     // what was drawn there is wiped.
     const w = rt.width, h = rt.height, prev = this.subjRect, rect = subj ? this.subjectRect(subj, camera, w, h) : [0, 0, 0, 0];
     if (!subj && prev && prev[2] === 0) return;             // nothing drawn last frame, nothing to draw now
@@ -1412,7 +1412,7 @@ void main() { outColor = vec4(cloudShadowDepth(texelFetch(tPts, ivec2(gl_FragCoo
     wrap(cu.uDriftR, 2900); wrap(cu.uDriftCi, 4.0e6, 2);      // (the high cloud is read along the grain, where no short wrap fits: it runs on unwrapped)
     const fl = Math.hypot(wx.flowX, wx.flowZ);
     cu.uShear.value.set(fl > 0.2 ? wx.flowX / fl : 1, fl > 0.2 ? wx.flowZ / fl : 0);
-    // What the wind combs out (anvil fibres, rolls on a layer's top) is laid along the grain the weather holds; the drift along and across it.
+    // What the wind combs out (anvil fibers, rolls on a layer's top) is laid along the grain the weather holds; the drift along and across it.
     const gr = wx.grain ? wx.grain() : { x: cu.uShear.value.x, z: cu.uShear.value.y };
     cu.uAniso.value.set(gr.x, gr.z);
     cu.uDriftS.value.set((wx.drift.x * gr.x + wx.drift.z * gr.z) % 29200, (wx.drift.z * gr.x - wx.drift.x * gr.z) % 7300);

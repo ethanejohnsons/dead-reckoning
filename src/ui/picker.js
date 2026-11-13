@@ -5,6 +5,8 @@
 const picks = [];
 let openPick = null;
 const SEARCH_FROM = 16;        // lists at least this long get a search box
+/** Lower case, without accents or periods: "montreal" finds Montréal, "st paul" finds St. Paul. */
+const fold = (s) => String(s).normalize('NFD').replace(/[\u0300-\u036f.]/g, '').toLowerCase();
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 class Pick {
@@ -32,8 +34,11 @@ class Pick {
     const sel = this.sel, search = sel.options.length >= SEARCH_FROM;
     const item = (op) => {
       const sub = this.o.describe?.(op.value);
-      return `<div class="pick-opt${op.selected ? ' sel' : ''}" role="option" aria-selected="${op.selected}" data-v="${esc(op.value)}"><span class="pick-n">${esc(op.textContent)}</span>` +
-        `${this.o.code ? `<span class="pick-c">${esc(op.value)}</span>` : ''}${sub ? `<span class="pick-s">${esc(sub)}</span>` : ''}</div>`;
+      // A hint beside the code (an airfield's city), left out where the name already says it.
+      let hint = this.o.hint?.(op.value) || '';
+      if (hint && fold(op.textContent).includes(fold(hint))) hint = '';
+      return `<div class="pick-opt${op.selected ? ' sel' : ''}" role="option" aria-selected="${op.selected}" data-v="${esc(op.value)}" data-find="${esc(op.dataset.find || '')}"><span class="pick-n">${esc(op.textContent)}</span>` +
+        `${this.o.code ? `<span class="pick-c">${hint ? `<span class="pick-h">${esc(hint)}</span>` : ''}${esc(op.value)}</span>` : ''}${sub ? `<span class="pick-s">${esc(sub)}</span>` : ''}</div>`;
     };
     let html = '';
     for (const ch of sel.children) html += ch.tagName === 'OPTGROUP' ? `<div class="pick-g">${esc(ch.label)}</div>` + [...ch.children].map(item).join('') : item(ch);
@@ -61,7 +66,7 @@ class Pick {
 
   /** Put the list under the button, or above it when there is more room there (the title screen's sit at the bottom). */
   place() {
-    // Sideways it lines up with the button; up and down it clears the whole labelled field the button sits in.
+    // Sideways it lines up with the button; up and down it clears the whole labeled field the button sits in.
     const r = this.btn.getBoundingClientRect(), f = (this.btn.closest('label') || this.btn).getBoundingClientRect();
     const s = this.pop.style, vh = innerHeight, vw = innerWidth, gap = 6, edge = 8;
     const below = vh - f.bottom - gap - edge, above = f.top - gap - edge;
@@ -75,26 +80,26 @@ class Pick {
 
   visible() { return this.rows.filter((r) => !r.hidden); }
 
-  setActive(i, centre) {
+  setActive(i, center) {
     const row = this.rows[i];
     if (!row || row.hidden) return;
     this.rows[this.act]?.classList.remove('act');
     this.act = i; row.classList.add('act');
     // Keep it in view by moving the list alone (scrollIntoView would also try to scroll the page).
     const l = this.list, top = row.offsetTop - l.offsetTop, bottom = top + row.offsetHeight, head = 30;
-    if (centre) l.scrollTop = top - (l.clientHeight - row.offsetHeight) / 2;
+    if (center) l.scrollTop = top - (l.clientHeight - row.offsetHeight) / 2;
     else if (top < l.scrollTop + head) l.scrollTop = top - head;
     else if (bottom > l.scrollTop + l.clientHeight) l.scrollTop = bottom - l.clientHeight;
   }
 
-  /** Show the rows whose name, code or group holds every word typed. */
+  /** Show the rows whose name, code, group or search words (an option's data-find: an airfield's city) hold every word typed. */
   filter(text) {
-    const words = text.toLowerCase().split(/\s+/).filter(Boolean);
+    const words = fold(text).split(/\s+/).filter(Boolean);
     let group = null, groupName = '', any = false, anyAtAll = false;
     for (const el of this.list.children) {
-      if (el.classList.contains('pick-g')) { if (group) group.hidden = !any; group = el; groupName = el.textContent.toLowerCase(); any = false; continue; }
+      if (el.classList.contains('pick-g')) { if (group) group.hidden = !any; group = el; groupName = el.textContent; any = false; continue; }
       if (!el.classList.contains('pick-opt')) continue;
-      const hay = `${el.textContent} ${el.dataset.v} ${groupName}`.toLowerCase();
+      const hay = el._hay || (el._hay = fold(`${el.textContent} ${el.dataset.v} ${el.dataset.find} ${groupName}`));
       el.hidden = !words.every((w) => hay.includes(w));
       if (!el.hidden) { any = true; anyAtAll = true; }
     }
@@ -147,6 +152,7 @@ class Pick {
 
 /**
  * Replace a <select> on screen. opts: { code: show each option's value beside its name (airfield codes),
+ * hint(value): a word or two shown before the code (an airfield's city),
  * describe(value): a line of description under the name, placeholder: text for the search box }.
  */
 export function enhanceSelect(sel, opts = {}) { const p = new Pick(sel, opts); picks.push(p); return p; }

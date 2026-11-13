@@ -1,5 +1,5 @@
 // Building blocks for the procedural aircraft: lofted and swept surfaces, primitives prepared for merging,
-// aerofoil sections, and canvas-texture helpers. Shared by the airframe (model.js), the cabin (interior.js)
+// airfoil sections, and canvas-texture helpers. Shared by the airframe (model.js), the cabin (interior.js)
 // and the instrument panel (panel.js).
 
 import * as THREE from 'three';
@@ -11,7 +11,7 @@ export const clamp01 = (t) => Math.max(0, Math.min(1, t));
 export const sstep = (a, b, x) => { const t = clamp01((x - a) / (b - a)); return t * t * (3 - 2 * t); };
 export const lin = (css) => new THREE.Color(css).toArray();
 let WHITE = [1, 1, 1];
-/** Colour given to geometry that does not name one (the airframe sets it to the variant's base paint). */
+/** Color given to geometry that does not name one (the airframe sets it to the variant's base paint). */
 export function setDefaultRgb(rgb) { WHITE = rgb; }
 export const BLANK = [0.986, 0.986];             // texel region with no panel lines, for small parts
 
@@ -85,7 +85,7 @@ export function loftGrid(P, o = {}) {
     const r = P[i], nb = P[i === 0 ? 1 : M - 2], m = [0, 0, 0], q = [0, 0, 0];
     for (const p of r) { m[0] += p[0] / N; m[1] += p[1] / N; m[2] += p[2] / N; }
     for (const p of nb) { q[0] += p[0] / N; q[1] += p[1] / N; q[2] += p[2] / N; }
-    // Newell normal of the ring, pointed away from the neighbouring ring
+    // Newell normal of the ring, pointed away from the neighboring ring
     let nx = 0, ny = 0, nz = 0;
     for (let j = 0; j < N; j++) { const p = r[j], s = r[(j + 1) % N]; nx += (p[1] - s[1]) * (p[2] + s[2]); ny += (p[2] - s[2]) * (p[0] + s[0]); nz += (p[0] - s[0]) * (p[1] + s[1]); }
     let l = Math.hypot(nx, ny, nz) || 1; nx /= l; ny /= l; nz /= l;
@@ -129,7 +129,7 @@ export function sweep(path, section, ref = [0, 0, 1], o = {}) {
 export const ellipse = (ra, rb, n = 12) => Array.from({ length: n }, (_, k) => [ra * Math.cos((2 * Math.PI * k) / n), rb * Math.sin((2 * Math.PI * k) / n)]);
 
 const M4 = new THREE.Matrix4(), QT = new THREE.Quaternion(), EU = new THREE.Euler();
-/** Prepare a three.js primitive for merging: transform, flat colour, blank UV. */
+/** Prepare a three.js primitive for merging: transform, flat color, blank UV. */
 export function prim(geo, { pos = [0, 0, 0], rot = [0, 0, 0], scale = [1, 1, 1], rgb = WHITE, keepUv = false } = {}) {
   const g = geo.index ? geo.toNonIndexed() : geo;
   g.applyMatrix4(M4.compose(new THREE.Vector3(...pos), QT.setFromEuler(EU.set(...rot)), new THREE.Vector3(...scale)));
@@ -150,7 +150,7 @@ export function rod(a, b, r, rgb, seg = 8) {
   return g;
 }
 
-// ---------------------------------------------------------------- aerofoils
+// ---------------------------------------------------------------- airfoils
 
 /** NACA 4-digit style section: upper and lower surface height at chord fraction x. */
 export function foil(x, t, m = 0.02, p = 0.4) {

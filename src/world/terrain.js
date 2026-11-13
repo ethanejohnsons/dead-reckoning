@@ -2,7 +2,7 @@
 // elevation data (dem.js); everything else here is derived from it so that
 // physics, rendering, weather and the chart agree. buildWorld is run again
 // whenever the game's window of the world moves.
-// Coordinates: +X east, +Z south, +Y up, metres.
+// Coordinates: +X east, +Z south, +Y up, meters.
 
 import * as THREE from 'three';
 import * as dem from './dem.js';
@@ -15,10 +15,10 @@ export const BN = 1024;             // regional base grid (about 512 m per cell)
 export const MN = 256;              // climate grid (about 2 km per cell)
 
 // base: coarse height; water: 0..255 coverage; moist, tsea, snow: the climate grids; low: the level of the
-// valley floors and plains round each point (m).
+// valley floors and plains around each point (m).
 export const world = { base: null, water: null, moist: null, tsea: null, snow: null, low: null };
 
-// What the surface shaders need to know about the place: x: the tree line at the window's centre (m),
+// What the surface shaders need to know about the place: x: the tree line at the window's center (m),
 // y: how much higher it is at the southern edge of the chart (m), z: +1 when the midday sun stands in the
 // south (northern hemisphere), -1 in the north.
 ENV.uRegion = { value: new THREE.Vector4(3000, 0, 1, 0) };
@@ -50,27 +50,76 @@ export const baseWater = (x, z) => {
   return world.water[j * BN + i] > 127;
 };
 
+/** A value read off a table of [x, value] pairs (x rising), straight lines between them, level beyond the ends. */
+function along(table, x) {
+  if (x <= table[0][0]) return table[0][1];
+  for (let i = 1; i < table.length; i++) if (x <= table[i][0]) { const a = table[i - 1], b = table[i]; return a[1] + ((b[1] - a[1]) * (x - a[0])) / (b[0] - a[0]); }
+  return table[table.length - 1][1];
+}
+// The latitude at which the forest gives out into tundra, by longitude: the Aleutians and the Bering Sea coast
+// are treeless far to the south, the Mackenzie carries the trees nearly to the Arctic Ocean, and Hudson Bay
+// and the Labrador Sea push the line south again.
+const ARCTIC = [[-172, 50], [-164, 55], [-159, 60], [-152, 66.5], [-140, 68.5], [-130, 68.5], [-115, 66], [-100, 61], [-95, 59.5], [-85, 56.5], [-78, 57], [-70, 58], [-62, 56.5], [-55, 53]];
+// The tree line in the interior of the continent, by latitude (m).
+const TREELINE = [[20, 3000], [28, 3900], [35.4, 3900], [39, 3500], [48, 2500], [53, 2150], [60, 1300], [65, 800], [69, 200]];
+// The latitude at which the prairie gives way to the north woods and the boreal forest, by longitude: from the
+// Twin Cities to northwestern Minnesota, around the north of Winnipeg, then northwest behind Saskatoon and Edmonton.
+const WOODS_EDGE = [[-115, 54.2], [-110, 53.6], [-105, 53.2], [-101, 52], [-98, 51], [-96, 48.6], [-92, 44.4]];
+// The longitude of the crest of the Pacific ranges (the Cascades, the Coast Mountains), by latitude: wet forest to the west of it.
+const crestLon = (lat) => (lat < 49 ? -121.4 : -121.4 - (lat - 49) * 1.35);
+
 /**
- * Altitude of the upper tree line at a latitude (m), for the interior of North America: about 3,500 m in
- * Colorado at 39 N, falling 110 m a degree to about 2,500 m at 48 N in Montana.
+ * Altitude of the upper tree line at a place (m; at or below zero where no trees grow at all). In the interior
+ * of the continent it is about 3,500 m in Colorado at 39 N and falls 110 m a degree to about 2,500 m at 48 N in
+ * Montana, then more slowly through the Canadian Rockies and the Yukon. Sea air holds it lower west of the
+ * Pacific crest from Oregon north (about 1,800 m in the Cascades, about 800 m around Anchorage), and it is much
+ * lower in the East (1,400 m in New Hampshire); toward the Arctic it comes down to the ground where the forest ends.
  */
-export const treelineAt = (lat) => clamp(3500 - 111 * (Math.abs(lat) - 39), 900, 3900);
+export function treelineAt(lat, lon = -100) {
+  const a = Math.abs(lat), crest = crestLon(a);
+  let tl = along(TREELINE, a);
+  tl *= 1 - 0.3 * smoothstep(42, 47, a) * (1 - smoothstep(61.5, 63.5, a)) * smoothstep(crest + 1, crest - 1, lon);
+  tl -= 1500 * smoothstep(-85, -75, lon) * smoothstep(36, 44, a);
+  return Math.max(-200, Math.min(tl, (along(ARCTIC, lon) - a) * 220));
+}
 /** The same by world z. Mirrors treeLine() in the shaders. */
 export const treeline = (z) => ENV.uRegion.value.x + ENV.uRegion.value.y * (z / LAND_HALF);
 
+// How wet the lowlands are from the Rockies to the Atlantic, by longitude: short-grass plains under the
+// mountains, mixed and tall-grass prairie through the Dakotas, Nebraska and Kansas, forest from the Mississippi east.
+const EAST = [[-104, 0.28], [-100, 0.33], [-97, 0.4], [-94, 0.52], [-90, 0.66], [-84, 0.72], [-70, 0.74]];
+
 /**
- * How wet the lowlands are at a place (0..1), from the map of the United States between the Great Lakes
- * and the Rockies: the humid East dries steadily westward to the foot of the mountains; the north woods of
- * Minnesota, Wisconsin and Michigan are wetter (cooler, so less is lost) than the prairie beside them; the
- * basins between the ranges are sagebrush; north-western Montana catches Pacific air. The relief adds the
- * rest (see buildWorld).
+ * How wet the lowlands are at a place (0 desert .. 1 wet forest), from the map of North America. Under about
+ * 0.42 nothing grows wild but grass and brush; from 0.6 up the country is forest. East of the Rockies the
+ * humid East dries steadily westward across the plains; the corn belt from Iowa to Ohio, forest once, is
+ * plowed nearly from edge to edge; the north woods and the boreal forest begin at a line that runs from the
+ * Twin Cities to northwestern Minnesota and on northwest across the prairie provinces. Between the Rockies
+ * and the Pacific ranges the basins are sagebrush, and desert in the south; the inland Northwest catches
+ * Pacific air; west of the Cascades and the Coast Mountains, from northern California to Alaska, is rain
+ * forest; California is dry but for its north coast. The relief adds the rest (see buildWorld).
  */
-function lowlandMoisture(lat, lon) {
-  let m = clamp(0.30 + 0.022 * (lon + 104) + 0.012 * (lat - 41), 0.2, 0.78);
-  // The prairie-forest border runs from north-western Minnesota down to the Twin Cities, then east at about 44.4 N.
-  const edge = lon < -92 ? 48.2 - 0.95 * (lon + 96) : 44.4;
-  m += 0.22 * smoothstep(edge - 0.5, edge + 0.5, lat) * smoothstep(-98, -96.5, lon);
-  m += 0.16 * smoothstep(-112, -115, lon) * smoothstep(46, 48, lat);
+export function lowlandMoisture(lat, lon) {
+  let m;
+  if (lon > -104) {
+    m = along(EAST, lon);
+    m -= 0.16 * smoothstep(38, 40, lat) * (1 - smoothstep(42.3, 44.3, lat)) * smoothstep(-82.5, -84.5, lon) * smoothstep(0.4, 0.62, m);
+    // the edge of the north woods
+    const edge = along(WOODS_EDGE, lon);
+    m = Math.max(m, 0.78 * smoothstep(edge - 0.5, edge + 0.5, lat));
+  } else {
+    m = 0.26 - 0.11 * smoothstep(38, 33, lat) + 0.03 * smoothstep(44, 48, lat);
+    const west = -112 - 1.2 * Math.max(0, lat - 48.5);       // (the divide runs northwest)
+    m += 0.2 * smoothstep(west, west - 3.5, lon) * smoothstep(46, 48.5, lat);
+    // the boreal forest runs on behind the prairies of Alberta to the mountains, and through the Yukon and the interior of Alaska
+    m = Math.max(m, 0.74 * smoothstep(53.2, 54.6, lat));
+    // California: the dry south coast and the Central Valley, the wetter north coast
+    m = Math.max(m, (0.3 + 0.42 * smoothstep(37.5, 40.5, lat)) * smoothstep(-121.3, -122.6, lon - 0.9 * Math.max(0, 38 - lat)));
+    const crest = crestLon(lat);
+    m = Math.max(m, 0.86 * smoothstep(crest + 0.6, crest - 0.6, lon) * smoothstep(40.5, 43.5, lat));
+  }
+  // The Hawaiian islands: forest to the trade winds, the relief sorts out the rest.
+  if (lat < 24 && lon < -150) m = 0.6;
   return clamp(m, 0, 0.9);
 }
 
@@ -105,20 +154,20 @@ export function buildWorld(base, urban) {
     for (let dj = 0; dj < q; dj++) for (let di = 0; di < q; di++) w += world.water[Math.min(BN - 1, j * q + dj) * BN + Math.min(BN - 1, i * q + di)];
     open[k] = w / (q * q * 255);
   }
-  // The level of the plains and valley floors round each point: the lowest ground within about 12 km, smoothed.
+  // The level of the plains and valley floors around each point: the lowest ground within about 12 km, smoothed.
   const low = boxBlur(minFilter(terr, MN, 6), MN, 5, 2);
   boxBlur(open, MN, 2);                                    // 1 only well out on big water
-  const tl0 = treelineAt(toLatLon(0, 0).lat), tl1 = treelineAt(toLatLon(0, LAND_HALF).lat);
+  const c0 = toLatLon(0, 0), tl0 = treelineAt(c0.lat, c0.lon), tl1 = treelineAt(toLatLon(0, LAND_HALF).lat, c0.lon);
   ENV.uRegion.value.set(tl0, tl1 - tl0, hemisphere(), 0);
   for (let j = 0; j < MN; j++) for (let i = 0; i < MN; i++) {
     const x = (i / (MN - 1)) * 2 * H - H, z = (j / (MN - 1)) * 2 * H - H, k = j * MN + i, ll = toLatLon(x, z);
-    // Ranges are wetter than the country they stand in: forest begins a few hundred metres above the valley floor.
+    // Ranges are wetter than the country they stand in: forest begins a few hundred meters above the valley floor.
     moist[k] = clamp(lowlandMoisture(ll.lat, ll.lon) + 0.5 * smoothstep(150, 700, terr[k] - low[k]), 0, 1);
     // The plains and plateaux are as warm as the lowlands (the ground heats the air wherever it lies), up to
     // a point; only what stands above them is colder. So an ordinary day is about 15 C at any airfield's door.
     tsea[k] = 15.5 + 0.0065 * Math.min(low[k], 2000);
     // Snow lies where the air is under about 2 C, and never lower than 650 m above the tree line on an ordinary day.
-    snow[k] = Math.min((tsea[k] - 2.2) / 0.0065, treelineAt(ll.lat) + 650);
+    snow[k] = Math.min((tsea[k] - 2.2) / 0.0065, Math.max(treelineAt(ll.lat, ll.lon), 0) + 650);
   }
   boxBlur(moist, MN, 1, 2);                                // biome edges are not razor sharp
   world.moist = moist; world.tsea = tsea; world.snow = snow; world.low = low;
@@ -140,7 +189,7 @@ export function buildWorld(base, urban) {
 
 // Airfields grade the terrain to a gently tilted plane under their runways, taxiways, aprons and
 // buildings. A flat is a rectangle of the world with a grid of weights over it (1 on and close around
-// the pavement, easing to 0 a few hundred metres out) and the plane it grades to:
+// the pavement, easing to 0 a few hundred meters out) and the plane it grades to:
 //   { x0, z0, x1, z1, cell, nx, nz, w: Float32Array(nx * nz), dry (the same, see flatWeight), cx, cz, e0, gx, gz }
 // graded height = e0 + gx * (x - cx) + gz * (z - cz); terrain = natural + (graded - natural) * weight.
 // Where the weight is 1 the ground is exactly the plane, so pavement and buildings can sit on it.
@@ -169,7 +218,7 @@ export function applyFlats(list, x, z, h) {
 }
 /**
  * How much a point belongs to an airfield (0..1): the grading weight, or 1 anywhere inside the
- * aerodrome's boundary (a flat's `dry` grid). Water never shows and trees never grow inside it.
+ * airport's boundary (a flat's `dry` grid). Water never shows and trees never grow inside it.
  */
 export function flatWeight(list, x, z) {
   let best = 0;

@@ -12,7 +12,7 @@ import { PILOT_EYE } from './model.js';
 export const COCKPIT_NEAR = 0.08;
 // The resting view is an instrument pilot's: the eye sits low (see PILOT_EYE in model.js) and the gaze rests
 // 18 degrees below the horizon, so the six flight instruments fill the middle of the screen and a band of
-// windscreen stays above the glareshield for the horizon and the runway. Looking round with the mouse lifts
+// windshield stays above the glareshield for the horizon and the runway. Looking round with the mouse lifts
 // the gaze back toward level, so the side windows show the world and not the door cards.
 const FOV = 50, LOOK_DOWN = 0.31;            // resting field of view (deg) and downward tilt (rad)
 

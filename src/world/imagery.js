@@ -2,13 +2,13 @@
 //
 // Two sources work together:
 //  - Sentinel-2 cloudless 2016 by EOX (CC BY 4.0), about 10 m per pixel: one even, cloud-free picture of
-//    the whole country. It gives the ground its COLOUR everywhere, and it is what imagery() returns, so the
+//    the whole country. It gives the ground its COLOR everywhere, and it is what imagery() returns, so the
 //    trees and the water read the same picture they always have.
 //  - Aerial photography from the USGS National Map (NAIP, public domain), 0.6 to 1 m per pixel: it gives the
 //    ground its DETAIL near the aircraft. Aerial surveys are flown county by county and year by year and do
 //    not match in tone (a river is brown in one and blue-black in the next), so they are never shown as they
 //    are: the survey is divided by its own blur at the satellite's resolution, and that ratio (roofs, roads,
-//    furrows, crowns of trees) multiplies the satellite's colour. Tone stays the satellite's from the nose
+//    furrows, crowns of trees) multiplies the satellite's color. Tone stays the satellite's from the nose
 //    to the horizon and there is no seam between the two sources to hide.
 //
 // The pictures are held as a stack of "clip" levels in one array texture: each level is a square of 256-pixel
@@ -18,12 +18,12 @@
 // addressing holds at every mip), which lets the texture be filtered anisotropically: the ground is mostly
 // seen at a shallow angle. On the ground a level gives way to the next over a band at its edge, and a tile
 // that has just arrived fades in (a small second texture holds each slot's fade), so there are no rings
-// round the aircraft and nothing pops.
+// around the aircraft and nothing pops.
 //
 // Tiles are fetched, decoded and reduced to their mip chains in a worker; the frame only pays for the upload.
 
 import * as THREE from 'three';
-import { pixelX, pixelY, metresPerPixel, REGION } from './geo.js';
+import { pixelX, pixelY, metersPerPixel, REGION } from './geo.js';
 import { groundHeight } from './terrain.js';
 import { uploads } from '../render/budget.js';
 import { ENV } from '../core/env.js';
@@ -36,10 +36,10 @@ export const IMG_FINE_Z = 14;
 const FINE_MAX = 3;                   // aerial levels at most: zoom 17, 16, 15
 const TILE = 256, MIPS = 6;           // each tile carries mips down to 8 x 8
 const PYRAMID = (() => { let n = 0; for (let k = 0; k < MIPS; k++) n += (TILE >> k) ** 2 * 4; return n; })();
-const LOW_M = 27;                     // metres: the scale at which the satellite's colour and the survey's detail are joined
+const LOW_M = 27;                     // meters: the scale at which the satellite's color and the survey's detail are joined
 const FADE_S = 0.6;                   // seconds a tile takes to appear
 const EDGE = 0.72;                    // a level starts giving way to the next at this fraction of the radius it is sure to cover
-const LEAD_S = 6, LEAD_MAX = 0.3;     // the aerial levels are centred this many seconds of flight ahead (at most this fraction of their half-width)
+const LEAD_S = 6, LEAD_MAX = 0.3;     // the aerial levels are centered this many seconds of flight ahead (at most this fraction of their half-width)
 const MAX_UPLOADS = 8, UPLOAD_MS = 3; // tiles a frame, and the time they may take
 const MERC = 2 * Math.PI * 6378137;
 
@@ -72,9 +72,9 @@ const QUALITY = {
 Object.assign(ENV, {
   tImgFade: { value: null },                                                                  // r: how far each slot has faded in (one texel a tile, one layer a level)
   uImgFA: { value: Array.from({ length: FINE_MAX }, () => new THREE.Vector4(0, 0, 1, 0)) },   // aerial levels: x0, z0, 1/extent, radius covered for certain (0: no such level)
-  uImgFC: { value: Array.from({ length: FINE_MAX }, () => new THREE.Vector4()) },             // their centre x, z; the mip that holds LOW_M; their layer
+  uImgFC: { value: Array.from({ length: FINE_MAX }, () => new THREE.Vector4()) },             // their center x, z; the mip that holds LOW_M; their layer
   uImgCam: { value: new THREE.Vector2() },                                                    // the camera, on the ground plane
-  uImgM: { value: new THREE.Vector3(7, 6000, 2) },                                            // satellite level 0: metres per texel, radius covered for certain, the mip that holds LOW_M
+  uImgM: { value: new THREE.Vector3(7, 6000, 2) },                                            // satellite level 0: meters per texel, radius covered for certain, the mip that holds LOW_M
 });
 
 // The worker: fetch one image (a tile, or a block of n x n tiles), cut it into tiles and give each its mip chain.
@@ -89,7 +89,7 @@ function pyramid(src, stride, ox, oy) {
   const out = new Uint8Array(PYRAMID), row = TILE * 4;
   for (let y = 0; y < TILE; y++) { const s = ((oy + y) * stride + ox) * 4; out.set(src.subarray(s, s + row), y * row); }
   // Where a survey has no picture (open water, beyond the border) its tiles are transparent: those pixels are
-  // stored as nothing at all (colour weighted by alpha, here 0 or 1), which the mips and the shader carry through.
+  // stored as nothing at all (color weighted by alpha, here 0 or 1), which the mips and the shader carry through.
   for (let i = 0; i < TILE * row; i += 4) { if (out[i + 3] < 128) out[i] = out[i + 1] = out[i + 2] = out[i + 3] = 0; else out[i + 3] = 255; }
   let po = 0, w = TILE;
   for (let k = 1; k < MIPS; k++) {
@@ -217,7 +217,7 @@ export class Imagery {
   key(layer, x, y) { return layer * 1099511627776 + x * 1048576 + y; }
   slot(x, y) { const T = this.T; return (((y % T) + T) % T) * T + (((x % T) + T) % T); }
 
-  /** Recentre every level, ask for what is missing, upload what has arrived, and move the fades on. */
+  /** Recenter every level, ask for what is missing, upload what has arrived, and move the fades on. */
   update(cam, fovY, viewportH) {
     const pix = ENV.uPixAngle.value = (2 * Math.tan((fovY * Math.PI) / 360)) / Math.max(viewportH, 1);
     ENV.uImgOn.value = this.enabled ? 1 : 0;
@@ -236,7 +236,7 @@ export class Imagery {
     const foot = Math.max(cam.y - groundHeight(cam.x, cam.z), 0) * pix;
 
     for (const L of this.levels) {
-      const z = L.z, mpp = metresPerPixel(z), n = 2 ** z, half = (T / 2) * TILE * mpp;
+      const z = L.z, mpp = metersPerPixel(z), n = 2 ** z, half = (T / 2) * TILE * mpp;
       let cx = cam.x, cz = cam.z;
       if (L.fine >= 0) {
         const lead = Math.min(LEAD_S, (LEAD_MAX * half) / Math.max(this.vel.length(), 1e-3));
@@ -274,7 +274,7 @@ export class Imagery {
       // Shader mapping for this level: u = (x - x0) * invExtent, repeating.
       const x0 = (Math.floor(px / S) * S - pixelX(0, z)) * mpp, z0 = (Math.floor(py / S) * S - pixelY(0, z)) * mpp;
       if (L.fine < 0) {
-        // (uImgA.w and uImgC keep their meaning for imagery(): the half-width that is inside the window, about its centre)
+        // (uImgA.w and uImgC keep their meaning for imagery(): the half-width that is inside the window, about its center)
         ENV.uImgA.value[L.layer].set(x0, z0, 1 / (S * mpp), half - 3 * mpp);
         ENV.uImgC.value[L.layer].set(((tx0 + T / 2) * TILE - pixelX(0, z)) * mpp, ((ty0 + T / 2) * TILE - pixelY(0, z)) * mpp);
       } else {
@@ -282,7 +282,7 @@ export class Imagery {
         ENV.uImgFC.value[L.fine].set(cx, cz, Math.max(Math.log2(LOW_M / mpp), 0), L.layer);
       }
     }
-    const m0 = metresPerPixel(IMG_FINE_Z);
+    const m0 = metersPerPixel(IMG_FINE_Z);
     ENV.uImgCam.value.set(cam.x, cam.z);
     ENV.uImgM.value.set(m0, (T / 2 - 0.5) * TILE * m0 - 3 * m0, Math.max(Math.log2(LOW_M / m0), 0));
 
@@ -302,7 +302,7 @@ export class Imagery {
       // no longer wanted: the window has moved off it, or the camera has climbed out of this level's use
       if (!L.want || q.x + q.n <= L.tx0 || q.x >= L.tx0 + T || q.y + q.n <= L.ty0 || q.y >= L.ty0 + T) { this.queue.delete(k); continue; }
       if (L.src.active >= L.src.max || t < L.src.pauseUntil) continue;
-      const mpp = metresPerPixel(L.z), c = L.fine >= 0 ? ENV.uImgFC.value[L.fine] : cam, cz = L.fine >= 0 ? c.y : cam.z;
+      const mpp = metersPerPixel(L.z), c = L.fine >= 0 ? ENV.uImgFC.value[L.fine] : cam, cz = L.fine >= 0 ? c.y : cam.z;
       const dx = ((q.x + q.n / 2) * TILE - pixelX(c.x, L.z)) * mpp, dz = ((q.y + q.n / 2) * TILE - pixelY(cz, L.z)) * mpp;
       q.prio = (20 - L.z) * 1e7 - Math.hypot(dx, dz);
       waiting.push(q);
@@ -412,7 +412,7 @@ export class Imagery {
  * GLSL.
  *  imagery(worldXZ, level): the satellite picture at one level (0 = zoom 14, each level twice as coarse; where a
  *    level has nothing the next coarser answers). rgb linear, a = 1 where there is a picture. For anything that
- *    judges the ground by its colour at a point (trees, water); it can be called from a vertex shader.
+ *    judges the ground by its color at a point (trees, water); it can be called from a vertex shader.
  *  imageryView(worldXZ, dFdx(worldXZ), dFdy(worldXZ)): the satellite picture as a pixel of the ground should show
  *    it: filtered along the line of sight, each level blended into the next at its edge, tiles fading in.
  *    a = how much of a picture there is, 0 to 1.
@@ -455,7 +455,7 @@ vec4 imageryView(vec2 xz, vec2 gx, vec2 gy) {
     if (e <= 0.0) continue;
     vec3 P = vec3((xz - uImgA[l].xy) * uImgA[l].z, float(l));
     float k = uImgA[l].z * 0.75;                                 // a little sharper than the footprint asks: the frame is resolved over several jittered samples
-    vec4 s = textureGrad(tImagery, P, gx * k, gy * k);           // (rgb comes weighted by a: a blank neighbour bleeds no black in)
+    vec4 s = textureGrad(tImagery, P, gx * k, gy * k);           // (rgb comes weighted by a: a blank neighbor bleeds no black in)
     float w = e * textureLod(tImgFade, P, 0.0).r;
     acc += rem * w * s.rgb; rem *= 1.0 - w * s.a;
     if (rem < 0.004) break;

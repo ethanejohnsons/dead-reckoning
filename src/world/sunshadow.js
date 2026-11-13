@@ -3,12 +3,12 @@
 //   the aircraft   Its silhouette as the sun sees it, drawn every frame into a small map that travels with
 //                  it, with mipmaps. Whatever lies down-sun of it reads that map blurred by the width the
 //                  sun's half degree gives at that distance: crisp under the wheels, a soft smudge from
-//                  300 m up, gone by a kilometre or so. The map is centred on the aircraft itself, so the
+//                  300 m up, gone by a kilometer or so. The map is centered on the aircraft itself, so the
 //                  silhouette does not move in it and the shadow cannot swim.
-//   structures     Two depth maps round the camera, one inside the other (420 m and 2.1 km across), for
+//   structures     Two depth maps around the camera, one inside the other (420 m and 2.1 km across), for
 //                  airfield buildings and whatever else is handed in as a caster. Each is laid out on a
 //                  grid fixed to the sun's direction and moves in whole texels, so a shadow's edge is
-//                  rasterised the same way every frame however the camera moves.
+//                  rasterized the same way every frame however the camera moves.
 //
 // Ground shaders read both through localShadow() in GROUND_LIGHT_GLSL (world/groundlight.js); the
 // uniforms live in ENV.
@@ -18,7 +18,7 @@ import { ENV } from '../core/env.js';
 import './groundlight.js';              // declares the uniform holders in ENV
 import { perf } from '../render/perf.js';
 
-const AC_PAD = 8;                       // room round the aircraft for the widest blur (m)
+const AC_PAD = 8;                       // room around the aircraft for the widest blur (m)
 // Texels across the aircraft's map and across each structure map, by quality tier.
 const TIERS = { low: [512, 1024], med: [1024, 2048], high: [1024, 2048], ultra: [1024, 3072] };
 const SPANS = [420, 2100];              // their widths (m)
@@ -27,11 +27,11 @@ const DEPTH = 1500;                     // the maps reach this far up-sun and do
 const AC_REACH = 1400;                  // the aircraft's shadow has faded out this far down-sun of it (m): see aircraftShadow() in groundlight.js
 
 const AC_VERT = /* glsl */`
-uniform vec3 uCentre, uDown;
+uniform vec3 uCenter, uDown;
 varying float vZ;
 void main() {
   vec4 wp = modelMatrix * vec4(position, 1.0);
-  vZ = dot(wp.xyz - uCentre, uDown);
+  vZ = dot(wp.xyz - uCenter, uDown);
   gl_Position = projectionMatrix * viewMatrix * wp;
 }`;
 const AC_FRAG = /* glsl */`
@@ -49,9 +49,9 @@ export class SunShadows {
 
     // ---- the aircraft
     this.acCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.05, 10);
-    this.acMat = new THREE.ShaderMaterial({ uniforms: { uCentre: { value: new THREE.Vector3() }, uDown: { value: new THREE.Vector3() }, uR: { value: 8 } }, vertexShader: AC_VERT, fragmentShader: AC_FRAG, side: THREE.DoubleSide });
+    this.acMat = new THREE.ShaderMaterial({ uniforms: { uCenter: { value: new THREE.Vector3() }, uDown: { value: new THREE.Vector3() }, uR: { value: 8 } }, vertexShader: AC_VERT, fragmentShader: AC_FRAG, side: THREE.DoubleSide });
     this.acScene = new THREE.Scene(); this.acScene.matrixWorldAutoUpdate = false; this.acScene.overrideMaterial = this.acMat;
-    this.aircraft = null; this.show = []; this.hide = []; this.skip = []; this.acCentre = new THREE.Vector3(); this.acR = 8; this.measured = -1e9;
+    this.aircraft = null; this.show = []; this.hide = []; this.skip = []; this.acCenter = new THREE.Vector3(); this.acR = 8; this.measured = -1e9;
     /** Height of the ground at (x, z), if the game provides it: lets the aircraft's map be skipped when it flies too high to throw a shadow on anything. */
     this.ground = null;
 
@@ -90,7 +90,7 @@ export class SunShadows {
   }
 
   /**
-   * The aircraft that throws the travelling shadow. show: parts drawn for it whatever the view (the outside of
+   * The aircraft that throws the traveling shadow. show: parts drawn for it whatever the view (the outside of
    * the aircraft); hide: parts left out (the cockpit interior, which exists only for the pilot's eye).
    */
   setAircraft(root, show = [], hide = []) { this.aircraft = root; this.show = show; this.hide = hide; this.measured = -1e9; }
@@ -109,7 +109,7 @@ export class SunShadows {
     });
     if (box.isEmpty()) { this.acR = 0; return; }
     box.getBoundingSphere(sph);
-    this.acCentre.copy(sph.center); this.acR = sph.radius * 1.03 + 0.1;
+    this.acCenter.copy(sph.center); this.acR = sph.radius * 1.03 + 0.1;
   }
 
   drawAircraft(sun, strength) {
@@ -131,12 +131,12 @@ export class SunShadows {
     for (const o of this.skip) set(o, false);
 
     const R = this.acR, E = R + AC_PAD, cam = this.acCam;
-    C.copy(this.acCentre).applyMatrix4(root.matrixWorld);
+    C.copy(this.acCenter).applyMatrix4(root.matrixWorld);
     cam.left = -E; cam.right = E; cam.top = E; cam.bottom = -E; cam.near = 0.05; cam.far = 2 * R + 0.1; cam.updateProjectionMatrix();
     cam.position.copy(C).addScaledVector(Z, R + 0.05);
     cam.quaternion.setFromRotationMatrix(M.makeBasis(X, Y, Z));
     cam.updateMatrixWorld();
-    const u = this.acMat.uniforms; u.uCentre.value.copy(C); u.uDown.value.copy(Z).negate(); u.uR.value = R;
+    const u = this.acMat.uniforms; u.uCenter.value.copy(C); u.uDown.value.copy(Z).negate(); u.uR.value = R;
     this.acScene.children = [root];
     const alpha = r.getClearAlpha(); r.getClearColor(keep); r.setClearColor(black, 0);
     const auto = r.shadowMap.autoUpdate; r.shadowMap.autoUpdate = false;
@@ -145,7 +145,7 @@ export class SunShadows {
     this.acScene.children = [];
     for (let i = 0; i < vis.length; i += 2) vis[i].visible = vis[i + 1];
 
-    // world -> (place in the map, metres down-sun of the aircraft's middle)
+    // world -> (place in the map, meters down-sun of the aircraft's middle)
     const k = 1 / (2 * E);
     ENV.uAcShadowM.value.set(
       X.x * k, X.y * k, X.z * k, 0.5 - C.dot(X) * k,

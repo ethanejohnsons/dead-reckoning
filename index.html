@@ -132,8 +132,9 @@
       <h2>Map</h2>
       <span id="chartInfo"></span>
       <span class="spacer"></span>
+      <button id="chartFly" class="chip go" title="Start a flight in the air over the pin" hidden>Fly from pin</button>
       <button id="chartWx" class="chip">Weather</button>
-      <button id="chartCentre" class="chip">Centre</button>
+      <button id="chartCenter" class="chip">Center</button>
       <button id="chartClose" class="iconbtn" aria-label="Close" title="Close (M)"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg></button>
     </header>
     <canvas id="chart"></canvas>
@@ -151,6 +152,7 @@
           <label>Weather <select id="oWx"></select></label>
           <label>Time <select id="oHour"></select></label>
           <label>Start <select id="oStart"><option value="ground">On the runway</option><option value="air">In the air</option></select></label>
+          <button id="btnMap" class="btn side" title="Open the map: drop a pin anywhere and start in the air over it">Map</button>
           <button id="btnFly" class="btn primary">Fly</button>
         </div>
       </div>
@@ -186,7 +188,7 @@
             <tr><td><kbd>T</kbd></td><td>Speed up time</td></tr>
             <tr><td><kbd>Esc</kbd></td><td>This menu</td></tr>
           </table>
-          <p class="muted small">Hold R, ease back at 55 knots and you are flying. Flaps, brakes and fuel look after themselves. A gamepad works too.</p>
+          <p class="muted small">Hold R, ease back at 55 knots and you are flying. Flaps, brakes and fuel take care of themselves. A gamepad works too.</p>
         </div>
         <div>
           <h3>Flight</h3>

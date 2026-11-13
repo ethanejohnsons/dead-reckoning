@@ -48,7 +48,7 @@ function bounds(p, pad = 0) {
   return [x0 - pad, z0 - pad, x1 + pad, z1 + pad];
 }
 
-/** One runway from the baked data, in field-local metres (the frame every list of the field uses). */
+/** One runway from the baked data, in field-local meters (the frame every list of the field uses). */
 function makeRunway(r, flip) {
   const a = flip ? r.b : r.a, b = flip ? r.a : r.b, n = flip ? [r.n[1], r.n[0]] : r.n, dt = r.dt ? (flip ? [r.dt[1], r.dt[0]] : r.dt) : [0, 0];
   const len = Math.hypot(b[0] - a[0], b[1] - a[1]), ux = (b[0] - a[0]) / len, uz = (b[1] - a[1]) / len;
@@ -56,7 +56,7 @@ function makeRunway(r, flip) {
   return {
     numbers: n, ax: a[0], az: a[1], bx: b[0], bz: b[1], lx: (a[0] + b[0]) / 2, lz: (a[1] + b[1]) / 2,
     ux, uz, hdg: (Math.atan2(ux, -uz) / D2R + 360) % 360, len, width: r.w, kind: r.s, surface: SURFACE(r.s), dt,
-    // Paint: 0 none (grass, gravel), 1 threshold, numbers and centreline, 2 adds aiming points, 3 adds touchdown-zone bars.
+    // Paint: 0 none (grass, gravel), 1 threshold, numbers and centerline, 2 adds aiming points, 3 adds touchdown-zone bars.
     cls: !paved ? 0 : r.w >= 44 && len >= 1500 ? 3 : r.w >= 29 && len >= 1150 ? 2 : 1,
     lit: paved,
   };
@@ -79,7 +79,7 @@ async function fetchData(f) {
   return d;
 }
 /**
- * A field's file is in true metres at the field; the world is true to scale only at its window's centre.
+ * A field's file is in true meters at the field; the world is true to scale only at its window's center.
  * Stretch the plan (not the heights) by the difference, so pavement meets the picture on the ground.
  */
 function scaled(d, s) {
@@ -108,7 +108,7 @@ function gradeGrid(a) {
   const gx0 = Math.floor((a.ox + x0 - pad) / CELL) * CELL, gz0 = Math.floor((a.oz + z0 - pad) / CELL) * CELL;
   const nx = Math.ceil((a.ox + x1 + pad - gx0) / CELL) + 1, nz = Math.ceil((a.oz + z1 + pad - gz0) / CELL) + 1;
   const INF = 1e12, d2 = new Float64Array(nx * nz).fill(INF);
-  const lx = (i) => gx0 + i * CELL - a.ox, lz = (j) => gz0 + j * CELL - a.oz;         // cell corner in field-local metres
+  const lx = (i) => gx0 + i * CELL - a.ox, lz = (j) => gz0 + j * CELL - a.oz;         // cell corner in field-local meters
   const cells = (b, fn) => {
     const i0 = Math.max(0, Math.floor((a.ox + b[0] - gx0) / CELL) - 1), i1 = Math.min(nx - 1, Math.ceil((a.ox + b[2] - gx0) / CELL) + 1);
     const j0 = Math.max(0, Math.floor((a.oz + b[1] - gz0) / CELL) - 1), j1 = Math.min(nz - 1, Math.ceil((a.oz + b[3] - gz0) / CELL) + 1);
@@ -153,8 +153,8 @@ function gradeGrid(a) {
     w[k] = 1 - smooth(MARGIN, MARGIN + BLEND, d);
     if (d === 0) seeds.push(k);
   }
-  // Inside the aerodrome's boundary the ground is the airfield's whether it is graded or not: no water
-  // (the elevation data reads dead-level paddocks as lakes), no trees. Filled a grid row at a time.
+  // Inside the airport's boundary the ground is the airfield's whether it is graded or not: no water
+  // (the elevation data reads dead-level fields as lakes), no trees. Filled a grid row at a time.
   let dry = w;
   if (a.fence.length >= 6) {
     dry = w.slice();
@@ -197,7 +197,7 @@ function fitPlane(a, f) {
     for (let i = 0; i < n; i++) { const r = Math.abs(hs[i] - (e0 + gx * xs[i] + gz * zs[i])); wt[i] = r < 1.5 ? 1 : 1.5 / r; }
   }
   // The elevation data is drawn from 20 m contours, so what it says about a flat is rough. Keep the tilt
-  // to what real fields have: a per cent and a half along the main runway, under one across it. And
+  // to what real fields have: a percent and a half along the main runway, under one across it. And
   // between the shore and the first contour the data is a plain ramp up from the sea, which a river
   // flat is not: a field that low is graded level, toward the low side of what the data shows.
   const m = a.runways[0];
@@ -209,7 +209,7 @@ function fitPlane(a, f) {
     const res = hs.map((h, i) => h - gx * xs[i] - gz * zs[i]).sort((p, q) => p - q);
     e0 = res[Math.floor(n * (coastal ? 0.3 : 0.5))];
   }
-  // Stay clear of the sea: nowhere on the pavement below a metre and a half.
+  // Stay clear of the sea: nowhere on the pavement below a meter and a half.
   let low = Infinity;
   for (let i = 0; i < n; i++) low = Math.min(low, e0 + gx * xs[i] + gz * zs[i]);
   if (n && low < 1.5) e0 += 1.5 - low;
@@ -272,13 +272,13 @@ export async function loadAirports(onProgress) {
   return AIRPORTS;
 }
 
-/** Signed along/cross-track position of a point relative to a runway centreline (an airport's main runway, or any runway of one). */
+/** Signed along/cross-track position of a point relative to a runway centerline (an airport's main runway, or any runway of one). */
 export function runwayCoords(a, x, z) {
   const dx = x - a.x, dz = z - a.z;
   return { along: dx * a.ux + dz * a.uz, cross: dx * -a.uz + dz * a.ux };
 }
 
-/** The nearest field, and how far the point is from its nearest runway (0 on the centreline). */
+/** The nearest field, and how far the point is from its nearest runway (0 on the centerline). */
 export function nearestAirport(x, z) {
   let best = null, bd = Infinity;
   for (const a of AIRPORTS) {

@@ -37,7 +37,7 @@ void main() {
   float air = 1.0 / (yc + 0.025 * exp(-11.0 * yc));                      // air masses on the line of sight (Rozenberg): 1 overhead, 40 at the horizon
   vec3 ext = exp(-uTau * air) * smoothstep(-0.003, 0.006, y);
   float flux = uStar.x * exp(-0.921034 * aMag);
-  // Scintillation: the low stars flicker and flash colour, the high ones barely stir.
+  // Scintillation: the low stars flicker and flash color, the high ones barely stir.
   float ph = dot(position, vec3(127.1, 311.7, 74.7)), t = uStar.y, amp = min(0.045 * pow(air, 1.1), 0.6);
   float tw = 1.0 + amp * (0.6 * sin(t * 23.0 + ph * 7.0) + 0.4 * sin(t * 37.1 + ph * 11.0));
   vec3 chroma = 1.0 + amp * 0.5 * smoothstep(3.0, 12.0, air) * vec3(sin(t * 29.0 + ph * 3.0), sin(t * 31.0 + ph * 5.0), sin(t * 27.0 + ph * 9.0));
@@ -60,14 +60,14 @@ void main() {
   gl_FragColor = vec4(vCol * exp(-dot(p, p) / (2.0 * vSig * vSig)), 0.0);
 }`;
 
-/** Colour of a star from its B-V index: blackbody temperature (Ballesteros 2012), then a fit to the blackbody's colour, at unit luminance. */
-function starColour(bv, out, o) {
+/** Color of a star from its B-V index: blackbody temperature (Ballesteros 2012), then a fit to the blackbody's color, at unit luminance. */
+function starColor(bv, out, o) {
   const T = 4600 * (1 / (0.92 * bv + 1.7) + 1 / (0.92 * bv + 0.62)), t = T / 100;
   let r = t <= 66 ? 1 : 1.292936 * Math.pow(t - 60, -0.1332047592);
   let g = t <= 66 ? 0.390082 * Math.log(t) - 0.631841 : 1.129891 * Math.pow(t - 60, -0.0755148492);
   let b = t >= 66 ? 1 : t <= 19 ? 0 : 0.543207 * Math.log(t - 10) - 1.196254;
   r = Math.min(Math.max(r, 0), 1) ** 2.2; g = Math.min(Math.max(g, 0), 1) ** 2.2; b = Math.min(Math.max(b, 0), 1) ** 2.2;   // the fit is for display values
-  const l = 0.2126 * r + 0.7152 * g + 0.0722 * b, k = 0.75;         // the eye sees star colours weakly: keep three quarters of the saturation
+  const l = 0.2126 * r + 0.7152 * g + 0.0722 * b, k = 0.75;         // the eye sees star colors weakly: keep three quarters of the saturation
   out[o] = (1 + (r / l - 1) * k); out[o + 1] = (1 + (g / l - 1) * k); out[o + 2] = (1 + (b / l - 1) * k);
 }
 
@@ -99,7 +99,7 @@ export class Stars {
         const ra = (dv.getUint16(o, true) / 65536) * 2 * Math.PI, dec = (dv.getInt16(o + 2, true) / 32767) * (Math.PI / 2);
         pos[i * 3] = Math.cos(dec) * Math.cos(ra); pos[i * 3 + 1] = Math.cos(dec) * Math.sin(ra); pos[i * 3 + 2] = Math.sin(dec);
         mag[i] = dv.getUint8(o + 4) / 25 - 2;
-        starColour(dv.getUint8(o + 5) / 100 - 0.5, col, i * 3);
+        starColor(dv.getUint8(o + 5) / 100 - 0.5, col, i * 3);
       }
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -118,7 +118,7 @@ export class Stars {
       this.points.visible = false;
       this.count = n; this.mag = mag;
       this.scene.add(this.points);
-    } catch (e) { console.warn('Star catalogue did not load:', e.message); }
+    } catch (e) { console.warn('Star catalog did not load:', e.message); }
   }
 
   /**

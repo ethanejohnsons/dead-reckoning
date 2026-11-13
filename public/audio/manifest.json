@@ -237,16 +237,16 @@
    "lufs": -17.6,
    "truePeak": -3.5
   },
-  "tyre_chirp": {
-   "file": "tyre_chirp.mp3",
+  "tire_chirp": {
+   "file": "tire_chirp.mp3",
    "group": "ground",
    "channels": 1,
    "duration": 0.47,
    "lufs": -16.0,
    "truePeak": -4.8
   },
-  "tyre_screech": {
-   "file": "tyre_screech.mp3",
+  "tire_screech": {
+   "file": "tire_screech.mp3",
    "group": "ground",
    "channels": 1,
    "duration": 1.3,

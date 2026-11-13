@@ -1,13 +1,13 @@
 // Sound. Almost everything heard is a recording (see public/audio/CREDITS.md): a Cessna 152 recorded in its
 // own cabin at five engine speeds, a Cessna 172 and an idling four-cylinder single recorded from outside, rain
-// and hail on a car body, wind, thunder, tyres. This file loads them after the Fly click and plays them as a
+// and hail on a car body, wind, thunder, tires. This file loads them after the Fly click and plays them as a
 // mix that follows the flight: engine bands cross-faded and pitched by rpm, air noise by airspeed, weather by
 // intensity, with one switch between the microphone in the cabin and the one flying behind the aircraft.
 //
-// Three things are synthesised because no free recording exists or can exist: the reed stall horn, the buffet
+// Three things are synthesized because no free recording exists or can exist: the reed stall horn, the buffet
 // of a stalled wing, and the slow swell of gusts (which only moves the gain of recorded wind). One thing is
 // processing rather than playback: the recorded engine is also bent through a soft curve to bring out exhaust
-// harmonics, more of them under load. If a file fails to load, a synthesised stand-in takes its place so the
+// harmonics, more of them under load. If a file fails to load, a synthesized stand-in takes its place so the
 // game still sounds like something.
 
 import { gustBuffer, buffetBuffer, reedWave, noiseBuffer, standInEngine, standInBurst, rng } from './audio-synth.js';
@@ -27,8 +27,8 @@ function curve(pts, x) {
 }
 
 /**
- * Equal-power weights for recordings made at the given engine speeds (ascending). Each neighbouring pair
- * hands over across a zone centred on the geometric mean of their speeds, `half` wide in log rpm either side,
+ * Equal-power weights for recordings made at the given engine speeds (ascending). Each neighboring pair
+ * hands over across a zone centered on the geometric mean of their speeds, `half` wide in log rpm either side,
  * so at any moment one or two bands play and their combined power is constant.
  */
 export function bandWeights(rpms, rpm, half) {
@@ -47,7 +47,7 @@ export function bandWeights(rpms, rpm, half) {
   return w;
 }
 
-// Mix levels in one place. Loop files are all normalised to -23 LUFS and one-shots to about -20, so these
+// Mix levels in one place. Loop files are all normalized to -23 LUFS and one-shots to about -20, so these
 // numbers are the balance of the mix itself.
 export const MIX = {
   master: dB(1),
@@ -255,7 +255,7 @@ export class Sound {
       this.rollIn.connect(d); d.connect(lp); lp.connect(fb); fb.connect(d); lp.connect(rollOut);
     }
 
-    // Wheels: the Cessna's own landing roll on grass. A sealed runway keeps only the low rumble of it, gravel
+    // Wheels: the Cessna's own landing roll on grass. A paved runway keeps only the low rumble of it, gravel
     // gets it brighter and busier.
     this.rollLP = filter('lowpass', 4000, 0.6); this.rollTone = filter('highshelf', 900, 0.707, 0);
     this.roll = new Loop(ctx, this.rollLP);
@@ -297,7 +297,7 @@ export class Sound {
       const r = await fetch(`${AUDIO_URL}manifest.json`);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       manifest = await r.json();
-    } catch (e) { console.warn('Sound: no manifest, using synthesised stand-ins.', e); this.failed.push('manifest.json'); return; }
+    } catch (e) { console.warn('Sound: no manifest, using synthesized stand-ins.', e); this.failed.push('manifest.json'); return; }
     this.manifest = manifest;
     await Promise.all(Object.entries(manifest.sounds).map(async ([name, meta]) => {
       try {
@@ -331,7 +331,7 @@ export class Sound {
     else { this.buf[name] = buffer; if (name === 'eng_start') this.startMeta = meta; }
   }
 
-  /** Whatever is still missing after loading gets a synthesised replacement. */
+  /** Whatever is still missing after loading gets a synthesized replacement. */
   _standIns() {
     const ctx = this.ctx, used = [];
     if (!this.bands.length) {
@@ -339,7 +339,7 @@ export class Sound {
       this.bands.push({ name: 'stand-in', rpm: e.rpm, loop: new Loop(ctx, this.engLoops).set(e.buffer, e.loop) });
       this.mill.set(e.buffer, e.loop, 0.5); this.millRpm = e.rpm; used.push('engine');
     }
-    const noise = (loop, colour, seed, what) => { if (!loop.loaded) { loop.set(noiseBuffer(ctx, 6, colour, seed), null); used.push(what); } };
+    const noise = (loop, color, seed, what) => { if (!loop.loaded) { loop.set(noiseBuffer(ctx, 6, color, seed), null); used.push(what); } };
     noise(this.airCab, 'pink', 31, 'cabin air'); noise(this.airRush, 'brown', 37, 'wind');
     if (!this.rainHeavy.loaded && !this.rainLight.loaded) noise(this.rainHeavy, 'white', 41, 'rain');
     noise(this.roll, 'brown', 43, 'wheels');
@@ -350,7 +350,7 @@ export class Sound {
     if (!this.buf.crash) { this.buf.crash = standInBurst(ctx, 2, 1400, 0.45, 57); used.push('crash'); }
     if (!this.buf.touchdown) { this.buf.touchdown = standInBurst(ctx, 0.6, 160, 0.14, 59); used.push('touchdown'); }
     this.standIns = used;
-    if (used.length) console.warn(`Sound: synthesised stand-ins in use for ${used.join(', ')}.`);
+    if (used.length) console.warn(`Sound: synthesized stand-ins in use for ${used.join(', ')}.`);
   }
 
   // ------------------------------------------------------------------------------------------ per frame
@@ -444,7 +444,7 @@ export class Sound {
     const buffet = onGround ? 0 : smooth(0.3, 0.85, deep) * clamp(ias / 22, 0, 1);
     this.buffet.setLevel(buffet, t, 0.1); this.buffet.setRate(0.9 + 0.3 * buffet, t, 0.2);
 
-    // ---- weather: what hits the windscreen depends on how fast you fly into it
+    // ---- weather: what hits the windshield depends on how fast you fly into it
     const drive = 0.5 + 0.5 * clamp(ias / 45, 0, 1.3);
     const R = clamp((s.rain || 0) * drive + (s.snow || 0) * 0.07, 0, 1.3);
     const x = smooth(0.16, 0.7, R), rg = R > 0.004 ? 0.3 + 0.7 * Math.pow(Math.min(R, 1), 0.6) : 0;
@@ -509,8 +509,8 @@ export class Sound {
   // ------------------------------------------------------------------------------------------ events
 
   /**
-   * Lightning struck `distance` metres away. Close strikes crack with their whole spectrum almost at once;
-   * distant ones arrive later as a low roll. Sound takes three seconds a kilometre, but the wait is eased off
+   * Lightning struck `distance` meters away. Close strikes crack with their whole spectrum almost at once;
+   * distant ones arrive later as a low roll. Sound takes three seconds a kilometer, but the wait is eased off
    * with distance and stops at eight seconds, so the thunder still belongs to its flash.
    */
   thunder(distance) {
@@ -525,7 +525,7 @@ export class Sound {
     if (!pool.length) return;
     const clap = this._lastClap = pool[Math.floor(this._rand() * pool.length)], buffer = clap.buffer;
     const delay = 8 * (1 - Math.exp(-3 * km / 8));
-    // Loudness falls with distance far more gently than it does in air: thunder twenty kilometres off is
+    // Loudness falls with distance far more gently than it does in air: thunder twenty kilometers off is
     // still meant to be heard over an engine. What distance takes away is the top of the spectrum.
     const gain = MIX.thunder * dB(-9 * Math.log10(1 + d / 1500));
     const lowpass = clamp(16000 * Math.exp(-d / 2800), 500, 16000);
@@ -552,10 +552,10 @@ export class Sound {
       this._shot(this.buf.touchdown, this.outside, { when: t, gain: dB(-19 + 11 * hard), rate: 1.05 - 0.15 * hard, lowpass: paved ? 900 : 2500 });
     }
     if (!paved) return;                                          // grass and gravel do not squeal
-    // Two main wheels spinning up on a sealed runway, a few hundredths of a second apart.
-    const chirp = this.buf.tyre_chirp, g = dB(-15 + 11 * hard);
+    // Two main wheels spinning up on a paved runway, a few hundredths of a second apart.
+    const chirp = this.buf.tire_chirp, g = dB(-15 + 11 * hard);
     if (chirp) { this._shot(chirp, this.world, { when: t, gain: g, rate: 0.92 + 0.1 * this._rand() }); this._shot(chirp, this.world, { when: t + 0.045 + 0.05 * this._rand(), gain: g * 0.8, rate: 1.02 + 0.12 * this._rand() }); }
-    if (this.buf.tyre_screech && hard > 0.3) this._shot(this.buf.tyre_screech, this.world, { when: t + 0.02, gain: dB(-20 + 12 * hard), rate: 1.1 + 0.2 * this._rand() });
+    if (this.buf.tire_screech && hard > 0.3) this._shot(this.buf.tire_screech, this.world, { when: t + 0.02, gain: dB(-20 + 12 * hard), rate: 1.1 + 0.2 * this._rand() });
   }
 
   crash() {

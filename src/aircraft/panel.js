@@ -16,7 +16,7 @@ import { REGION } from '../world/geo.js';
 const KT = 1.94384, FT = 3.28084;
 export const PANEL_Z = -0.70;
 
-/** Where things sit on the panel of a variant (metres, aircraft coordinates; the plate faces aft at z = PANEL_Z). */
+/** Where things sit on the panel of a variant (meters, aircraft coordinates; the plate faces aft at z = PANEL_Z). */
 export function panelLayout(A) {
   const sx = A.sx, xP = -0.27 * sx, d = 0.123, R = 0.054, yT = 0.231, yB = 0.108, xC = xP + d + R + 0.05;
   return {
@@ -48,7 +48,7 @@ const INK = '#f4f2e8';
 function dialAtlas(v) {
   const [c, g] = canvas(CELL * 4, CELL * 2, '#050506');
   const pol = (a, r) => [Math.sin(a) * r, -Math.cos(a) * r];
-  const disc = (r, fill) => { g.fillStyle = fill; g.beginPath(); g.arc(0, 0, r, 0, 7); g.fill(); };
+  const disk = (r, fill) => { g.fillStyle = fill; g.beginPath(); g.arc(0, 0, r, 0, 7); g.fill(); };
   const tick = (a, r0, r1, w = 5, col = INK) => { const p = pol(a, r0), q = pol(a, r1); g.strokeStyle = col; g.lineWidth = w; g.lineCap = 'butt'; g.beginPath(); g.moveTo(p[0], p[1]); g.lineTo(q[0], q[1]); g.stroke(); };
   const label = (a, r, str, px, col = INK, weight = 700) => { const p = pol(a, r); g.fillStyle = col; g.font = `${weight} ${px}px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(str, p[0], p[1] + px * 0.04); };
   const word = (x, y, str, px, col = '#c9c7bd', weight = 600) => { g.fillStyle = col; g.font = `${weight} ${px}px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(str, x, y); };
@@ -57,7 +57,7 @@ function dialAtlas(v) {
     const [cx, cy] = ATLAS[name], R = CELL * FACE;
     g.save(); g.beginPath(); g.rect(cx * CELL, cy * CELL, CELL, CELL); g.clip();
     g.translate((cx + 0.5) * CELL, (cy + 0.5) * CELL);
-    disc(CELL, '#0b0b0c'); disc(R * 1.0, '#050506');
+    disk(CELL, '#0b0b0c'); disk(R * 1.0, '#050506');
     draw(R); g.restore();
   };
   const sp = v.speeds, aA = (kt) => asiAngle(kt, v);
@@ -71,7 +71,7 @@ function dialAtlas(v) {
     for (let k = 40; k <= sp.asiMax - 10; k += 20) label(aA(k), R * 0.58, String(k), R * 0.23);
     word(0, -R * 0.26, 'AIRSPEED', R * 0.105); word(0, R * 0.3, 'KNOTS', R * 0.115);
   });
-  face('att', (R) => {                                      // bank scale round the moving ball
+  face('att', (R) => {                                      // bank scale around the moving ball
     for (const d of [-60, -45, -30, -20, -10, 0, 10, 20, 30, 45, 60]) tick(d * D2R, R * 0.82, R * (d % 30 ? 0.91 : 0.99), d % 30 ? 5 : 9);
     for (const d of [-90, 90]) tick(d * D2R, R * 0.82, R * 0.99, 9);
     g.fillStyle = INK; g.beginPath(); g.moveTo(0, -R * 0.82); g.lineTo(-R * 0.075, -R * 0.99); g.lineTo(R * 0.075, -R * 0.99); g.fill();
@@ -93,7 +93,7 @@ function dialAtlas(v) {
     g.fillStyle = '#d6d2bf'; g.beginPath(); g.roundRect(-R * 0.52, R * 0.4, R * 1.04, R * 0.27, R * 0.135); g.fill();
     g.fillStyle = '#0a0a0b'; g.fillRect(-R * 0.165, R * 0.4, R * 0.035, R * 0.27); g.fillRect(R * 0.13, R * 0.4, R * 0.035, R * 0.27);
   });
-  face('hdg', (R) => {                                      // lubber marks round the rotating card
+  face('hdg', (R) => {                                      // lubber marks around the rotating card
     for (let d = 45; d < 360; d += 45) tick(d * D2R, R * 0.91, R * 1.0, 8);
     g.fillStyle = '#ff9a1f'; g.beginPath(); g.moveTo(0, -R * 0.86); g.lineTo(-R * 0.09, -R * 1.0); g.lineTo(R * 0.09, -R * 1.0); g.fill();
   });
@@ -153,7 +153,7 @@ function headingTexture() {
   return t;
 }
 
-/** Card for the magnetic compass: one turn of headings round a drum. */
+/** Card for the magnetic compass: one turn of headings around a drum. */
 function compassTexture() {
   const W = 2048, H = 128, [c, g] = canvas(W, H, '#08080a');
   g.fillStyle = INK; g.textAlign = 'center'; g.textBaseline = 'middle';
@@ -218,12 +218,12 @@ function plateTextures(A, L) {
   const PX = (x) => (x + L.w / 2) * S, PY = (y) => (L.y1 - y) * S;
   speckle(g, W, H, 2400, 5);
   const pol = (a, r) => [Math.sin(a) * r, -Math.cos(a) * r];
-  const disc = (r, fill) => { g.fillStyle = fill; g.beginPath(); g.arc(0, 0, r, 0, 7); g.fill(); };
+  const disk = (r, fill) => { g.fillStyle = fill; g.beginPath(); g.arc(0, 0, r, 0, 7); g.fill(); };
   const tick = (a, r0, r1, w = 2, col = '#eceae0') => { const p = pol(a, r0), q = pol(a, r1); g.strokeStyle = col; g.lineWidth = w; g.beginPath(); g.moveTo(p[0], p[1]); g.lineTo(q[0], q[1]); g.stroke(); };
   const word = (x, y, str, px, col = '#d0cec4', weight = 600) => { g.fillStyle = col; g.font = `${weight} ${px}px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(str, PX(x), PY(y)); };
   const arc = (a0, a1, r, w, col) => { g.strokeStyle = col; g.lineWidth = w; g.beginPath(); g.arc(0, 0, r, a0 - Math.PI / 2, a1 - Math.PI / 2); g.stroke(); };
   const screw = (x, y, r = 0.0035) => {
-    g.save(); g.translate(PX(x), PY(y)); disc(r * S, '#4d4f54'); disc(r * S * 0.75, '#75777c'); g.rotate(x * 91 + y * 57); g.fillStyle = '#1b1c1e'; g.fillRect(-r * S * 0.7, -1.2, r * S * 1.4, 2.4); g.fillRect(-1.2, -r * S * 0.7, 2.4, r * S * 1.4); g.restore();
+    g.save(); g.translate(PX(x), PY(y)); disk(r * S, '#4d4f54'); disk(r * S * 0.75, '#75777c'); g.rotate(x * 91 + y * 57); g.fillStyle = '#1b1c1e'; g.fillRect(-r * S * 0.7, -1.2, r * S * 1.4, 2.4); g.fillRect(-1.2, -r * S * 0.7, 2.4, r * S * 1.4); g.restore();
     gh.fillStyle = '#b8b8b8'; gh.beginPath(); gh.arc(PX(x) / 2, PY(y) / 2, r * S / 2, 0, 7); gh.fill(); gh.fillStyle = '#585858'; gh.fillRect(PX(x) / 2 - r * S * 0.35, PY(y) / 2 - 0.8, r * S * 0.7, 1.6);
   };
   const placard = (x, y, w, h, lines, px, bg = '#17181a', fg = '#e4e2d8') => {
@@ -238,7 +238,7 @@ function plateTextures(A, L) {
   section(G.asi[0] - R - 0.02, G.asi[1] + R + 0.016, G.alt[0] + R + 0.014, G.tc[1] - R - 0.016);
   for (const k of Object.keys(G)) {
     const [x, y, r] = G[k];
-    g.save(); g.translate(PX(x), PY(y)); disc(r * 1.2 * S, '#0d0d0e'); g.restore();
+    g.save(); g.translate(PX(x), PY(y)); disk(r * 1.2 * S, '#0d0d0e'); g.restore();
     if (k !== 'clock' && k !== 'tach') for (const q of [0, 1, 2, 3]) { const p = pol(Math.PI / 4 + q * Math.PI / 2, r * 1.27); screw(x + p[0], y - p[1], 0.0032); }
   }
   for (const [x, y] of [[G.asi[0] - R - 0.012, G.asi[1] + R + 0.008], [G.alt[0] + R + 0.006, G.asi[1] + R + 0.008], [G.asi[0] - R - 0.012, G.tc[1] - R - 0.008], [G.alt[0] + R + 0.006, G.tc[1] - R - 0.008]]) screw(x, y);
@@ -253,7 +253,7 @@ function plateTextures(A, L) {
   // avionics stack
   const [sx0, sx1] = L.stack, sw = sx1 - sx0;
   const unit = (y, h, draw) => { g.fillStyle = '#0c0c0d'; g.fillRect(PX(sx0), PY(y), sw * S, h * S); g.strokeStyle = '#3a3c40'; g.lineWidth = 1.5; g.strokeRect(PX(sx0), PY(y), sw * S, h * S); gh.strokeStyle = '#5a5a5a'; gh.lineWidth = 1.5; gh.strokeRect(PX(sx0) / 2, PY(y) / 2, sw * S / 2, h * S / 2); draw(); };
-  const knob = (x, y, r) => { g.save(); g.translate(PX(x), PY(y)); disc(r * S, '#1c1c1e'); disc(r * S * 0.72, '#2c2d30'); g.restore(); };
+  const knob = (x, y, r) => { g.save(); g.translate(PX(x), PY(y)); disk(r * S, '#1c1c1e'); disk(r * S * 0.72, '#2c2d30'); g.restore(); };
   const lcd = (x, y, w, h, str, col, px) => lit(x, y, w, h, (ctx, pw, ph) => { ctx.fillStyle = '#04090a'; ctx.fillRect(0, 0, pw, ph); ctx.fillStyle = col; ctx.font = `600 ${px}px ui-monospace, Menlo, Consolas, monospace`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(str, pw * 0.05, ph * 0.56); });
   section(sx0 - 0.004, 0.3, sx1 + 0.004, 0.022);
   unit(0.296, 0.03, () => { for (let k = 0; k < 9; k++) { g.fillStyle = k % 3 ? '#1d1e20' : '#3c3d40'; g.fillRect(PX(sx0 + 0.01 + k * 0.0165), PY(0.288), 0.011 * S, 0.014 * S); } });
@@ -275,11 +275,11 @@ function plateTextures(A, L) {
   // right-hand side: fixed engine and fuel gauges, a navigation head
   const fixed = (x, y, r, name, a, marks = 9) => {
     g.save(); g.translate(PX(x), PY(y)); const Rr = r * S;
-    disc(Rr * 1.16, '#101011'); disc(Rr * 1.1, '#303236'); disc(Rr * 1.02, '#050506');
+    disk(Rr * 1.16, '#101011'); disk(Rr * 1.1, '#303236'); disk(Rr * 1.02, '#050506');
     for (let k = 0; k <= marks; k++) tick((-120 + (240 * k) / marks) * D2R, Rr * 0.78, Rr * 0.93, 2.4);
     arc(-60 * D2R, 40 * D2R, Rr * 0.88, Rr * 0.08, '#2e9a4a'); arc(40 * D2R, 120 * D2R, Rr * 0.88, Rr * 0.08, '#b9302a');
     g.fillStyle = '#d0cec4'; g.font = `700 ${Rr * 0.26}px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(name, 0, Rr * 0.48);
-    g.strokeStyle = '#f2f0e6'; g.lineWidth = 3.5; g.lineCap = 'round'; g.beginPath(); g.moveTo(0, 0); const p = pol(a * D2R, Rr * 0.76); g.lineTo(p[0], p[1]); g.stroke(); disc(Rr * 0.13, '#1a1a1c');
+    g.strokeStyle = '#f2f0e6'; g.lineWidth = 3.5; g.lineCap = 'round'; g.beginPath(); g.moveTo(0, 0); const p = pol(a * D2R, Rr * 0.76); g.lineTo(p[0], p[1]); g.stroke(); disk(Rr * 0.13, '#1a1a1c');
     g.restore();
     gh.fillStyle = '#9a9a9a'; gh.beginPath(); gh.arc(PX(x) / 2, PY(y) / 2, r * S * 0.58, 0, 7); gh.fill(); gh.fillStyle = '#707070'; gh.beginPath(); gh.arc(PX(x) / 2, PY(y) / 2, r * S * 0.5, 0, 7); gh.fill();
   };
@@ -298,10 +298,10 @@ function plateTextures(A, L) {
   // engine controls, flaps, breakers
   word(L.throttle[0], L.throttle[1] - 0.036, 'THROTTLE', 13); word(L.mixture[0], L.mixture[1] - 0.036, 'MIXTURE', 13);
   word(L.mixture[0] + 0.02, L.mixture[1] + 0.03, 'PULL LEAN', 10);
-  for (const p of [L.throttle, L.mixture]) { g.save(); g.translate(PX(p[0]), PY(p[1])); disc(0.018 * S, '#3a3c40'); disc(0.012 * S, '#101011'); g.restore(); }
-  for (const x of [L.xP, -L.xP]) { g.save(); g.translate(PX(x), PY(L.yokeY)); disc(0.026 * S, '#2c2d30'); disc(0.018 * S, '#0a0a0b'); g.restore(); }
+  for (const p of [L.throttle, L.mixture]) { g.save(); g.translate(PX(p[0]), PY(p[1])); disk(0.018 * S, '#3a3c40'); disk(0.012 * S, '#101011'); g.restore(); }
+  for (const x of [L.xP, -L.xP]) { g.save(); g.translate(PX(x), PY(L.yokeY)); disk(0.026 * S, '#2c2d30'); disk(0.018 * S, '#0a0a0b'); g.restore(); }
   { const [fx, fy] = L.flap; g.fillStyle = '#060607'; g.fillRect(PX(fx - 0.006), PY(fy + 0.01), 0.012 * S, 0.1 * S); for (const [k, str] of [[0, 'UP'], [1, '10°'], [2, '20°'], [3, 'FULL']]) { word(fx + 0.032, fy - k * 0.027, str, 14); g.fillStyle = '#d0cec4'; g.fillRect(PX(fx + 0.008), PY(fy - k * 0.027) - 1.5, 0.008 * S, 3); } word(fx + 0.012, fy + 0.024, 'WING FLAPS', 13); }
-  { const x0 = L.flap[0] + 0.065, n = Math.max(3, Math.floor((L.w / 2 - 0.04 - x0) / 0.022)); for (let j = 0; j < 2; j++) for (let k = 0; k < n; k++) { g.save(); g.translate(PX(x0 + k * 0.022), PY(-0.1 - j * 0.032)); disc(0.0085 * S, '#0c0c0d'); disc(0.0062 * S, '#1f2023'); g.fillStyle = '#b9b7ae'; g.font = `600 9px ${FONT}`; g.textAlign = 'center'; g.fillText(String([5, 10, 15, 5, 10, 60, 5, 10, 15, 5, 5][(k + j * 3) % 11]), 0, 3); g.restore(); } word(x0 + (n - 1) * 0.011, -0.08, 'CIRCUIT BREAKERS', 12); }
+  { const x0 = L.flap[0] + 0.065, n = Math.max(3, Math.floor((L.w / 2 - 0.04 - x0) / 0.022)); for (let j = 0; j < 2; j++) for (let k = 0; k < n; k++) { g.save(); g.translate(PX(x0 + k * 0.022), PY(-0.1 - j * 0.032)); disk(0.0085 * S, '#0c0c0d'); disk(0.0062 * S, '#1f2023'); g.fillStyle = '#b9b7ae'; g.font = `600 9px ${FONT}`; g.textAlign = 'center'; g.fillText(String([5, 10, 15, 5, 10, 60, 5, 10, 15, 5, 5][(k + j * 3) % 11]), 0, 3); g.restore(); } word(x0 + (n - 1) * 0.011, -0.08, 'CIRCUIT BREAKERS', 12); }
   // placards
   placard(L.w / 2 - 0.1, 0.306, 0.11, 0.019, [v.reg], 30, '#d8d6cc', '#17181a');
   placard(L.xP + 0.185, 0.012, 0.118, 0.024, ['MANEUVERING SPEED ' + Math.round(v.speeds.vs1 * 1.95) + ' KIAS', 'NO ACROBATIC MANEUVERS APPROVED'], 9.5);
@@ -311,7 +311,7 @@ function plateTextures(A, L) {
   placard(L.throttle[0] + 0.03, -0.14, 0.09, 0.018, ['FUEL 100LL  ' + Math.round(v.spec.fuelCap / 0.72 / 3.785) + ' US GAL'], 10);
   for (let x = -L.w / 2 + 0.05; x < L.w / 2 - 0.03; x += 0.11) { screw(x, -0.148); screw(x + 0.05, 0.312, 0.0028); }
 
-  // scuffs and finger wear round the things that get handled
+  // scuffs and finger wear around the things that get handled
   g.save(); g.filter = 'blur(6px)'; g.globalCompositeOperation = 'lighter';
   for (const [x, y, r] of [[L.throttle[0], L.throttle[1], 0.045], [L.mixture[0], L.mixture[1], 0.035], [swx + 4 * swp, swy, 0.1], [L.flap[0], L.flap[1] - 0.04, 0.04], [swx - 0.05, swy, 0.03]]) { const gr = g.createRadialGradient(PX(x), PY(y), 0, PX(x), PY(y), r * S); gr.addColorStop(0, 'rgba(120,118,110,0.11)'); gr.addColorStop(1, 'rgba(120,118,110,0)'); g.fillStyle = gr; g.fillRect(PX(x - r), PY(y + r), 2 * r * S, 2 * r * S); }
   g.restore();
@@ -319,7 +319,7 @@ function plateTextures(A, L) {
   g.strokeStyle = 'rgba(190,188,180,0.07)'; g.lineWidth = 1;
   for (let i = 0; i < 90; i++) { const x = rnd() * W, y = rnd() * H, a = rnd() * 7, l = 6 + rnd() * 40; g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l); g.stroke(); }
 
-  // night layer: post lights pooling on the plate round each dial and along the switches, displays at full strength
+  // night layer: post lights pooling on the plate around each dial and along the switches, displays at full strength
   const [fc, gf] = canvas(W / 2, H / 2, '#000');
   gf.drawImage(c, 0, 0, W / 2, H / 2);
   const [pc, gp] = canvas(W / 2, H / 2, '#161616');
@@ -387,7 +387,7 @@ export function buildPanel(A, { cabin, pit }) {
   const plunger = (rgb, r = 0.019) => merge([rod([0, 0, -0.04], [0, 0, 0.1], 0.006, [0.6, 0.6, 0.6], 6), prim(new THREE.CylinderGeometry(r, r, 0.026, 20), { rot: [Math.PI / 2, 0, 0], pos: [0, 0, 0.115], rgb }), prim(new THREE.SphereGeometry(r, 16, 8, 0, Math.PI * 2, 0, 1.2), { rot: [Math.PI / 2, 0, 0], pos: [0, 0, 0.122], scale: [1, 1, 0.5], rgb })]);
   { const mix = plunger([0.55, 0.04, 0.03], 0.017); mix.translate(L.mixture[0], L.mixture[1], pz - 0.05); fixed.push(mix); }
   parts.plunger = plunger;
-  // nuts round the engine controls and the yoke bushings
+  // nuts around the engine controls and the yoke bushings
   for (const p of [L.throttle, L.mixture]) fixed.push(prim(new THREE.CylinderGeometry(0.013, 0.013, 0.008, 6), { pos: [p[0], p[1], pz + 0.004], rot: [Math.PI / 2, 0, 0], rgb: [0.45, 0.45, 0.46] }));
   for (const x of [L.xP, -L.xP]) fixed.push(prim(new THREE.CylinderGeometry(0.022, 0.024, 0.014, 24), { pos: [x, L.yokeY, pz + 0.007], rot: [Math.PI / 2, 0, 0], rgb: [0.05, 0.05, 0.055] }));
   // magnetic compass on the glareshield: case, mounting foot, lubber line
@@ -398,7 +398,7 @@ export function buildPanel(A, { cabin, pit }) {
   const fixedMesh = new THREE.Mesh(bakeAO(merge(fixed), boxes, room), cabinMat({ roughness: 0.5, envMapIntensity: 0.35 }));
   fixedMesh.castShadow = false; fixedMesh.receiveShadow = true; cabin.add(fixedMesh);
 
-  // ---- faces: one mesh, eight discs on the atlas
+  // ---- faces: one mesh, eight disks on the atlas
   const atlas = dialAtlas(v), fz0 = pz + 0.0012;
   const faces = [];
   for (const k of Object.keys(G)) {
@@ -425,7 +425,7 @@ export function buildPanel(A, { cabin, pit }) {
   ins.hdg = put(new THREE.Mesh(new THREE.CircleGeometry(R * 0.89, 48), matCard(cardTex)), 'hdg', 0.0012);
   // bank pointer riding the ball's edge
   { const s = new THREE.Shape([new THREE.Vector2(0, R * 0.79), new THREE.Vector2(-R * 0.07, R * 0.66), new THREE.Vector2(R * 0.07, R * 0.66)]); ins.bank = put(new THREE.Mesh(new THREE.ShapeGeometry(s), matOrange), 'att', 0.0022); }
-  // turn coordinator: a little aeroplane seen from behind, and the slip ball
+  // turn coordinator: a little airplane seen from behind, and the slip ball
   { const s = R; ins.turn = put(new THREE.Mesh(merge([prim(new THREE.PlaneGeometry(s * 1.5, s * 0.085)), prim(new THREE.CircleGeometry(s * 0.14, 20)), prim(new THREE.PlaneGeometry(s * 0.07, s * 0.3), { pos: [0, s * 0.16, 0] }), prim(new THREE.PlaneGeometry(s * 0.42, s * 0.06), { pos: [0, s * 0.28, 0] })]), matNeedle), 'tc', 0.003); }
   ins.ball = put(new THREE.Mesh(new THREE.CircleGeometry(R * 0.118, 20), new THREE.MeshStandardMaterial({ color: 0x050506, roughness: 0.3 })), 'tc', 0.003);
   ins.ballBase = ins.ball.position.clone(); ins.ball.position.y -= R * 0.535;
@@ -445,7 +445,7 @@ export function buildPanel(A, { cabin, pit }) {
   ins.timer[0].position.set(L.timer[0] - 0.018, L.timer[1], pz + 0.0015); ins.timer[1].position.set(L.timer[0] + 0.018, L.timer[1], pz + 0.0015);
   pit.add(ins.timer[0], ins.timer[1]);
 
-  // fixed overlays: hub caps, the attitude and heading aeroplane symbols, the compass lubber line
+  // fixed overlays: hub caps, the attitude and heading airplane symbols, the compass lubber line
   const HUB = [0.02, 0.02, 0.022], ov = [], hubs = [];
   const flat = (w, h, x, y, name, rot = 0) => { const p = at3(name, 0.0042); ov.push(prim(new THREE.PlaneGeometry(w, h), { pos: [p[0] + x, p[1] + y, p[2]], rot: [0, 0, rot] })); };
   flat(R * 0.4, R * 0.075, -R * 0.44, 0, 'att'); flat(R * 0.4, R * 0.075, R * 0.44, 0, 'att'); flat(R * 0.075, R * 0.16, -R * 0.275, -R * 0.045, 'att'); flat(R * 0.075, R * 0.16, R * 0.275, -R * 0.045, 'att'); flat(R * 0.1, R * 0.1, 0, 0, 'att', Math.PI / 4);
@@ -495,7 +495,7 @@ export function animatePanel(parts, ac, dt, time, n) {
   const slip = Math.max(-1, Math.min(1, (ac.onGround ? 0 : ac.beta) / 0.1));
   I.ball.position.x = I.ballBase.x + slip * R * 0.36; I.ball.position.y = I.ballBase.y - R * (0.535 - 0.04 * slip * slip);
   // clock: runs on the aircraft's own time, so it stops with the pause and keeps up with time compression
-  const t = ac.t + 37800;                                    // (the hands start at half past ten)
+  const t = ac.t + 37800;                                    // (the hands start at ten thirty)
   I.second.rotation.z = -((t % 60) / 60) * 2 * Math.PI; I.minute.rotation.z = -((t % 3600) / 3600) * 2 * Math.PI; I.hour.rotation.z = -((t % 43200) / 43200) * 2 * Math.PI;
   // elapsed time: starts as the wheels leave the ground, holds on landing
   if (I.wasDown && !ac.onGround) I.t0 = ac.t;

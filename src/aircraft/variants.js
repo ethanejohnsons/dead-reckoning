@@ -9,10 +9,10 @@
 
 const sstep = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
-// Break lines of the stretch, in the 172's own coordinates (nose toward -Z, origin at the centre of gravity).
+// Break lines of the stretch, in the 172's own coordinates (nose toward -Z, origin at the center of gravity).
 const FW = -1.0, C0 = 0.30, C1 = 1.16;      // firewall; front and back of the rear-seat bay
 const XB = 0.55;                            // cabin side: inboard of it the cabin width scales, outboard the span
-const YB = -0.6;                            // belly line: below it the undercarriage length scales
+const YB = -0.6;                            // belly line: below it the landing gear length scales
 
 /**
  * Move a point of the 172 airframe to its place on a variant.
@@ -44,7 +44,7 @@ export function unwarpZ(g, z) {
 
 // ---------------------------------------------------------------- flight-model numbers
 
-// Contact points on the 172 (body frame, legs unloaded). Wheels: two mains just aft of the centre of
+// Contact points on the 172 (body frame, legs unloaded). Wheels: two mains just aft of the center of
 // gravity and a nose wheel; each leg settles about 7 cm under the parked weight.
 const WHEELS = [[-1.25, -1.22, 0.32, true], [1.25, -1.22, 0.32, true], [0, -1.22, -1.33, false]];
 // Hull: the parts that can meet the ground. vMax is the closing speed (m/s, along the ground's normal)
@@ -56,7 +56,7 @@ const HULL = [
   { part: 'tipL', p: [-5.48, 0.97, 0.3], vMax: 3.0, k: 25e3, c: 2.5e3 },
   { part: 'tipR', p: [5.48, 0.97, 0.3], vMax: 3.0, k: 25e3, c: 2.5e3 },
   { part: 'belly', p: [0, -0.6, 0.3], vMax: 5.0, k: 90e3, c: 9e3 },
-  { part: 'top', p: [0, 0.93, 0.0], vMax: 0, k: 60e3, c: 6e3 },              // cabin roof and wing centre section
+  { part: 'top', p: [0, 0.93, 0.0], vMax: 0, k: 60e3, c: 6e3 },              // cabin roof and wing center section
   { part: 'top', p: [0, 1.55, 5.70], vMax: 0, k: 40e3, c: 4e3 },             // fin tip
 ];
 
@@ -81,7 +81,7 @@ const BASE = {
   rotatePitch: 0.19,                          // attitude the elevator will hold the nose to on the runway (rad)
   brake: 0.42,                                // wheel braking, share of the weight on the mains
   gearRebound: 0.3,                           // share of the legs' damping that acts on the rebound: low, so a hard landing hops
-  sinkMax: 7.0,                               // closing speed the undercarriage survives, m/s
+  sinkMax: 7.0,                               // closing speed the landing gear survives, m/s
   tipDrag: 20,                                // a wingtip that digs in faster than this over the ground cartwheels, m/s
 };
 
@@ -91,7 +91,7 @@ function makeSpec(geom, over) {
   s.wheels = WHEELS.map(([x, y, z, main]) => { warp(geom, x, y, z, p); return { x: p[0], y: p[1], z: p[2], k: (main ? 59e3 : 28.5e3) * mk, c: (main ? 5400 : 2600) * mk, main }; });
   s.hull = HULL.map((h) => { warp(geom, h.p[0], h.p[1], h.p[2], p); return { part: h.part, p: [p[0], p[1], p[2]], vMax: h.vMax, k: h.k * mk, c: h.c * mk }; });
   s.washRef = s.staticThrust / 1.2;           // propeller wash over the tail, relative to this engine's pull
-  s.gearHeight = -s.wheels[0].y - 0.07;       // centre of gravity above the ground when parked
+  s.gearHeight = -s.wheels[0].y - 0.07;       // center of gravity above the ground when parked
   return s;
 }
 

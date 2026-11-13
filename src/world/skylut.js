@@ -3,11 +3,11 @@
 //
 //   transmittance   256 x 64    light surviving from a height, along a direction, to the top of the air
 //   multiple        64 x 32     light scattered more than once, as an even glow, by sun height and height
-//   sky view        256 x 128   the sky as seen from the camera's height, all round the compass
-//   aerial          64 x 32 x 32  the colour haze adds in front of things, by direction and distance
+//   sky view        256 x 128   the sky as seen from the camera's height, all around the compass
+//   aerial          64 x 32 x 32  the color haze adds in front of things, by direction and distance
 //   probe           32 x 16     the sky view again, small, read back for the CPU (ambient light, exposure)
 //
-// Differences from the paper are listed in atmosphere.js. Lengths in these shaders are kilometres.
+// Differences from the paper are listed in atmosphere.js. Lengths in these shaders are kilometers.
 
 import * as THREE from 'three';
 import { FullscreenQuad, fsMaterial } from '../render/fullscreen.js';
@@ -18,7 +18,7 @@ export const LUT_SIZES = {
   high: { sky: [256, 128], ap: [64, 32, 32], steps: 40 },
 };
 export const PROBE_W = 32, PROBE_H = 16;
-export const AP_NEAR = 50, AP_FAR = 400000;        // metres: the first and last slice of the aerial table
+export const AP_NEAR = 50, AP_FAR = 400000;        // meters: the first and last slice of the aerial table
 export const SKY_HORIZON_V = 0.3;                  // where the horizon sits in the sky view table
 
 const COMMON = /* glsl */`
@@ -34,8 +34,8 @@ uniform vec4 uAer;        // the air mass's aerosol. x: extinction at sea level 
 float rayTop(float r, float mu) { return -r * mu + sqrt(max(r * r * (mu * mu - 1.0) + RT * RT, 0.0)); }
 // Distance to the ground along a ray, or -1 if it misses.
 float rayGround(float r, float mu) {
-  float disc = r * r * (mu * mu - 1.0) + RG * RG;
-  return (mu < 0.0 && disc >= 0.0) ? -r * mu - sqrt(disc) : -1.0;
+  float disk = r * r * (mu * mu - 1.0) + RG * RG;
+  return (mu < 0.0 && disk >= 0.0) ? -r * mu - sqrt(disk) : -1.0;
 }
 void medium(float h, out vec3 scatR, out float scatM, out vec3 ext) {
   float extM = uAer.x * exp(-h / uAer.y);
@@ -53,7 +53,7 @@ vec3 segment(vec3 x) { return mix(1.0 - 0.5 * x, (1.0 - exp(-x)) / max(x, vec3(1
 `;
 
 // Bruneton's mapping for the transmittance table: u is the distance to the top between its least and
-// greatest for the height, v the height as distance to the horizon. Texel centres carry the end values.
+// greatest for the height, v the height as distance to the horizon. Texel centers carry the end values.
 const TRANS_READ = /* glsl */`
 uniform sampler2D tTrans;
 const vec2 TRANS_RES = vec2(256.0, 64.0);
@@ -71,7 +71,7 @@ vec3 sunLight(float r, float mu) {
 
 const MS_READ = /* glsl */`
 uniform sampler2D tMulti;
-// (Columns crowd round a sun on the horizon: through twilight this light halves with every degree the sun sinks.)
+// (Columns crowd around a sun on the horizon: through twilight this light halves with every degree the sun sinks.)
 vec3 multiScat(float r, float mu) {
   vec2 uv = vec2(0.5 + 0.5 * sign(mu) * sqrt(abs(mu)), (r - RG) / (RT - RG));
   return texture(tMulti, (clamp(uv, 0.0, 1.0) * vec2(63.0, 31.0) + 0.5) / vec2(64.0, 32.0)).rgb;
@@ -136,7 +136,7 @@ ${COMMON}
 ${TRANS_READ}
 ${MS_READ}
 uniform vec3 uSun, uSunE, uMoon, uMoonE, uGlow;
-uniform vec4 uCam;       // x: distance from the Earth's centre (km), y: sine of the horizon's dip, z: steps
+uniform vec4 uCam;       // x: distance from the Earth's center (km), y: sine of the horizon's dip, z: steps
 in vec2 vUv;
 out vec4 outColor;
 void main() {
@@ -189,16 +189,16 @@ void main() {
   outColor = vec4(texture(tSky, vec2(vUv.x, v)).rgb, 1.0);
 }`;
 
-// The aerial table: for each direction and distance, the mean colour of the light the air between adds,
+// The aerial table: for each direction and distance, the mean color of the light the air between adds,
 // weighted as it reaches the eye: (light scattered in) / (1 - transmittance). The shaders multiply it by
-// their own exact (1 - transmittance), so fog a hundred metres deep and haze two hundred kilometres deep
+// their own exact (1 - transmittance), so fog a hundred meters deep and haze two hundred kilometers deep
 // both come out right from 32 slices. Slices are stacked up the texture; distance grows by a fixed ratio.
 const AP_FRAG = /* glsl */`
 ${COMMON}
 ${TRANS_READ}
 ${MS_READ}
 uniform vec3 uSun, uSunE, uMoon, uMoonE, uGlow, uOvc;
-uniform vec4 uCam;       // x: distance from the Earth's centre (km)
+uniform vec4 uCam;       // x: distance from the Earth's center (km)
 uniform vec4 uLoc;       // local haze. x: extinction at sea level (1/km), y: scale height (km), z: share of it that is fog, rain or cloud, w: murk 0..1
 uniform vec4 uApP;       // x: rows per slice, y: first slice (km), z: distance ratio between slices, w: direct light reaching the haze 0..1
 in vec2 vUv;
@@ -223,7 +223,7 @@ void main() {
     vec3 ext = sR + eL, direct = vec3(0.0), amb = uGlow;
     if (sun) { float mu = (r0 * uSun.y + t * cS) / ri; direct += uSunE * sunLight(ri, mu) * (sR * pRs + sL * pMs); amb += uSunE * multiScat(ri, mu); }
     if (moon) { float mu = (r0 * uMoon.y + t * cM) / ri; direct += uMoonE * sunLight(ri, mu) * (sR * pRm + sL * pMm); amb += uMoonE * multiScat(ri, mu); }
-    // Under cloud the haze is lit by the cloud's grey light, not by the sun and the blue sky; fog and rain glow with it too.
+    // Under cloud the haze is lit by the cloud's gray light, not by the sun and the blue sky; fog and rain glow with it too.
     vec3 S = direct * uApP.w + mix(amb, fog, uLoc.w) * (sR + sL) + fog * eL * uLoc.z;
     if (j == 0) S0 = S / ext;
     L += exp(-tau) * S * segment(ext * dt) * dt;

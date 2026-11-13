@@ -35,7 +35,7 @@ uniform sampler2D tRegion, tWxA, tWxB, tDetail;
 uniform vec3 uSunDir, uSunCol, uAmbSky, uAmbGround, uCloudDrift;
 uniform float uWxHalf, uTAnom, uWet, uSnow, uGroundT;
 float regionHeight(vec2 xz) { return max(texture2D(tRegion, xz / (2.0 * uWxHalf) + 0.5).r, 0.0); }
-// The cold at a place. x: snow lying there (0..1): what has fallen round the aircraft (uSnow), wherever today's air
+// The cold at a place. x: snow lying there (0..1): what has fallen around the aircraft (uSnow), wherever today's air
 // lets it lie. y: how hard the ground is frozen (0 above freezing .. 1 from two degrees under: water does not lie as
 // water there). The regional map carries the level snow lies above on an ordinary day, where the air is about 2 C;
 // the weather's temperature shift moves it 150 m a degree (the rule of snowLine() in world/terrain.js), which gives
@@ -54,8 +54,8 @@ const PAVE_VERT = /* glsl */`
 #include <common>
 #include <shadowmap_pars_vertex>
 attribute vec4 aRC, aP0, aP1;
-// The scene is multisampled. A plain varying is evaluated at the pixel centre even when only a corner of
-// the pixel is covered, and on ground seen edge-on that centre can lie past the plane's horizon, where
+// The scene is multisampled. A plain varying is evaluated at the pixel center even when only a corner of
+// the pixel is covered, and on ground seen edge-on that center can lie past the plane's horizon, where
 // the value is garbage. So everything that is used as a value is centroid-sampled (always inside the
 // triangle); vGrad carries the same coordinates plainly, for screen-space derivatives only.
 centroid varying vec3 vWorld, vN;
@@ -72,7 +72,7 @@ void main() {
   float hReg = regionHeight(vWorld.xz);
   vLight = vec2(terrainShadow(vWorld, hReg), skyOcclusion(vWorld, hReg));
   // Far away the terrain under the pavement is a coarser mesh that no longer follows the graded plane
-  // to the centimetre: ride a little above it, by less than a pixel's worth.
+  // to the centimeter: ride a little above it, by less than a pixel's worth.
   vec3 transformed = position;
   transformed.y += max(distance(vWorld, cameraPosition) - 600.0, 0.0) * 0.0004;
   vec4 mvPosition = modelViewMatrix * vec4(transformed, 1.0);
@@ -99,7 +99,7 @@ varying vec4 vGrad;
 ${LIGHT_GLSL}
 ${ATMO_GLSL}
 
-// Share of the interval [a, b] seen by a pixel centred on x whose footprint is w wide.
+// Share of the interval [a, b] seen by a pixel centered on x whose footprint is w wide.
 float cov1(float a, float b, float x, float w) { return clamp((min(b, x + 0.5 * w) - max(a, x - 0.5 * w)) / w, 0.0, 1.0); }
 float rectCov(vec2 p, vec2 lo, vec2 hi, vec2 fw) { return cov1(lo.x, hi.x, p.x, fw.x) * cov1(lo.y, hi.y, p.y, fw.y); }
 // The same for a train of bars (each \`duty\` wide, every \`period\`): exact at any range, so it cannot moire.
@@ -115,7 +115,7 @@ float stroke(vec2 p, vec2 a, vec2 b, float hw, vec2 fw) {
 float hash1(float n) { return fract(sin(n * 12.9898) * 43758.5453); }
 float hash2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 
-// One numeral or letter (10 L, 11 C, 12 R): q in metres from the lower left corner of its box, h its height.
+// One numeral or letter (10 L, 11 C, 12 R): q in meters from the lower left corner of its box, h its height.
 float digit(vec2 q, float n, float h, vec2 fw) {
   float c = 0.0; int base = int(n + 0.5) * 10;
   vec2 g = q / h, fg = fw / h;
@@ -144,8 +144,8 @@ float designator(vec2 q, float code, float h, vec2 fw) {
   return m;
 }
 
-// Paint at one end of a runway. q.x: metres right of the centreline for a pilot landing over this end;
-// q.y: metres in from the end of the pavement. dt: how far the threshold is displaced in.
+// Paint at one end of a runway. q.x: meters right of the centerline for a pilot landing over this end;
+// q.y: meters in from the end of the pavement. dt: how far the threshold is displaced in.
 // Sizes follow ICAO Annex 14 for the runway's width and landing distance.
 float endMarks(vec2 q, float dt, float num, float halfW, float lda, float cls, vec2 fw, out float yCl) {
   float W = 2.0 * halfW, s = abs(q.x), y = q.y - dt, m = 0.0;
@@ -160,7 +160,7 @@ float endMarks(vec2 q, float dt, float num, float halfW, float lda, float cls, v
   m = max(m, designator(vec2(q.x, y - y2), num, h, fw));
   yCl = dt + y2 + designatorRise(num, h) + h + 12.0 * sc;
   if (dt > 4.0) {
-    // displaced threshold: a bar across the runway, and arrows up the centreline leading to it
+    // displaced threshold: a bar across the runway, and arrows up the centerline leading to it
     m = max(m, rectCov(vec2(s, y), vec2(0.0, -1.8), vec2(halfW - 1.5, 0.0), fw));
     for (int k = 0; k < 2; k++) {
       float tip = dt - 5.0 - float(k) * 34.0;
@@ -170,7 +170,7 @@ float endMarks(vec2 q, float dt, float num, float halfW, float lda, float cls, v
     }
   }
   if (cls > 1.5 && y > 100.0) {
-    // aiming point: two blocks either side of the centreline
+    // aiming point: two blocks either side of the centerline
     float dAim = lda < 800.0 ? 150.0 : lda < 1200.0 ? 250.0 : lda < 2400.0 ? 300.0 : 400.0;
     float wAim = W >= 44.0 ? 9.0 : W >= 29.0 ? 6.0 : 4.0, inner = W >= 44.0 ? 9.0 : W >= 29.0 ? 4.5 : 3.0;
     m = max(m, rectCov(vec2(s, y), vec2(inner, dAim), vec2(inner + wAim, dAim + (lda < 1200.0 ? 30.0 : 45.0)), fw));
@@ -209,8 +209,8 @@ float glint(vec3 l, vec3 N, vec3 V, float a) {
 
 void main() {
   float type = floor(vRC.z + 0.5), kind = floor(vRC.w + 0.5);
-  // A runway's fourth number carries how busy it is and, in twos, how well it is ploughed: 0 not at all, 1 a lane, 2 the width.
-  float plough = floor(vP1.w * 0.5 + 0.005), traffic = vP1.w - 2.0 * plough; plough *= 0.5;
+  // A runway's fourth number carries how busy it is and, in twos, how well it is plowed: 0 not at all, 1 a lane, 2 the width.
+  float plow = floor(vP1.w * 0.5 + 0.005), traffic = vP1.w - 2.0 * plow; plow *= 0.5;
   vec2 p = vLocal, rc = vRC.xy;
   vec3 V = cameraPosition - vWorld; float dist = max(length(V), 0.01); V /= dist;
   // Screen-space derivatives of the feature's coordinates (xy) and of the field's (zw), limited so that
@@ -235,8 +235,8 @@ void main() {
   vec4 st = textureGrad(tPave, rc * S1, gx.xy * S1, gy.xy * S1);                      // streaks drawn out along the feature
   vec4 st2 = textureGrad(tPave, rc * S2 + vec2(0.4, 0.0), gx.xy * S2, gy.xy * S2);
   float agg = t0.r, mot = t1.g, blot = t3.a;
-  float cd = t2.b * 0.27, sd = t3.b * 0.445;                 // metres to the nearest crack in the fine and the coarse web
-  float cdw = fpx, sdw = fpx;                                // a distance field changes by a metre a metre
+  float cd = t2.b * 0.27, sd = t3.b * 0.445;                 // meters to the nearest crack in the fine and the coarse web
+  float cdw = fpx, sdw = fpx;                                // a distance field changes by a meter a meter
   float isRunway = step(1.5, type) * step(type, 2.5), isRibbon = step(0.5, type) * step(type, 1.5);
 
   // ---- asphalt
@@ -261,7 +261,7 @@ void main() {
   float old = smoothstep(0.52, 0.78, d1.r + 0.3 * (blot - 0.5)) * upkeep;
   float crack = (1.0 - smoothstep(0.004, 0.005 + cdw * 1.2, cd)) * old * smoothstep(0.38, 0.62, t1.a + 0.4 * (st.g - 0.5));    // broken runs of it, never the whole net
   float seal = (1.0 - smoothstep(0.03, 0.032 + sdw, sd)) * smoothstep(0.50, 0.66, d1.g + 0.35 * (t1.a - 0.5));
-  // paving lanes: a joint every few metres across a runway or taxiway, running its whole length
+  // paving lanes: a joint every few meters across a runway or taxiway, running its whole length
   float lanes = max(floor(2.0 * halfW / 3.8 + 0.5), 1.0), lw = 2.0 * halfW / lanes;
   float lj = abs(fract(rc.x / lw + 0.5 * mod(lanes, 2.0) + 0.5) - 0.5) * lw + (t1.a - 0.5) * 0.04;
   float joint = cov1(-0.025, 0.025, lj, fw.x) * (isRunway + isRibbon) * step(1.5, lanes) * (0.5 + 0.5 * step(0.4, st.g));
@@ -301,7 +301,7 @@ void main() {
     thin = kind > 2.5 ? 0.34 : kind > 1.5 ? 0.9 : 1.0;
     alpha = cov1(-halfW, halfW, rc.x + rag, fw.x + soft * 1.5) * thin;
   } else if (type < 2.5) {
-    // ---- a sealed runway and its paint
+    // ---- a paved runway and its paint
     float dtA = vP0.z, dtB = vP0.w, cls = vP1.z, lda = L - dtA - dtB, W = 2.0 * halfW, sAbs = abs(rc.x);
     alpha = cov1(-halfW, halfW, rc.x + (mot - 0.5) * 0.14, fw.x) * cov1(0.0, L, rc.y, fw.y);
     float yA, yB;
@@ -309,7 +309,7 @@ void main() {
     float codeB = floor(vP1.x / 1024.0 + 0.001), codeA = vP1.x - codeB * 1024.0;
     paint = endMarks(rc, dtA, codeA, halfW, lda, cls, fw, yA);
     paint = max(paint, endMarks(vec2(-rc.x, L - rc.y), dtB, codeB, halfW, lda, cls, fw, yB));
-    // centreline, 30 m on and 20 m off between the two sets of numbers
+    // centerline, 30 m on and 20 m off between the two sets of numbers
     float cw = W >= 44.0 ? 0.9 : W >= 29.0 ? 0.45 : 0.3;
     paint = max(paint, pulses(rc.y - yA, 50.0, 30.0, fw.y) * cov1(yA, L - yB, rc.y, fw.y) * cov1(-0.5 * cw, 0.5 * cw, rc.x, fw.x));
     // side stripes
@@ -354,9 +354,9 @@ void main() {
   gloss = 1.0 + 2.0 * rubber + 1.5 * seal + paint * 0.5;
 
   // ---- the weather on it: snow lying, the surface wet, water standing in the hollows
-  float sealed = 1.0 - soft, across = abs(rc.x) / max(halfW, 0.5);
+  float paved = 1.0 - soft, across = abs(rc.x) / max(halfW, 0.5);
   float vSnow = vCold.x, wetNow = uWet * (1.0 - 0.85 * vCold.y);     // frozen ground is not wet ground
-  // The lie of the surface over a few metres, and its finer unevenness: 0 the hollows .. 1 the high spots (in the field's
+  // The lie of the surface over a few meters, and its finer unevenness: 0 the hollows .. 1 the high spots (in the field's
   // frame, so the same under every layer; the noise keeps to the middle of its range, hence the stretch). A threshold
   // drawn through one tiling texture shows its tile as a lattice, so three scales on three grids go into each.
   float relief = 0.5, uneven = 0.5;
@@ -367,30 +367,30 @@ void main() {
   }
   float snowOp = 0.0;
   if (vSnow > 0.004) {
-    // The busy fields plough: the main runway of an airline airport across most of its width, with the markings
+    // The busy fields plow: the main runway of an airline airport across most of its width, with the markings
     // showing in the cleared part and the snow left in a bank along each edge; a lane down the middle elsewhere, and
     // down the taxiways; the aprons pass by pass, a ridge left between passes. A small strip lies as the snow left it.
     float cleared = 0.0;
-    if (plough > 0.25) {
+    if (plow > 0.25) {
       if (type < 0.5) cleared = 0.85 * (1.0 - pulses(rc.x + 2.0 * (d1.g - 0.5), 13.0, 1.4, fw.x));
       else if (type < 1.5) cleared = 1.0 - smoothstep(0.5, 0.75, across);
-      else if (type < 2.5) cleared = plough > 0.75 ? 1.0 - smoothstep(0.66, 0.8, across) : 0.85 * (1.0 - smoothstep(0.3, 0.45, across));
+      else if (type < 2.5) cleared = plow > 0.75 ? 1.0 - smoothstep(0.66, 0.8, across) : 0.85 * (1.0 - smoothstep(0.3, 0.45, across));
       else cleared = 1.0;
     }
     float depth = vSnow * (1.0 - 0.86 * cleared);
-    // Where it settles first; what the plough leaves is in streaks along the runway. The first tenth of a full
+    // Where it settles first; what the plow leaves is in streaks along the runway. The first tenth of a full
     // pack is a patchy dusting, by about half the ground is covered, and from there it only deepens.
     float lie = mix(uneven, clamp((st.g - 0.3) * 2.5, 0.0, 1.0), 0.6 * cleared * isRunway);
-    float cover = smoothstep(0.0, 1.0, (depth * 3.5 - 0.25 * sealed - lie) * 2.0);       // (pavement holds the day's warmth a little longer than grass)
+    float cover = smoothstep(0.0, 1.0, (depth * 3.5 - 0.25 * paved - lie) * 2.0);       // (pavement holds the day's warmth a little longer than grass)
     snowOp = cover * mix(0.5, 1.0, smoothstep(0.1, 0.45, depth));              // a dusting is thin: the paint shows through it
     vec3 snowCol = vec3(0.86, 0.89, 0.93) * (0.93 + 0.1 * mot);
-    snowCol = mix(snowCol, vec3(0.56, 0.57, 0.59), 0.45 * cleared);          // ploughed and driven on: packed and grey
-    float slush = wetNow * (1.0 - smoothstep(0.2, 0.6, depth));                 // melting: sodden and grey, going in patches
+    snowCol = mix(snowCol, vec3(0.56, 0.57, 0.59), 0.45 * cleared);          // plowed and driven on: packed and gray
+    float slush = wetNow * (1.0 - smoothstep(0.2, 0.6, depth));                 // melting: sodden and gray, going in patches
     snowCol = mix(snowCol, vec3(0.40, 0.42, 0.45), 0.7 * slush);
     snowOp *= 1.0 - 0.35 * slush;
     alb = mix(alb, snowCol, snowOp);
   }
-  // Wet: damp is the surface darkened by water in it (the high spots dry first, the ground round the hollows last),
+  // Wet: damp is the surface darkened by water in it (the high spots dry first, the ground around the hollows last),
   // film the water lying over it while it is soaked, puddle the water standing where the surface is low. Puddles
   // shrink as the ground dries and are the last thing to go.
   float damp = 0.0, film = 0.0, puddle = 0.0;
@@ -426,7 +426,7 @@ void main() {
 
   // The water's own surface: it mirrors the sky by Fresnel's rule, sharply where it stands and in a blur where it is
   // only a film over the stones; the sun (or the moon) glints in it, and so do the lamps.
-  float mirror = mix(damp * (sealed + soft * (kind > 2.5 ? 0.12 : 0.45)), 1.0, puddle);
+  float mirror = mix(damp * (paved + soft * (kind > 2.5 ? 0.12 : 0.45)), 1.0, puddle);
   if (mirror > 0.004) {
     // Standing water is level but for what the wind and the rain do to it: ripples that grow with the wind, rings
     // from the drops. Too far off to draw, they roughen the mirror instead.
@@ -442,7 +442,7 @@ void main() {
     }
     float a = mix(mix(0.5, 0.2, film), rough, puddle);
     // The film follows the surface under it, loosely. Its unevenness is taken from the two coarser scales of the
-    // detail: the finest repeats every metre or so, and a mirror shows that up as a lattice of glints at night.
+    // detail: the finest repeats every meter or so, and a mirror shows that up as a lattice of glints at night.
     vec3 Nf = vec3((t1.g - 0.5) * 0.10 + (t2.a - 0.5) * 0.08, 0.0, (t1.a - 0.5) * 0.10 + (t2.g - 0.5) * 0.08) * exp(-dist / 250.0) + Nb * (0.5 * exp(-dist / 25.0));
     vec3 Nw = normalize(vN + mix(Nf * (1.0 - 0.5 * film), vec3(rip.x, 0.0, rip.y), puddle));
     float ndv = max(dot(Nw, V), 1e-3);
@@ -457,7 +457,7 @@ void main() {
     vec3 H = normalize(uSunDir + V);
     float sun = lobe(max(dot(Nw, H), 0.0), max(a, 0.03)) * 3.14159 * (0.02 + 0.98 * pow(1.0 - max(dot(V, H), 0.0), 5.0)) / (4.0 * ndv + 0.15);
     spec += uSunCol * (shadow * min(sun, 24.0) * mirror * smoothstep(0.0, 0.05, dot(Nw, uSunDir)));
-    // The aircraft's landing lamp, for whoever looks back at it over wet ground.
+    // The aircraft's landing light, for whoever looks back at it over wet ground.
     if (uSpot[2].w > 0.0) {
       vec3 ls = uSpot[0].xyz - vWorld; float r = length(ls), c = dot(-ls / max(r, 0.01), uSpot[1].xyz);
       if (r < uSpot[0].w && c > uSpot[1].w) {
@@ -510,7 +510,7 @@ void main() {
 
 const BLD_VERT = /* glsl */`
 attribute vec3 color;
-attribute vec3 aW;            // metres along the wall, metres above the ground, what it is (0 wall, 1 roof, 2 glazed wall, 3 tower cab)
+attribute vec3 aW;            // meters along the wall, meters above the ground, what it is (0 wall, 1 roof, 2 glazed wall, 3 tower cab)
 centroid varying vec3 vWorld, vN, vCol, vW;
 centroid varying vec2 vLight;
 centroid varying vec2 vCold;
@@ -539,7 +539,7 @@ void main() {
   float streak = texture2D(tDetail, vec2(vW.x / 9.0, vW.y / 90.0)).r, grain = texture2D(tDetail, vWorld.xz / 23.0).g;
   if (what < 0.5) alb *= (0.84 + 0.3 * streak) * mix(0.72, 1.0, smoothstep(0.0, 1.1, vW.y));
   else if (what < 1.5) alb *= 0.82 + 0.34 * grain;
-  // Glazing: a band of windows on each floor of a terminal, a ring of glass round a tower cab.
+  // Glazing: a band of windows on each floor of a terminal, a ring of glass around a tower cab.
   float glass = 0.0, lit = 0.0;
   if (what > 1.5) {
     vec2 fwW = vec2(fwidth(vW.x), fwidth(vW.y));
@@ -555,7 +555,7 @@ void main() {
     alb = mix(alb, vec3(0.035, 0.05, 0.065), glass);
   }
   // The weather: rain darkens the cladding and the roofing, snow lies on whatever faces up (roofs whiten before the
-  // pavement does: nothing warms them from below), going grey and patchy as it melts.
+  // pavement does: nothing warms them from below), going gray and patchy as it melts.
   float vSnow = vCold.x, wetNow = uWet * (1.0 - 0.85 * vCold.y);
   float up = smoothstep(0.25, 0.8, N.y), wetB = wetNow * (0.45 + 0.55 * up) * (1.0 - glass);
   float slush = wetNow * (1.0 - smoothstep(0.2, 0.6, vSnow));
@@ -579,7 +579,7 @@ void main() {
 
 // Buildings throw their shadows as flat shapes on the graded ground: each footprint swept along the
 // sun's direction, drawn as a multiply over whatever is there. The pieces of one sweep overlap (and so do
-// neighbours' shadows), so every fragment writes the same depth, worked out from its pixel's ray and
+// neighbors' shadows), so every fragment writes the same depth, worked out from its pixel's ray and
 // the field's plane, and the depth test (strictly nearer) lets only the first one at each pixel through.
 const SHADE_VERT = /* glsl */`
 attribute vec2 aSh;          // the building's height; 1 on the vertices that are thrown along the shadow
@@ -622,16 +622,16 @@ void main() {
   gl_FragColor = vec4(outc, 1.0);
 }`;
 
-// Lights are point sprites. The lamp has a real size, so close by it is a small bright disc; once that
+// Lights are point sprites. The lamp has a real size, so close by it is a small bright disk; once that
 // would be under about four and a half pixels (at 1080 lines; it scales with the frame) the sprite stops
 // shrinking and the brightness falls instead. A soft round spot that size lands on the same pixels
 // whichever way the anti-aliasing jitter has nudged the frame, where a hard one-pixel point hops
 // between them and flickers. Nothing here switches hard on or off either: the beacon swells and fades.
 const LAMP_VERT = /* glsl */`
-attribute vec3 color;        // colour and strength
-attribute vec3 aCol2;        // second colour (two-sided lamps), or x = the angle a PAPI unit changes at (degrees)
-attribute vec4 aDir;         // xyz: where the beam points; w: 0 all round, 1 beam, 2 PAPI, 3 one colour each side, 4 beacon
-attribute float aSize;       // metres across
+attribute vec3 color;        // color and strength
+attribute vec3 aCol2;        // second color (two-sided lamps), or x = the angle a PAPI unit changes at (degrees)
+attribute vec4 aDir;         // xyz: where the beam points; w: 0 all around, 1 beam, 2 PAPI, 3 one color each side, 4 beacon
+attribute float aSize;       // meters across
 uniform float uViewH, uLevel, uTime, uMinPx;
 varying vec3 vCol;
 varying float vShape;
@@ -659,7 +659,7 @@ void main() {
   // point to the eye for miles; the air between does the rest.
   I *= pow(min(1.0, phys / core), 0.42) * uLevel;
   vCol = col * atmosphereTransmittance(cameraPosition, wp.xyz) * I;
-  // Close by, the sprite is drawn wider than the lamp to hold a faint glow round it.
+  // Close by, the sprite is drawn wider than the lamp to hold a faint glow around it.
   float size = max(core, min(phys * 3.5, 44.0 * px));
   vShape = (size * size) / (core * core);
   gl_PointSize = size;
@@ -859,11 +859,11 @@ class Ground {
 const inRunway = (r, x, z, pad) => { const dx = x - r.lx, dz = z - r.lz; return Math.abs(dx * r.ux + dz * r.uz) <= r.len / 2 + pad && Math.abs(dz * r.ux - dx * r.uz) <= r.width / 2 + pad; };
 const crossTrack = (r, x, z) => Math.abs((z - r.lz) * r.ux - (x - r.lx) * r.uz);
 
-/** The parts of a line that lie outside every sealed runway (yellow lines stop at the runway's edge). */
+/** The parts of a line that lie outside every paved runway (yellow lines stop at the runway's edge). */
 function outsideRunways(a, pts) {
   const runs = []; let run = [];
-  const sealed = a.runways.filter((r) => r.cls > 0);
-  const out = (x, z) => !sealed.some((r) => inRunway(r, x, z, -0.2));
+  const paved = a.runways.filter((r) => r.cls > 0);
+  const out = (x, z) => !paved.some((r) => inRunway(r, x, z, -0.2));
   for (let i = 0; i + 3 < pts.length; i += 2) {
     const ax = pts[i], az = pts[i + 1], bx = pts[i + 2], bz = pts[i + 3], k = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 3));
     for (let j = i === 0 ? 0 : 1; j <= k; j++) {
@@ -886,9 +886,9 @@ function outsideRunways(a, pts) {
 
 /** Where aircraft hold short of a runway: the mapped points if the field has them, else worked out from the taxiways. */
 function holdLines(a) {
-  const out = [], sealed = a.runways.filter((r) => r.cls > 0);
-  if (!sealed.length) return out;
-  const nearestRunway = (x, z) => sealed.slice().sort((p, q) => crossTrack(p, x, z) - crossTrack(q, x, z))[0];
+  const out = [], paved = a.runways.filter((r) => r.cls > 0);
+  if (!paved.length) return out;
+  const nearestRunway = (x, z) => paved.slice().sort((p, q) => crossTrack(p, x, z) - crossTrack(q, x, z))[0];
   const ways = a.taxiways.filter((t) => !t.stop && t.surface === 'paved');
   if (a.holds.length) {
     for (let h = 0; h < a.holds.length; h += 2) {
@@ -902,7 +902,7 @@ function holdLines(a) {
       }
       if (!best) continue;
       const r = nearestRunway(x, z);
-      // Face the runway: the way along the taxiway that brings you closer to its centreline.
+      // Face the runway: the way along the taxiway that brings you closer to its centerline.
       if (crossTrack(r, x + best.tx * 5, z + best.tz * 5) > crossTrack(r, x - best.tx * 5, z - best.tz * 5)) { best.tx = -best.tx; best.tz = -best.tz; }
       out.push({ x, z, ...best });
     }
@@ -911,9 +911,9 @@ function holdLines(a) {
   for (const t of ways) {
     if (t.lane) continue;
     for (const end of [0, 1]) {
-      // Walk the taxiway away from an end that lies on a runway until it is the holding distance off the centreline.
+      // Walk the taxiway away from an end that lies on a runway until it is the holding distance off the centerline.
       const n = t.p.length / 2, at = (i) => [t.p[2 * i], t.p[2 * i + 1]], first = at(end ? n - 1 : 0);
-      const r = sealed.find((q) => inRunway(q, first[0], first[1], 4));
+      const r = paved.find((q) => inRunway(q, first[0], first[1], 4));
       if (!r) continue;
       const want = r.width / 2 + (r.cls >= 3 ? 52 : r.cls >= 2 ? 30 : 22);
       let prev = first, done = false;
@@ -936,18 +936,18 @@ function buildGround(a, material) {
   // other runways and the taxiways there and at the busier general-aviation fields (1); nothing at a small strip (0).
   // It rides in the fourth number of a feature, in twos, above the runway's traffic (see the pavement shader).
   const busy = a.big ? 2 : a.traffic >= 0.45 ? 1 : 0, lane = [0, 0, 0, 2 * Math.min(busy, 1)];
-  // Painter's order: aprons, taxiways, unsealed strips, sealed runways, then the yellow lines over everything.
+  // Painter's order: aprons, taxiways, unpaved strips, paved runways, then the yellow lines over everything.
   for (const p of a.aprons) g.area(p.p, KIND[p.kind], lane);
   for (const t of a.taxiways) g.ribbon(t.p, t.w / 2 + 1.5, T_RIBBON, KIND[t.kind], [t.w / 2, 0, 0, 0], lane);
   const strip = (r) => {
-    const sealed = r.cls > 0, pad = sealed ? 2 : 6, half = r.width / 2, main = r === a.runways[0];
+    const paved = r.cls > 0, pad = paved ? 2 : 6, half = r.width / 2, main = r === a.runways[0];
     const pts = [r.ax - r.ux * pad, r.az - r.uz * pad, r.bx + r.ux * pad, r.bz + r.uz * pad];
     // A designator as the shader wants it: the number, + 100 for L, 200 for C, 300 for R ("4", "28L", "10C").
     const code = (s) => { const m = /^(\d+)\s*([LCR])?/i.exec(String(s)) || []; return (parseInt(m[1], 10) || 0) + 100 * (' LCR'.indexOf((m[2] || ' ').toUpperCase())); };
     // First: both designators (this end's + 1024 x the far end's). Second: the runway's direction on the map, for the
-    // lamps the wet surface mirrors. Third: its class of paint. Fourth: how busy it is (under 1), + 2 x how well it is ploughed.
-    g.ribbon(pts, half + pad, sealed ? T_RUNWAY : T_STRIP, KIND[r.kind], [half, r.len, r.dt[0], r.dt[1]],
-      [code(r.numbers[0]) + 1024 * code(r.numbers[1]), Math.atan2(r.uz, r.ux), r.cls, Math.min(a.traffic * (main ? 1 : 0.5), 0.99) + 2 * (sealed ? (main ? busy : Math.min(busy, 1)) : 0)], -pad);
+    // lamps the wet surface mirrors. Third: its class of paint. Fourth: how busy it is (under 1), + 2 x how well it is plowed.
+    g.ribbon(pts, half + pad, paved ? T_RUNWAY : T_STRIP, KIND[r.kind], [half, r.len, r.dt[0], r.dt[1]],
+      [code(r.numbers[0]) + 1024 * code(r.numbers[1]), Math.atan2(r.uz, r.ux), r.cls, Math.min(a.traffic * (main ? 1 : 0.5), 0.99) + 2 * (paved ? (main ? busy : Math.min(busy, 1)) : 0)], -pad);
   };
   for (const r of a.runways) if (r.cls === 0) strip(r);
   for (const r of a.runways) if (r.cls > 0) strip(r);
@@ -1086,7 +1086,7 @@ const WHITE = [1.0, 0.90, 0.74], GREEN = [0.12, 1.0, 0.32], RED = [1.0, 0.09, 0.
 function buildLamps(a, material, beaconAt) {
   const pos = [], col = [], col2 = [], dir = [], size = [];
   const lamp = (x, z, h, c, k, s, d = [0, 0, 0], kind = 0, c2 = [0, 0, 0]) => {
-    pos.push(x, a.heightAt(a.ox + x, a.oz + z) + h, z); const k2 = kind === 2 ? 1 : k;                        // a PAPI unit keeps its changeover angle there, not a colour
+    pos.push(x, a.heightAt(a.ox + x, a.oz + z) + h, z); const k2 = kind === 2 ? 1 : k;                        // a PAPI unit keeps its changeover angle there, not a color
     col.push(c[0] * k, c[1] * k, c[2] * k); col2.push(c2[0] * k2, c2[1] * k2, c2[2] * k2); dir.push(d[0], d[1], d[2], kind); size.push(s);
   };
   a.runways.forEach((r, ri) => {
@@ -1130,10 +1130,10 @@ function buildLamps(a, material, beaconAt) {
       carry -= l;
     }
   }
-  const sealed = a.runways.filter((r) => r.cls > 0);
+  const paved = a.runways.filter((r) => r.cls > 0);
   const nearestEnd = (x, z) => {
     let best = null, bd = Infinity;
-    for (const r of sealed) for (const e of [0, 1]) {
+    for (const r of paved) for (const e of [0, 1]) {
       const ex = e ? r.bx : r.ax, ez = e ? r.bz : r.az, d = Math.hypot(x - ex, z - ez);
       if (d < bd) { bd = d; best = { r, out: e ? 1 : -1, ex, ez }; }
     }
@@ -1202,7 +1202,7 @@ export class Airfields {
     this.shadeMat = new THREE.ShaderMaterial({
       uniforms: { ...shared(LIGHT_UNIFORMS), ...shared(ATMO_UNIFORMS), uPlane: { value: new THREE.Vector4(0, 1, 0, 0) }, uRes: { value: new THREE.Vector2(1920, 1080) } },
       vertexShader: SHADE_VERT, fragmentShader: SHADE_FRAG, side: THREE.DoubleSide, transparent: true, depthFunc: THREE.LessDepth,
-      // Multiply what is behind by the fragment's colour; leave the surface tag in alpha alone.
+      // Multiply what is behind by the fragment's color; leave the surface tag in alpha alone.
       blending: THREE.CustomBlending, blendEquation: THREE.AddEquation, blendSrc: THREE.ZeroFactor, blendDst: THREE.SrcColorFactor, blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor,
     });
     this.lampMat = new THREE.ShaderMaterial({

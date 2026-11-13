@@ -9,18 +9,18 @@
 //
 //   near   every building, pitched roofs on houses, plant on big roofs: a quarter-tile at a time, within R0
 //   mid    buildings of 350 m2 or 12 m and over, simplified: whole tiles within R1
-//   tall   buildings of 35 m and over as prisms, out to SKY: only round the centres of big towns, spreading
+//   tall   buildings of 35 m and over as prisms, out to SKY: only around the centers of big towns, spreading
 //          from tile to tile for as long as tall buildings keep turning up, so a skyline reads from afar
 //
 // Houses (anything only the near level draws) rise out of their footprints over the last few hundred
-// metres of R0, taking the colour of the satellite picture under them as they sink, so no line shows where
+// meters of R0, taking the color of the satellite picture under them as they sink, so no line shows where
 // the near level ends. The 10 m picture cannot texture a house: walls, windows and roofs are drawn in the
-// shader from a few numbers per building (kind, glazing, colour, a random byte), and a roof borrows its
+// shader from a few numbers per building (kind, glazing, color, a random byte), and a roof borrows its
 // tone from the picture under it where that has loaded.
 //
 // Bridges come from the same tiles (world/bridgebuild.js): every line the map marks as a bridge, as a deck on
 // piers. They are two more levels of a tile, each a whole tile at a time:
-//   bn     full detail (parapets, pier caps, arch columns, truss diagonals, lamp posts), within R0 or so
+//   bn     full detail (parapets, pier caps, arch columns, truss diagonals, light poles), within R0 or so
 //   bf     a deck, its piers and the outline of its arch or truss, out to RB (2 km beyond the mid buildings)
 // A bridge is put together in two steps, because the worker has the map and the main thread has the ground:
 // the worker joins the lines across tile edges and says where it needs heights; they are read from the
@@ -32,7 +32,7 @@
 import * as THREE from 'three';
 import { ENV } from '../core/env.js';
 import * as dem from './dem.js';
-import { pixelX, pixelY, metresPerPixel, LAND_HALF } from './geo.js';
+import { pixelX, pixelY, metersPerPixel, LAND_HALF } from './geo.js';
 import { applyFlats, flatsIn, groundHeight } from './terrain.js';
 import { AIRPORTS } from './airports.js';
 import { townList } from './towns.js';
@@ -40,6 +40,7 @@ import { GROUND_LIGHT_GLSL, GROUND_LIGHT_UNIFORMS } from './groundlight.js';
 import { ATMO_GLSL, ATMO_UNIFORMS } from './atmosphere.js';
 import { IMAGERY_GLSL, IMAGERY_UNIFORMS } from './imagery.js';
 import { FullscreenQuad, fsMaterial } from '../render/fullscreen.js';
+import { Traffic } from './traffic.js';
 
 const FACADE_URL = `${import.meta.env.BASE_URL}facades/`, FAC_N = 11;      // wall materials: public/facades, one layer each (tools/bake-facades.py)
 
@@ -56,19 +57,19 @@ const TIERS = {                            // R0 near, R1 mid, SKY tall (m); upl
 const FADE = 450;                          // houses rise over this much of R0
 const MAX_JOBS = 4;                        // tiles being fetched or built at once
 const UPLOAD = 1.4e6;                      // bytes of new geometry handed to the GPU a frame
-const SEED_POP = 60000, CORE_POP = 150000; // towns whose centre is looked at for towers; and with the tiles round it
-const COVER_N = 2048, COVER_M = 2;         // the coverage map: texels across, metres a texel
+const SEED_POP = 60000, CORE_POP = 150000; // towns whose center is looked at for towers; and with the tiles around it
+const COVER_N = 2048, COVER_M = 2;         // the coverage map: texels across, meters a texel
 const BRIDGE_FAR = 2000;                   // bridges are kept in view this much farther than the mid buildings (m)
 const GRAVE = 90;                          // frames a dropped mesh waits before its buffers are freed (the shadow pass may still hold it)
 
-// ---- where buildings stand, for other shaders (the trees): a top-down map round the camera
+// ---- where buildings stand, for other shaders (the trees): a top-down map around the camera
 const hold = (k, v) => ENV[k] || (ENV[k] = { value: v });
 hold('tBldCover', null); hold('uBldCover', new THREE.Vector4(0, 0, 1 / (COVER_N * COVER_M), 0));
 export const BUILDING_COVER_UNIFORMS = ['tBldCover', 'uBldCover'];
-/** GLSL: buildingCover(worldXZ) is 1 on a building's footprint (and a couple of metres round it), 0 elsewhere or beyond the map. */
+/** GLSL: buildingCover(worldXZ) is 1 on a building's footprint (and a couple of meters around it), 0 elsewhere or beyond the map. */
 export const BUILDING_COVER_GLSL = /* glsl */`
 uniform sampler2D tBldCover;
-uniform vec4 uBldCover;          // centre x, centre z, 1 / width (1/m), 1 when the map holds anything
+uniform vec4 uBldCover;          // center x, center z, 1 / width (1/m), 1 when the map holds anything
 float buildingCover(vec2 xz) {
   vec2 q = (xz - uBldCover.xy) * uBldCover.z;
   if (uBldCover.w < 0.5 || max(abs(q.x), abs(q.y)) > 0.495) return 0.0;
@@ -88,19 +89,21 @@ const shared = (names) => Object.fromEntries(names.map((k) => [k, ENV[k]]));
 
 const VERT = /* glsl */`
 attribute vec4 aN;            // normal
-attribute vec2 aUV;           // metres along the wall, metres above the ground (eighths)
-attribute vec4 aCol;          // colour, a random number per building
+attribute vec2 aUV;           // meters along the wall, meters above the ground (eighths)
+attribute vec4 aCol;          // color, a random number per building
 attribute vec4 aK;            // surface (0 wall, 1 flat roof, 2 pitched roof, 3 plant, 4 underside); glazing + 8 small + 16 roof sampled at the middle; offset to the middle + 128
-uniform vec2 uCityFade;       // small buildings start to sink at x metres from the eye and are gone by y
+uniform vec2 uCityFade;       // small buildings start to sink at x meters from the eye and are gone by y
 // The scene is multisampled: everything used as a value is centroid-sampled, so it is never read outside its triangle.
 centroid varying vec3 vWorld, vN, vCol;
 centroid varying vec4 vW;     // along the wall, above the ground, how far the building has risen, distance
 centroid varying vec2 vLight, vImg;
 flat varying vec4 vK;         // surface, glazing, random, roof sampled at the middle
 flat varying float vMat;      // a wall's material (a layer of tFacade, from 1; 0 or over 100: none)
+flat varying float vTop;      // how high above the ground a wall's top is (m; 0: not told)
 ${LIGHT_GLSL}
 void main() {
   vec4 wp = modelMatrix * vec4(position, 1.0);
+  vTop = aK.x < 0.5 ? aK.w : 0.0;
   float style = aK.y, central = step(15.5, style); style -= 16.0 * central;
   float small = step(7.5, style); style -= 8.0 * small;
   vec2 uv = aUV * 0.125;
@@ -125,10 +128,11 @@ centroid varying vec4 vW;
 centroid varying vec2 vLight, vImg;
 flat varying vec4 vK;
 flat varying float vMat;
+flat varying float vTop;
 // Wall materials (public/facades, tools/bake-facades.py): photographed surfaces and whole facades, one to a layer.
 uniform mediump sampler2DArray tFacade;
-uniform vec4 uFacA[FAC_N];    // metres a tile covers across and up; window cells across and up (0: a plain surface)
-uniform vec4 uFacB[FAC_N];    // the mean colour of the part that takes the building's colour; (a facade) 1 when its glass takes it too, (a surface) how strongly it shows
+uniform vec4 uFacA[FAC_N];    // meters a tile covers across and up; window cells across and up (0: a plain surface)
+uniform vec4 uFacB[FAC_N];    // the mean color of the part that takes the building's color; (a facade) 1 when its glass takes it too, (a surface) how strongly it shows
 uniform float uFacOn;         // 1 once the pictures are loaded
 ${LIGHT_GLSL}
 ${ATMO_GLSL}
@@ -138,13 +142,14 @@ void main() {
   vec3 N = normalize(vN), V = normalize(cameraPosition - vWorld);
   float kind = vK.x, style = vK.y, seed = vK.z, dist = vW.w;
   vec3 alb = vCol, emit = vec3(0.0);
-  float glass = 0.0, F0 = 0.06, low = 1.0;
+  float glass = 0.0, F0 = 0.06, low = 1.0, reveal = 0.0, tilt = 0.0;
+  vec2 paneTilt = vec2(0.0);
   float grain = texture2D(tDetail, vWorld.xz / 23.0).g;
   if (kind < 0.5) {
     // ---- a wall: its material, and the windows its kind of building has
     float streak = texture2D(tDetail, vec2(vW.x / 9.0, vW.y / 90.0)).r;
     low = smoothstep(0.0, 2.5, vW.y);
-    // The material: a photographed surface in the building's own colour (the picture over its mean), or a whole
+    // The material: a photographed surface in the building's own color (the picture over its mean), or a whole
     // facade, whose windows then stand for the drawn ones: their glass is the picture's mask, their cells its grid.
     int mi = uFacOn > 0.5 && vMat > 0.5 && vMat < 99.5 ? int(vMat + 0.5) : 0;
     vec4 fA = vec4(0.0), fB = vec4(1.0), ftx = vec4(1.0, 1.0, 1.0, 0.0);
@@ -163,7 +168,7 @@ void main() {
     vec3 pane = vec3(0.035, 0.05, 0.065), panel = alb * wear;
     if (mi > 0) panel = alb * clamp(ftx.rgb, 0.0, 3.0) * (facade ? mix(0.8, 1.0, smoothstep(0.0, 1.1, vW.y)) : mix(wear, 1.0, 0.5));
     if (style > 0.5 || facade) {
-      // storey height, bay width, half the window's share of a bay, the window's sill and head, the share of bays glazed, the share lit at night
+      // story height, bay width, half the window's share of a bay, the window's sill and head, the share of bays glazed, the share lit at night
       float fh = 2.8, bw = 3.4, wHalf = 0.19, wy0 = 0.95, wy1 = 2.15, some = 0.72, share = 0.16;
       vec3 lamp = vec3(1.0, 0.62, 0.28);
       if (style > 3.5) { fh = 3.7; bw = 6.0; wHalf = 0.485; wy0 = 1.05; wy1 = 2.75; some = 1.0; share = 0.3; lamp = vec3(1.0, 0.88, 0.68); F0 = 0.1; }
@@ -177,7 +182,7 @@ void main() {
         h1 = hashB(vec2(bay, fl) + seed * 0.37);
         far = max(smoothstep(0.4, 1.3, fw.x / (0.6 * bw)), smoothstep(0.4, 1.3, fw.y / (0.5 * fh)));
         glass = ftx.a * up; w = glass; mean = glass;
-        // the picture's own glass, or (a wall all of glass) glass in the building's colour
+        // the picture's own glass, or (a wall all of glass) glass in the building's color
         pane = mix(ftx.rgb * fB.rgb, panel, fB.a);
         F0 = max(F0, 0.08);
         share *= 0.62;          // (a facade's whole pane lights, where a drawn window is a part of its bay)
@@ -195,6 +200,20 @@ void main() {
         far = max(farX, farY);
         w = band * colm * there * up; mean = meanX * meanY * up;
         glass = mix(colm * there, meanX, farX) * mix(band, meanY, farY) * up;
+        // A window is set back in its wall: the head and one jamb throw a shadow on the glass (which jamb, and how
+        // deep, by where the sun stands to the wall), and a pale sill runs under it. Gone once a window is a few pixels.
+        float close = (1.0 - smoothstep(0.1, 0.45, fw.y)) * there * up * step(style, 2.5);
+        if (close > 0.0) {
+          vec3 T = normalize(vec3(-N.z, 0.0, N.x));
+          float sun = max(dot(N, uSunDir), 0.0), deep = 0.22;
+          float headS = deep * clamp(uSunDir.y / max(sun, 0.15), 0.0, 3.0), sideS = deep * clamp(dot(T, uSunDir) / max(sun, 0.15), -3.0, 3.0);
+          float wx = (fx + wHalf) * bw, ww = 2.0 * wHalf * bw;             // meters in from the window's left jamb; its width
+          float head = smoothstep(wy1 - headS - 0.03, wy1 - headS + 0.03, fy);
+          float jamb = sideS > 0.0 ? 1.0 - smoothstep(sideS - 0.03, sideS + 0.03, wx) : smoothstep(ww + sideS - 0.03, ww + sideS + 0.03, wx);
+          reveal = max(max(head, jamb) * step(0.02, sun), 0.35 * smoothstep(wy1 - 0.12, wy1, fy)) * w * close;
+          float sill = colm * clamp(min(fy - (wy0 - 0.14), wy0 - fy) / max(fw.y, 0.02) + 0.5, 0.0, 1.0) * there;
+          panel = mix(panel, panel * 1.22 + 0.02, sill * close * 0.8);
+        }
       }
       float h2 = hashB(vec2(fl * 1.31, seed));
       // Lit rooms: this window or that; in offices a floor here and there works late. Far off, where windows have
@@ -217,9 +236,60 @@ void main() {
       // blinds drawn behind some panes
       if (!facade) pane = mix(pane, vec3(0.30, 0.29, 0.26), (1.0 - far) * step(0.8, hashB(vec2(bay + 5.0, fl + 2.0) + seed)) * 0.7 * step(style, 2.5));
     }
-    alb = mix(panel, pane, glass);
+    // ---- what a wall has at its foot and at its top, whatever is between (not a house, not a shed: vTop says how tall)
+    if (vTop > 0.5) {
+      vec2 fw = vec2(fwidth(vW.x), fwidth(vW.y));
+      float y = max(vW.y, 0.0), fromTop = vTop - vW.y;
+      // The ground floor of anything with stories above it: storefronts and lobbies, glass from knee to head between
+      // piers, under a fascia. Its lamps are on in the evening when the offices above have gone home.
+      if (style > 1.5 && vTop > 6.5) {
+        float gh = vTop > 30.0 ? 5.4 : 4.1, bw = style > 2.5 ? 4.5 : 5.2;
+        float in0 = 1.0 - smoothstep(gh - 0.02, gh + 0.02, y);
+        if (in0 > 0.0) {
+          float farG = smoothstep(0.5, 1.6, max(fw.x / (0.5 * bw), fw.y / (0.4 * gh)));
+          float bx = abs(fract(vW.x / bw + fract(seed * 0.23)) - 0.5) * bw;          // meters from the middle of a bay
+          float pier = clamp((bx - (0.5 * bw - 0.32)) / max(fw.x, 0.02) + 0.5, 0.0, 1.0);
+          float open = clamp(min(y - 0.45, (gh - 0.95) - y) / max(fw.y, 0.02) + 0.5, 0.0, 1.0) * (1.0 - pier);
+          float bayN = floor(vW.x / bw + fract(seed * 0.23)), shut = step(0.86, hashB(vec2(bayN, seed)));      // a blank bay here and there: a service door, a wall
+          open *= 1.0 - shut;
+          float g0 = mix(open, 0.52, farG) * step(0.01, vW.y);
+          vec3 fascia = mix(panel * 0.72, mix(vec3(0.05, 0.05, 0.055), vec3(0.3, 0.07, 0.05), step(0.72, hashB(vec2(bayN, seed + 3.0)))), step(0.6, hashB(vec2(bayN + 2.0, seed))) * (1.0 - farG));
+          vec3 base = mix(panel * 0.86, fascia, smoothstep(gh - 0.95, gh - 0.9, y));
+          panel = mix(panel, base, in0);
+          pane = mix(pane, vec3(0.03, 0.04, 0.05), in0);
+          glass = mix(glass, g0, in0); reveal *= 1.0 - in0;
+          float shopOn = step(0.35, hashB(vec2(bayN + 11.0, seed)));
+          emit = mix(emit, vec3(1.0, 0.8, 0.55) * mix(open * shopOn * (0.6 + 0.6 * hashB(vec2(bayN, 5.0 + seed))), 0.3, farG) * 1.25, in0);
+          F0 = mix(F0, 0.08, in0);
+        }
+      }
+      // The roof line: a coping along the top of the wall and its shadow under it; on a tower, a blind band of
+      // louvres for the plant floor behind.
+      float farT = smoothstep(0.35, 1.2, fw.y);
+      if (vTop < 253.5) {
+        float crown = vTop > 38.0 && style > 1.5 ? clamp(0.06 * vTop, 3.0, 6.5) : 0.0;
+        if (crown > 0.0) {
+          float inC = smoothstep(crown + 0.03, crown - 0.03, fromTop);
+          float slat = 0.5 + 0.5 * sin(vW.y * 20.9) * (1.0 - smoothstep(0.08, 0.25, fw.y));
+          vec3 plant = (style > 2.5 ? vCol * 0.5 + 0.03 : panel * 0.7) * (0.72 + 0.28 * slat);
+          panel = mix(panel, plant, inC); glass *= 1.0 - inC; emit *= 1.0 - inC; reveal *= 1.0 - inC;
+        }
+        float cope = smoothstep(0.55, 0.45, fromTop) * (1.0 - farT), under = smoothstep(0.9, 0.6, fromTop) * (1.0 - smoothstep(0.52, 0.48, fromTop)) * (1.0 - farT);
+        panel = mix(panel, panel * 0.62, under * 0.7);
+        panel = mix(panel, panel * 1.18 + 0.025, cope * step(style, 2.5));
+        glass *= 1.0 - max(cope, under) * step(style, 2.5);
+      }
+      // Glass in a wall of glass is not one mirror: every pane sits a hair off true, so each shows a slightly different sky.
+      if (style > 2.5 && glass > 0.01) {
+        float ph = 3.9, pw = 1.5;
+        vec2 cell = vec2(floor(vW.x / pw), floor(y / ph));
+        tilt = (1.0 - smoothstep(0.25, 1.2, max(fw.x / pw, fw.y / ph)));
+        paneTilt = (vec2(hashB(cell + seed), hashB(cell * 1.7 + seed + 4.0)) - 0.5) * tilt;
+      }
+    }
+    alb = mix(panel, pane * (1.0 - 0.62 * reveal), glass);
   } else if (kind < 2.5) {
-    // ---- a roof: its own colour, pulled toward what the satellite picture shows there
+    // ---- a roof: its own color, pulled toward what the satellite picture shows there
     vec4 im = imagery(vImg, vK.w > 0.5 ? 0.0 : max(imageryLevel(dist), 0.0));
     alb *= 0.86 + 0.28 * grain;
     if (im.a > 0.5) {
@@ -240,8 +310,11 @@ void main() {
   vec3 col = alb * (uSunCol * ndl * sunLit + amb + localLight(vWorld, N));
   if (glass > 0.01) {
     // glass shows the sky it faces, more of it the shallower the look
-    vec3 R = reflect(-V, N);
+    vec3 Ng = N;
+    if (tilt > 0.0) Ng = normalize(N + (normalize(vec3(-N.z, 0.0, N.x)) * paneTilt.x + vec3(0.0, 1.0, 0.0) * paneTilt.y) * 0.05);
+    vec3 R = reflect(-V, Ng);
     vec3 env = skyRadiance(normalize(vec3(R.x, max(R.y, 0.03), R.z)));
+    env *= 1.0 - 0.5 * reveal;
     env = mix(env, uSunCol * max(uSunDir.y, 0.0) * vLight.x * 0.15 + uAmbSky * 0.4, smoothstep(0.0, -0.25, R.y));      // looking down a wall, it shows the street
     float fres = F0 + (1.0 - F0) * pow(1.0 - max(dot(N, V), 0.0), 5.0);
     col = mix(col, env, glass * fres);
@@ -288,10 +361,10 @@ void main() {
 }`;
 
 // Roads near the aircraft: ribbons on the ground from the same tiles, blended over the picture (which shows a
-// road as a grey smear at 10 m a pixel) so that streets have edges and a centre line from low down. Subtle on
+// road as a gray smear at 10 m a pixel) so that streets have edges and a center line from low down. Subtle on
 // purpose, and gone by the edge of the near level.
 const ROAD_VERT = /* glsl */`
-attribute vec3 aR;            // -1 | 1 across, metres along, half-width + 100 * rank
+attribute vec3 aR;            // -1 | 1 across, meters along, half-width + 100 * rank
 centroid varying vec3 vWorld;
 centroid varying vec2 vR;
 flat varying vec2 vRoad;      // half-width (m), rank 0..1
@@ -313,11 +386,11 @@ void main() {
   float dist = distance(cameraPosition, vWorld), hw = vRoad.x, rank = vRoad.y;
   float fade = 1.0 - smoothstep(uRoadFade.x, uRoadFade.y, dist);
   if (fade <= 0.0) discard;
-  float across = abs(vR.x) * hw, px = max(fwidth(vR.x) * hw, 0.05);          // metres from the middle; metres a pixel spans across the road
+  float across = abs(vR.x) * hw, px = max(fwidth(vR.x) * hw, 0.05);          // meters from the middle; meters a pixel spans across the road
   float edge = clamp((hw - across) / max(px, 0.6), 0.0, 1.0);
   float grain = texture2D(tDetail, vWorld.xz / 7.0).r, mott = texture2D(tDetail, vWorld.xz / 61.0).g;
   vec3 alb = vec3(0.105, 0.105, 0.11) * (0.8 + 0.25 * grain + 0.25 * mott);
-  // paint, while a line is wider than a third of a pixel: a yellow centre line on a two-way road, lane dashes on a carriageway
+  // paint, while a line is wider than a third of a pixel: a yellow center line on a two-way road, lane dashes on a roadway
   float fine = 1.0 - smoothstep(0.35, 0.9, px);
   if (rank > 0.65 && fine > 0.0) {
     bool mway = rank > 0.95;
@@ -337,11 +410,11 @@ void main() {
 }`;
 
 // Bridges: decks, piers and steelwork, lit as the buildings are. What a surface is comes with each vertex:
-// 0 road, 1 concrete, 2 the underside, 3 steel, 4 railway track bed, 5 footway, 6 the deck's outer face.
+// 0 road, 1 concrete, 2 the underside, 3 steel, 4 railroad track bed, 5 sidewalk, 6 the deck's outer face.
 const BRIDGE_VERT = /* glsl */`
 attribute vec4 aN;
-attribute vec2 aUV;           // across and along the deck, or along and up a face (eighths of a metre)
-attribute vec4 aCol;          // colour, a random number per bridge
+attribute vec2 aUV;           // across and along the deck, or along and up a face (eighths of a meter)
+attribute vec4 aCol;          // color, a random number per bridge
 attribute vec4 aK;            // surface; road paint, or how much sun a face under the deck gets (0..255); road half-width (eighths); lit at night
 centroid varying vec3 vWorld, vN, vCol;
 centroid varying vec3 vW;     // the two coordinates (m), distance
@@ -380,7 +453,7 @@ void main() {
     if (mark > 0.5 && fine > 0.0) {
       vec3 lc = vec3(0.62); float line;
       if (mark > 2.5) {
-        // a carriageway: dashes between its lanes, a line down each edge
+        // a roadway: dashes between its lanes, a line down each edge
         float lanes = max(2.0, floor((2.0 * hw - 2.6) / 3.6 + 0.5)), t = uv.x / 3.6 + 0.5 * lanes, k = floor(t + 0.5);
         line = (1.0 - smoothstep(0.07, 0.07 + px, abs(t - k) * 3.6)) * step(0.5, k) * step(k, lanes - 0.5) * step(0.7, fract(uv.y / 12.0));
         line = max(line, 1.0 - smoothstep(0.07, 0.07 + px, abs(across - 1.8 * lanes)));
@@ -404,7 +477,7 @@ void main() {
   } else if (kind < 2.5) { alb *= 0.6 + 0.2 * grain; open = 0.0; occl = 0.5; }
   else if (kind < 3.5) alb *= 0.85 + 0.3 * grain;
   else if (kind < 4.5) {
-    // ---- a railway: ballast, sleepers, two rails
+    // ---- a railroad: ballast, sleepers, two rails
     float across = abs(uv.x), px = max(fwidth(uv.x), 0.03);
     alb *= 0.75 + 0.5 * grain;
     alb = mix(alb, vec3(0.15, 0.125, 0.11), step(across, 1.3) * step(0.55, fract(uv.y / 0.6)) * (1.0 - smoothstep(0.08, 0.3, px)) * 0.8);
@@ -425,7 +498,7 @@ void main() {
 }`;
 
 // The shade under a deck, as strips on the ground. Two to each deck: one slid down-sun by the deck's height (its
-// shadow, where the sun's shadow maps do not reach: beyond a kilometre or so), one where it lies (the dimness
+// shadow, where the sun's shadow maps do not reach: beyond a kilometer or so), one where it lies (the dimness
 // under any deck, which also sits over the bridge that the picture on the ground shows).
 const SHADE_VERT = /* glsl */`
 attribute vec4 aS;            // -1 | 1 across, the deck's height over the ground here (m), half the strip's width (m), 1: the cast shadow, 0: the shade beneath
@@ -517,6 +590,8 @@ export class Cities {
     });
     /** Draw the roads near the aircraft? */
     this.roads = true;
+    // The vehicles on them (world/traffic.js): lit like the roads they drive on.
+    this.traffic = new Traffic(this.group, { light: LIGHT_GLSL, atmo: ATMO_GLSL }, { ...shared(LIGHT_UNIFORMS), ...shared(ATMO_UNIFORMS) });
     this.bridgeMat = new THREE.ShaderMaterial({ uniforms: { ...shared(LIGHT_UNIFORMS), ...shared(ATMO_UNIFORMS), uCityLit: this.uLit }, vertexShader: BRIDGE_VERT, fragmentShader: BRIDGE_FRAG });
     this.bridgeMats = [this.bridgeMat];
     this.uShade = { value: new THREE.Vector2(0.9, 0.34) }; this.uBridgeLamp = { value: 0 };
@@ -540,7 +615,7 @@ export class Cities {
       blending: THREE.CustomBlending, blendEquation: THREE.AddEquation, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor, blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor,
     });
 
-    // the coverage map: footprints drawn from above, then spread a couple of metres so a tree's crown keeps clear of the eaves
+    // the coverage map: footprints drawn from above, then spread a couple of meters so a tree's crown keeps clear of the eaves
     const target = () => new THREE.WebGLRenderTarget(COVER_N, COVER_N, { format: THREE.RedFormat, type: THREE.UnsignedByteType, depthBuffer: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
     this.coverRaw = target(); this.coverRT = target();
     this.coverCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 20000);
@@ -625,17 +700,18 @@ export class Cities {
 
   /** The tile grid in the world as it is now. */
   layout() {
-    this.mpp = metresPerPixel(Z); this.size = 256 * this.mpp;
+    this.mpp = metersPerPixel(Z); this.size = 256 * this.mpp;
     this.px0 = pixelX(0, Z); this.py0 = pixelY(0, Z);
   }
   tileX(x) { return Math.floor((this.px0 + x / this.mpp) / 256); }
   tileY(z) { return Math.floor((this.py0 + z / this.mpp) / 256); }
   key(tx, ty) { return tx * 32768 + ty; }
 
-  /** Let go of everything: the window of the world is about to move (or has), and tile-local metres with it. */
+  /** Let go of everything: the window of the world is about to move (or has), and tile-local meters with it. */
   reset() {
     this.gen++;
     for (const t of this.tiles.values()) this.dropTile(t);
+    this.traffic.clear();
     this.tiles.clear(); this.info.clear(); this.sky.clear(); this.jobs.clear(); this.queue.length = 0; this.staging.length = 0; this.waiting.length = 0;
     this.worker?.postMessage({ type: 'forget' });
     this.layout();
@@ -665,6 +741,7 @@ export class Cities {
     for (const m of L.meshes) { const s = bridge ? this.stats.bridge : this.stats; this.group.remove(m); m.visible = false; this.grave.push([this.frame, m.geometry]); s.tris -= m.userData.tris; s.verts -= m.userData.verts; s.gpuBytes -= m.userData.bytes; s.meshes--; }
     if (L.lamps) { this.group.remove(L.lamps); L.lamps.geometry.dispose(); }
     if (L.road) { this.group.remove(L.road); L.road.geometry.dispose(); }
+    if (L.cars) { this.traffic.remove(L.cars); L.cars = null; }
     if (L.shade) { this.group.remove(L.shade); L.shade.geometry.dispose(); }
     if (bridge && L.state === 'ready') this.stats.bridge.count -= L.count || 0;
     if (name === 'near' || bridge) this.coverDirty = true;
@@ -687,7 +764,7 @@ export class Cities {
     return { n, x0: lx, z0: lz, step, h };
   }
 
-  /** Where buildings must not stand in a tile: inside an aerodrome's boundary (the airfield draws its own). */
+  /** Where buildings must not stand in a tile: inside an airport's boundary (the airfield draws its own). */
   skipFor(t) {
     const rings = [], boxes = [], s = this.size;
     for (const a of AIRPORTS) {
@@ -761,7 +838,7 @@ export class Cities {
     this.staging.push({ t, name, q, L });
   }
 
-  /** A tile has shown what it holds: where there are towers, look at its neighbours too. */
+  /** A tile has shown what it holds: where there are towers, look at its neighbors too. */
   learn(t, tall, total, bridges = 0) {
     this.info.set(t.key, { tall, total, bridges });
     const e = this.sky.get(t.key);
@@ -848,6 +925,7 @@ export class Cities {
         L.road = new THREE.Mesh(g, this.roadMat); L.road.position.set(t.x0, 0, t.z0); L.road.matrixAutoUpdate = false; L.road.updateMatrix(); L.road.updateMatrixWorld(true);
         L.road.renderOrder = -8; L.road.visible = false;
         this.group.add(L.road);
+        if (d.paths) L.cars = this.traffic.add(d.paths, t.x0, t.z0, Math.round(t.x0 * 0.37 + t.z0 * 0.91 + d.bounds[0] * 3 + d.bounds[2] * 7));
       }
       if (L.shadeData) {
         // the strips of shade on the ground under the decks
@@ -993,7 +1071,7 @@ export class Cities {
         else if (tall) tallMask |= 1 << q;
       }
       const close = t.dist < 2600;
-      for (let q = 0; q < 4; q++) { const N = t.near[q]; if (N && N.state === 'ready') { this.show(N, nearMask & (1 << q) ? 15 : 0, close); if (N.road) N.road.visible = this.roads && !!(nearMask & (1 << q)); } }
+      for (let q = 0; q < 4; q++) { const N = t.near[q]; if (N && N.state === 'ready') { this.show(N, nearMask & (1 << q) ? 15 : 0, close); if (N.road) N.road.visible = this.roads && !!(nearMask & (1 << q)); if (N.cars) N.cars.on = !!N.road?.visible; } }
       if (mid) this.show(t.mid, midMask, close);
       if (tall) this.show(t.tall, tallMask, false);
       const lampsOn = this.uLevel.value > 0;
@@ -1078,9 +1156,9 @@ export class Cities {
   /**
    * Bridges near a point: calls seg(top, under, above, d, hw) for each stretch of deck the point lies over or under
    * (top: the running surface's height there, under: the depth of the structure below it, above: the height of
-   * what stands on it, d: metres from the centre line, hw: half its width) and pier(u, v, a, b, top) for each
+   * what stands on it, d: meters from the center line, hw: half its width) and pier(u, v, a, b, top) for each
    * pier near it (u, v: the point's place across and along the pier; a, b: the pier's half-sizes). Either may
-   * return true to stop. Decks and piers of the tile's neighbours are looked at within reach of its edges.
+   * return true to stop. Decks and piers of the tile's neighbors are looked at within reach of its edges.
    */
   bridgesNear(x, z, reach, seg, pier) {
     const s = this.size, tx = this.tileX(x), ty = this.tileY(z);
@@ -1134,9 +1212,9 @@ export class Cities {
   /**
    * Raise a grid of ground heights to the roofs of the buildings that stand on it, for anything that marches a
    * height field toward the sun (world/groundlight.js fills its 40 m map from dem.sampleGrid the same way: with
-   * this, a downtown throws its shadow across the land and the lower buildings for kilometres).
+   * this, a downtown throws its shadow across the land and the lower buildings for kilometers).
    * x0, z0: the first sample; step: spacing (m); n: samples a side; h: Float32Array(n * n), raised in place.
-   * Only buildings at least minH metres high count. Returns how many samples were raised.
+   * Only buildings at least minH meters high count. Returns how many samples were raised.
    */
   raise(x0, z0, step, n, h, minH = 18) {
     let raised = 0;
@@ -1164,7 +1242,7 @@ export class Cities {
     }
     return raised;
   }
-  /** How much of the near level round the camera is in the scene, 0..1 (the town lights dim by it). */
+  /** How much of the near level around the camera is in the scene, 0..1 (the town lights dim by it). */
   nearShare() { let want = 0, have = 0; for (const t of this.tiles.values()) for (let q = 0; q < 4; q++) if (t.want & (16 << q)) { want++; if (t.near[q]?.state === 'ready') have++; } return want ? have / want : 0; }
 
   // ---------------------------------------------------------------- once a frame
@@ -1173,7 +1251,7 @@ export class Cities {
    * dt: seconds; camera: the game's camera, placed for this frame; dark: 0 by day .. 1 at night (the lit
    * windows follow it); exposure: the eye's adaptation, which the lights are held back by.
    */
-  update(dt, camera, dark = 0, exposure = 1) {
+  update(dt, camera, dark = 0, exposure = 1, clock = null) {
     this.frame++;
     const cam = camera.position;
     if (this.enabled && this.worker) {
@@ -1192,6 +1270,8 @@ export class Cities {
     this.uLevel.value = on < 0.04 ? 0 : (3 + 9 * on) / Math.sqrt(Math.max(exposure, 1));
     this.uBridgeLamp.value = on < 0.25 ? 0 : (1.5 + 3.5 * Math.min(1, (on - 0.25) / 0.45)) / Math.sqrt(Math.max(exposure, 1));
     this.display();
+    // the traffic: clock = { time: seconds of game time, hour: the time of day }
+    if (clock) this.traffic.update(clock.time, cam, this.uRoadFade.value.y, clock.hour, on);
     this.cover(cam);
     while (this.grave.length && this.frame - this.grave[0][0] > GRAVE) this.grave.shift()[1].dispose();
   }

@@ -10,7 +10,7 @@
 // main thread, where heightAt() must answer at once for the flight physics. Without workers the same work
 // is done here as it always was.
 
-import { pixelX, pixelY, metresPerPixel, WORLD_HALF } from './geo.js';
+import { pixelX, pixelY, metersPerPixel, WORLD_HALF } from './geo.js';
 import { waterMask, DOUBT_Z } from './water.js';
 import { pool } from './workers.js';
 import { perf } from '../render/perf.js';
@@ -19,7 +19,7 @@ import { perf } from '../render/perf.js';
 // here). Zoom 15 exists but is the same survey resampled.
 export const BASE_Z = 8, MAX_Z = 14;
 export const ATTRIBUTION = 'Terrain: Mapzen Terrain Tiles on AWS (USGS 3DEP, SRTM, GMTED, ETOPO1 and others)';
-const tileUrl = (z, x, y) => `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`;
+export const tileUrl = (z, x, y) => `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`;
 const KEY = (z, x, y) => z * 67108864 + x * 16384 + y;
 const MAX_ACTIVE = 8, CACHE_LIMIT = 300;
 
@@ -76,7 +76,7 @@ function failed(p, e, dropped) {
   if (++p.tries < 3) { setTimeout(() => pump(), 400 * p.tries); return; }
   // Give up on this tile: stand in a flat patch of the best coarser data so meshing can proceed.
   stats.failed++; active++;
-  const t0 = performance.now(), h = new Float32Array(65536), mpp = metresPerPixel(p.z);
+  const t0 = performance.now(), h = new Float32Array(65536), mpp = metersPerPixel(p.z);
   const ox = (p.x * 256 + 0.5 - pixelX(0, p.z)) * mpp, oz = (p.y * 256 + 0.5 - pixelY(0, p.z)) * mpp;
   for (let j = 0; j < 256; j++) for (let i = 0; i < 256; i++) h[j * 256 + i] = heightAt(ox + i * mpp, oz + j * mpp, p.z - 1);
   console.warn('Terrain tile failed, using coarser data:', p.z, p.x, p.y, e.message);
@@ -164,7 +164,7 @@ export function loadArea(z, x0, z0, x1, z1, prio = 0) {
   return Promise.all(all);
 }
 
-// Texel fetch with a one-tile memo; missing neighbours clamp to the current tile's edge.
+// Texel fetch with a one-tile memo; missing neighbors clamp to the current tile's edge.
 let memo = null;
 function texel(z, ix, iy, channel) {
   const tx = ix >> 8, ty = iy >> 8;
@@ -179,7 +179,7 @@ function texel(z, ix, iy, channel) {
  * The caller must have ensure()d the area first.
  */
 export function sampleGrid(z, x0, z0, step, n, outH, outW) {
-  const mpp = metresPerPixel(z), sx = step / mpp;
+  const mpp = metersPerPixel(z), sx = step / mpp;
   const fx0 = pixelX(x0, z) - 0.5, fy0 = pixelY(z0, z) - 0.5;
   for (let j = 0; j < n; j++) {
     const fy = fy0 + j * sx, iy = Math.floor(fy), v = fy - iy;
@@ -266,7 +266,7 @@ function forgetOutside() {
 }
 
 /**
- * Is the water at this point of the doubtful kind (level, but with no bank round it: see water.js)? That is
+ * Is the water at this point of the doubtful kind (level, but with no bank around it: see water.js)? That is
  * judged at zoom DOUBT_Z; false if the tile there is not loaded (wantDoubt asks for it).
  */
 export function doubtfulAt(x, zw) {

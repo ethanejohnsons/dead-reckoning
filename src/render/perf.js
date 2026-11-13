@@ -6,7 +6,7 @@
 // GPU time per pass
 //   perf.frame();                        once a frame, before the passes: collects the timings that have come back
 //   perf.begin('clouds march'); ...draw...; perf.end();
-//   perf.time('terrain', () => renderer.render(scene, camera));        the same, wrapped round a function
+//   perf.time('terrain', () => renderer.render(scene, camera));        the same, wrapped around a function
 //   perf.passes                          { 'clouds march': 1.84, ... } milliseconds a frame, smoothed over about half a second
 //   perf.gpu                             the whole frame on the graphics card, ms (NaN until a figure has come back);
 //                                        perf.restart() forgets it, when the picture's size changes
@@ -24,7 +24,7 @@
 // is the sum of its pieces. With `enabled` false, begin(), end() and frame() are one test each and touch nothing else.
 //
 // Main-thread time per stage (always on: a dozen clock readings a frame)
-//   perf.frameBegin(); ... perf.frameEnd();        round one frame of the game loop
+//   perf.frameBegin(); ... perf.frameEnd();        around one frame of the game loop
 //   perf.cpuBegin('terrain'); ...; perf.cpuEnd();  a stage; stages nest, and each is charged its own time only
 //   perf.cpuAdd('elevation decode', ms);           main-thread work measured elsewhere (between frames, say):
 //                                                  counted into the frame that follows

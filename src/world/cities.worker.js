@@ -3,13 +3,13 @@
 // fetches overlap. Decoded tiles are kept for a while, so the other levels of a tile cost no download.
 //
 // in:   { type: 'build', id, key, z, x, y, level, quad, size, ground: { n, x0, z0, step, h }, skip: { rings: [Float32Array], boxes: Float32Array } }
-//       { type: 'forget' }                       the window of the world moved: tile-local metres mean something else
+//       { type: 'forget' }                       the window of the world moved: tile-local meters mean something else
 //       { type: 'source', url }                  take the tiles from another server (TileJSON address)
 //       { type: 'bplan', id, key, z, x, y, size }      bridges, first step: put together the bridges that touch this tile (fetching
 //                                                       the tiles they run on into) and say where their ground heights are wanted
 //       { type: 'bbuild', id, h, detail }               second step: the ground at those points -> the tile's bridge meshes (0 near, 1 far)
 // out:  { type: 'built', id, key, level, quad, chunks, foot, lights, roads, count, tall, total, bridges, bytes, ms: { fetch, parse, build } }
-//       { type: 'bplan', id, pts, tall, total, bridges, bytes, ms }      (pts: x, z in metres from the tile's corner)
+//       { type: 'bplan', id, pts, tall, total, bridges, bytes, ms }      (pts: x, z in meters from the tile's corner)
 //       { type: 'built', id, chunks, coll, shade, lamps, count, bridge: true, ms }
 //       { type: 'failed', id, key, level, quad, error }
 
@@ -143,7 +143,7 @@ self.onmessage = async (e) => {
     }
     const out = buildLevel(tile, job.level, job.quad, job.ground, skip);
     const transfer = [out.lights.buffer, out.foot.box.buffer, out.foot.q.buffer, out.foot.start.buffer, out.foot.pts.buffer];
-    if (out.roads) transfer.push(out.roads.pos.buffer, out.roads.ar.buffer, out.roads.idx.buffer);
+    if (out.roads) transfer.push(out.roads.pos.buffer, out.roads.ar.buffer, out.roads.idx.buffer, out.roads.paths.p.buffer, out.roads.paths.m.buffer);
     for (const c of out.chunks) transfer.push(c.pos.buffer, c.nrm.buffer, c.uv.buffer, c.col.buffer, c.k.buffer, c.idx.buffer, c.ranges.buffer);
     self.postMessage({ type: 'built', id: job.id, key: job.key, level: job.level, quad: job.quad, ...out, tall: tile.tall, total: tile.blds.length, bridges: tile.br.ways.length, bytes, ms: { fetch: tf, parse: parse || 0, build: performance.now() - t0 } }, transfer);
   } catch (err) {

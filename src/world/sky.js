@@ -1,8 +1,8 @@
 // Sky dome, sun, moon, stars, time of day and the scene lights.
 //
-// The sky's colour comes from the lookup-table atmosphere (atmosphere.js, skylut.js). A small copy of
+// The sky's color comes from the lookup-table atmosphere (atmosphere.js, skylut.js). A small copy of
 // it is read back each frame or two, and from that copy come the ambient light (spherical harmonics),
-// the haze and horizon colours, the image-based lighting on the aircraft and the exposure: everything
+// the haze and horizon colors, the image-based lighting on the aircraft and the exposure: everything
 // is lit by the sky you can see.
 //
 // Units. Light is kept in the engine's daylight units all the way to starlight: uSunCol is irradiance / pi
@@ -29,16 +29,16 @@ const S0 = 1.56;                 // sunlight above the air, as irradiance / pi i
 const SUN_LUX = 133000;          // the same in lux
 const K_LUM = (S0 * Math.PI) / SUN_LUX;       // engine radiance per cd/m2
 const SKY_GAIN = 1.5;            // sky tables against the sun: 1 is what the model gives, the old sky was nearer 2.3; at 1.5 the zenith is about 4000 cd/m2
-const AMB_SCALE = 0.87, AMB_GREY = 0.0;       // sky light on surfaces against the sky's own irradiance (set so midday ambient is the old ambient), and how far it is greyed (not at all)
+const AMB_SCALE = 0.87, AMB_GRAY = 0.0;       // sky light on surfaces against the sky's own irradiance (set so midday ambient is the old ambient), and how far it is grayed (not at all)
 const M_REF = 0.242, DOWN_REF = 1.05;         // the clear sky at 13:00 on the equinox: its mean luminance, and the light on level ground / pi (the adaptation's references)
 const OVC_K = 0.455;             // overcast sky radiance against the light falling on level ground under a clear sky (/ pi)
 const GLOW_CDM2 = 2.2e-4;        // airglow, zodiacal light and unresolved stars at the zenith on a moonless night (about 21.9 mag per square arcsecond)
-const GLOW_TINT = [0.62, 0.85, 1.12];         // (as the dark-adapted eye has it: blue-grey, not the airglow's green)
-const MOON_TINT = [1.06, 1.0, 0.9];           // moonlight is sunlight off grey-brown rock
-const MOON_CDM2 = 4700;          // mean luminance of the full moon's disc
+const GLOW_TINT = [0.62, 0.85, 1.12];         // (as the dark-adapted eye has it: blue-gray, not the airglow's green)
+const MOON_TINT = [1.06, 1.0, 0.9];           // moonlight is sunlight off gray-brown rock
+const MOON_CDM2 = 4700;          // mean luminance of the full moon's disk
 const MILKY_GAIN = 2.5;          // the Milky Way against the rest of the night: shown as a long exposure shows it
-const MOON_RADIUS = 0.0090;      // radians: drawn twice life size, like the sun's disc
-const DISC_CAP = 1.5;            // brightest the moon's disc is shown, as a display value before tone mapping
+const MOON_RADIUS = 0.0090;      // radians: drawn twice life size, like the sun's disk
+const DISK_CAP = 1.5;            // brightest the moon's disk is shown, as a display value before tone mapping
 
 // Display brightness against the light there is (both log10, relative to the clear midday sky). Down to a
 // tenth of midday the picture follows the light with the old exposure law; below that it is held up, more
@@ -68,7 +68,7 @@ void main() {
 }`;
 
 const FRAG = /* glsl */`
-uniform vec3 uSunDisc, uGround, uSunPos;
+uniform vec3 uSunDisk, uGround, uSunPos;
 uniform vec3 uMoonPos, uMoonRight, uMoonUp, uMoonLit, uMoonEarth, uMilky, uTau;
 uniform vec2 uMoonR;      // cosine and sine of the moon's radius
 uniform mat3 uToEq;       // world to equatorial
@@ -77,7 +77,7 @@ uniform float uEnvPass;
 varying vec3 vDir;
 ${ATMO_GLSL}
 float blob(vec2 q, float x, float y, float r) { vec2 d = (q - vec2(x, y)) / r; return 1.0 - smoothstep(0.1, 1.3, dot(d, d)); }
-// The near side's seas, north up: enough for a disc a dozen pixels across.
+// The near side's seas, north up: enough for a disk a dozen pixels across.
 float moonAlbedo(vec2 q) {
   q += 0.05 * vec2(sin(q.y * 9.0 + 1.3) + sin(q.y * 17.0), sin(q.x * 8.0 + 0.7) + sin(q.x * 19.0 + 2.0));      // ragged shores
   float m = blob(q, -0.25, 0.50, 0.33) + blob(q, 0.27, 0.45, 0.20) + blob(q, 0.45, 0.14, 0.23) + blob(q, 0.78, 0.28, 0.12)
@@ -98,9 +98,9 @@ void main() {
     col += m * m * uMilky * ext;
   }
   float s = dot(d, uSunPos);
-  // Sun disc, kept very bright so the lens and bloom respond to it. Its aureole is in the sky table already.
-  float disc = smoothstep(0.99996, 0.999985, s);
-  col += uSunDisc * (disc * 60.0 + pow(max(s, 0.0), 2500.0) * 3.0 + pow(max(s, 0.0), 180.0) * 0.12) * (1.0 - uEnvPass * 0.9);
+  // Sun disk, kept very bright so the lens and bloom respond to it. Its aureole is in the sky table already.
+  float disk = smoothstep(0.99996, 0.999985, s);
+  col += uSunDisk * (disk * 60.0 + pow(max(s, 0.0), 2500.0) * 3.0 + pow(max(s, 0.0), 180.0) * 0.12) * (1.0 - uEnvPass * 0.9);
   float mc = dot(d, uMoonPos);
   if (mc > uMoonR.x) {
     vec3 off = d - uMoonPos * mc;
@@ -108,7 +108,7 @@ void main() {
     float r2 = dot(q, q), z = sqrt(max(1.0 - r2, 0.0));
     vec3 n = q.x * uMoonRight + q.y * uMoonUp - z * uMoonPos;
     float mu0 = dot(n, uSunPos);
-    // Lunar soil is no matt ball: it is as bright at the limb as at the centre (Lommel-Seeliger), so the full moon is a flat disc.
+    // Lunar soil is no matt ball: it is as bright at the limb as at the center (Lommel-Seeliger), so the full moon is a flat disk.
     float lit = smoothstep(-0.02, 0.08, mu0) * 2.0 * max(mu0, 0.0) / (max(mu0, 0.0) + z + 0.02);
     float edge = 1.0 - smoothstep(0.80, 1.0, r2 * r2);
     col += moonAlbedo(q) * (uMoonLit * min(lit, 1.3) + uMoonEarth) * ext * edge;
@@ -131,7 +131,7 @@ export class Sky {
     ENV.tAtmSky.value = this.lut.sky.texture; ENV.tAtmAP.value = this.lut.ap.texture;
 
     const C = () => ({ value: new THREE.Color(0, 0, 0) }), V = () => ({ value: new THREE.Vector3(0, 1, 0) });
-    this.uSunDisc = C(); this.uGround = { value: new THREE.Color(0.05, 0.06, 0.04) }; this.uSunPos = V();
+    this.uSunDisk = C(); this.uGround = { value: new THREE.Color(0.05, 0.06, 0.04) }; this.uSunPos = V();
     this.uMoonPos = V(); this.uMoonRight = V(); this.uMoonUp = V(); this.uMoonLit = C(); this.uMoonEarth = C(); this.uMilky = C();
     this.uTau = { value: new THREE.Vector3() };
     this.uMoonR = { value: new THREE.Vector2(Math.cos(MOON_RADIUS), Math.sin(MOON_RADIUS)) };
@@ -140,7 +140,7 @@ export class Sky {
     this.stars.onMilky = (t) => { this.tMilky.value = t; };
     this.uEnvPass = { value: 0 };
     const uniforms = {
-      uSunDisc: this.uSunDisc, uGround: this.uGround, uEnvPass: this.uEnvPass, uSunPos: this.uSunPos,
+      uSunDisk: this.uSunDisk, uGround: this.uGround, uEnvPass: this.uEnvPass, uSunPos: this.uSunPos,
       uMoonPos: this.uMoonPos, uMoonRight: this.uMoonRight, uMoonUp: this.uMoonUp, uMoonLit: this.uMoonLit, uMoonEarth: this.uMoonEarth,
       uMoonR: this.uMoonR, uMilky: this.uMilky, uTau: this.uTau, uToEq: this.uToEq, tMilky: this.tMilky,
     };
@@ -205,7 +205,7 @@ export class Sky {
     const ov = clamp(wx.overcast, 0, 1), dim = 1 - 0.45 * wx.precip, shade = clamp(wx.shade, 0, 1);
     const visMurk = smoothstep(9000, 1500, wx.visibility);
     const murk = Math.max(ov * 0.88, wx.precip * 0.8, visMurk);
-    // Under a deck the far horizon stays lighter and keeps the sky's colour (the red band at dusk); rain and fog close it.
+    // Under a deck the far horizon stays lighter and keeps the sky's color (the red band at dusk); rain and fog close it.
     const slot = murk > 0.01 ? 0.8 * clamp((ov * 0.88) / murk, 0, 1) * (1 - clamp(Math.max(wx.precip * 1.5, visMurk), 0, 1)) : 0;
     const sigma = 1.3 / Math.max(wx.visibility, 250), hazeH = 1900 + 2200 * smoothstep(20000, 60000, wx.visibility);
     ENV.uHaze.value.set(sigma, hazeH, 1.0, 0);
@@ -217,7 +217,7 @@ export class Sky {
     // ---- the lights as they are, before the eye adapts
     lightTransmittance(altKm, el, this.sunPhys).multiplyScalar(S0);
     lightTransmittance(altKm, elM, this.moonPhys).multiplyScalar((S0 * cel.moonLux) / SUN_LUX);
-    // In the dark the eye's rods take over and the world turns blue-grey (the Purkinje shift): moonlight is drawn the way it is seen.
+    // In the dark the eye's rods take over and the world turns blue-gray (the Purkinje shift): moonlight is drawn the way it is seen.
     const rods = smoothstep(1.5, 4, Math.log10(this.gain));
     const mt = [MOON_TINT[0] * (1 - 0.2 * rods), MOON_TINT[1] * (1 - 0.03 * rods), MOON_TINT[2] * (1 + 0.28 * rods)];
     this.moonPhys.r *= mt[0]; this.moonPhys.g *= mt[1]; this.moonPhys.b *= mt[2];
@@ -241,14 +241,14 @@ export class Sky {
       const gl = K_LUM * GLOW_CDM2 * g;
       u.uGlow.value.set(gl * GLOW_TINT[0], gl * GLOW_TINT[1], gl * GLOW_TINT[2]);
       u.uCam.value.set(6360 + Math.max(altKm, 0.002), sdip, 0, 0);
-      // Haze thicker than the air mass's own is fog, rain or cloud: it glows grey instead of scattering sunlight.
+      // Haze thicker than the air mass's own is fog, rain or cloud: it glows gray instead of scattering sunlight.
       const share = clamp(1 - (2 * air.ext) / (sigma * 1000), 0, 1);
       u.uLoc.value.set(sigma * 1000, hazeH / 1000, share, murk);
       u.uApP.value.w = 1 - 0.85 * shade;
       const oc = ENV.uSkyOvc.value, ok = g / this.gain;
       u.uOvc.value.set(oc.r * ok, oc.g * ok, oc.b * ok);
     };
-    // The light there is, read from the probe: sets the gain, the overcast's colour and how the tables are mixed.
+    // The light there is, read from the probe: sets the gain, the overcast's color and how the tables are mixed.
     const meter = (snap) => {
       skyMeans(means);
       const sinS = Math.max(cel.sun[1], 0), sinM = Math.max(cel.moon[1], 0);
@@ -262,7 +262,7 @@ export class Sky {
       this.logM = snap ? target : this.logM + (target - this.logM) * Math.min(1, dt * 0.8);
       this.gain = adaptGain(Math.pow(10, this.logM));
       this.m = m;
-      // Overcast: grey, as bright as the light a clear sky would put on level ground allows.
+      // Overcast: gray, as bright as the light a clear sky would put on level ground allows.
       this.down = down;
       ENV.uSkyOvc.value.setRGB(0.50, 0.53, 0.57).multiplyScalar(OVC_K * down * this.gain * dim * (0.55 + 0.45 * (1 - wx.precip)) / 0.53);
       setSkyMix(this.gain, murk, slot, ENV.uSkyOvc.value);
@@ -306,7 +306,7 @@ export class Sky {
     this.lightIsMoon = moonLight;
     const sc = ENV.uSunCol.value.copy(moonLight ? this.moonEng : this.sunEng), dir = moonLight ? this.moonDir : this.trueSun;
     const scl = lum(sc);
-    sc.lerp(tmp2.setRGB(scl, scl, scl), 0.2);        // (a fifth of the way to grey, as the old light was: the post-processing's white balance leans on this colour)
+    sc.lerp(tmp2.setRGB(scl, scl, scl), 0.2);        // (a fifth of the way to gray, as the old light was: the post-processing's white balance leans on this color)
     ENV.uSunDir.value.copy(dir);
     if (ENV.uSunDir.value.y < 0.035) { ENV.uSunDir.value.y = 0.035; ENV.uSunDir.value.normalize(); }
     this.skySun.copy(ENV.uSunDir.value);
@@ -314,15 +314,15 @@ export class Sky {
     ENV.uNight.value = night;
 
     // ---- ambient light from the sky dome itself: first the sky alone, then with the ground's bounce below.
-    fitSkyIrradiance(tmp.setRGB(0, 0, 0), AMB_SCALE, AMB_GREY);
+    fitSkyIrradiance(tmp.setRGB(0, 0, 0), AMB_SCALE, AMB_GRAY);
     skyIrradiance(0, 1, 0, acc);
     // Ground bounce: a little of the sunlight and skylight coming back up off the land.
     tmp.copy(acc).multiplyScalar(0.3).add(tmp2.copy(sc).multiplyScalar(0.066 * Math.max(dir.y, 0) * (1 - 0.8 * shade)));
-    fitSkyIrradiance(tmp.multiplyScalar(1 / AMB_SCALE), AMB_SCALE, AMB_GREY);
+    fitSkyIrradiance(tmp.multiplyScalar(1 / AMB_SCALE), AMB_SCALE, AMB_GRAY);
     skyIrradiance(0, 1, 0, ENV.uAmbSky.value);
     skyIrradiance(0, -1, 0, ENV.uAmbGround.value);
     ENV.uZenith.value.copy(skyRadiance(0, 1, 0, tmp));
-    // Horizon colour for haze: average round the compass, leaving out the bright patch under the sun.
+    // Horizon color for haze: average around the compass, leaving out the bright patch under the sun.
     acc.setRGB(0, 0, 0);
     let brightest = -1; tmp2.setRGB(0, 0, 0);
     for (let k = 0; k < 6; k++) {
@@ -333,9 +333,9 @@ export class Sky {
     ENV.uHorizon.value.copy(ENV.uFogCol.value);
     this.uGround.value.setRGB(0.07, 0.08, 0.05).multiply(tmp.copy(sc).multiplyScalar(0.7 * Math.max(dir.y, 0.1) * (1 - 0.8 * shade)).add(ENV.uAmbSky.value));
 
-    // ---- discs, stars and the Milky Way
+    // ---- disks, stars and the Milky Way
     const clear = 1 - murk;
-    this.uSunDisc.value.copy(this.sunEng).multiplyScalar(clear);
+    this.uSunDisk.value.copy(this.sunEng).multiplyScalar(clear);
     this.uSunPos.value.copy(this.trueSun);
     if (!opticalDepth(altKm, 1, tau)) tau.fill(0);
     this.uTau.value.set(tau[0], tau[1], tau[2]);
@@ -345,11 +345,11 @@ export class Sky {
     v3.set(cel.pole[0], cel.pole[1], cel.pole[2]);
     this.uMoonUp.value.copy(v3).addScaledVector(this.moonDir, -this.moonDir.dot(v3)).normalize();         // celestial north, across the line of sight
     this.uMoonRight.value.crossVectors(this.moonDir, this.uMoonUp.value).normalize();
-    // The disc: its true luminance by day (a pale moon in a blue sky); by night held to what the display can show.
-    const total = 0.64 * this.exposure, disc = Math.min(K_LUM * MOON_CDM2 * g, DISC_CAP / total) * clear;
-    this.uMoonLit.value.setRGB(MOON_TINT[0], MOON_TINT[1], MOON_TINT[2]).multiplyScalar(disc);
+    // The disk: its true luminance by day (a pale moon in a blue sky); by night held to what the display can show.
+    const total = 0.64 * this.exposure, disk = Math.min(K_LUM * MOON_CDM2 * g, DISK_CAP / total) * clear;
+    this.uMoonLit.value.setRGB(MOON_TINT[0], MOON_TINT[1], MOON_TINT[2]).multiplyScalar(disk);
     // Earthshine: the dark part lit by a nearly full Earth, a ten-thousandth of the sunlit part and plain to a dark-adapted eye.
-    this.uMoonEarth.value.setRGB(0.75, 0.9, 1.1).multiplyScalar(Math.min(K_LUM * MOON_CDM2 * g * 1.4e-4 * cel.earthshine, 0.012 * DISC_CAP / total) * clear);
+    this.uMoonEarth.value.setRGB(0.75, 0.9, 1.1).multiplyScalar(Math.min(K_LUM * MOON_CDM2 * g * 1.4e-4 * cel.earthshine, 0.012 * DISK_CAP / total) * clear);
     const mw = MILKY_GAIN * K_LUM * MILKY_CDM2 * g * clear * clear;
     this.uMilky.value.setRGB(mw, mw, mw);
     if (mw < 1e-4 || !this.stars.milkyReady) this.uMilky.value.setRGB(0, 0, 0);

@@ -15,14 +15,14 @@
 // one.
 //
 // Everything about a tree changes smoothly with distance, so nothing pops in flight:
-//   - fewer trees are drawn far away (treeKeep), and each one left stands for its lost neighbours: it grows a
+//   - fewer trees are drawn far away (treeKeep), and each one left stands for its lost neighbors: it grows a
 //     little taller and its card widens to show several crowns side by side (treeSize);
 //   - the real mesh and its card swap through a per-pixel dissolve across a band of distance;
 //   - the baked views cross-fade in both compass direction and height;
 //   - as a card shrinks toward a few pixels it is read from ever coarser mip levels of the atlas, down to one
 //     texel a view, and its coverage goes from a crisp silhouette to a soft share: a far forest is a stable
 //     textured canopy, not a field of sparkling points;
-//   - beyond HAND metres the terrain's fine patches hand each tree over to the far tiles kept here: the same
+//   - beyond HAND meters the terrain's fine patches hand each tree over to the far tiles kept here: the same
 //     candidates (first FAR_POOL of every patch's list), standing on the terrain as it is drawn out there,
 //     blended instead of cut out, and fading into the picture at the tier's range.
 
@@ -30,7 +30,7 @@ import * as THREE from 'three';
 import { mulberry32, smoothstep, clamp } from '../core/noise.js';
 import { ENV } from '../core/env.js';
 import * as dem from './dem.js';
-import { LAND_HALF, WORLD_HALF, metresPerPixel } from './geo.js';
+import { LAND_HALF, WORLD_HALF, metersPerPixel } from './geo.js';
 import { flatWeight, flatsIn, applyFlats, treeline, moisture } from './terrain.js';
 import { townsIn, urbanDensity } from './towns.js';
 import { SKY_SH_GLSL } from './atmosphere.js';
@@ -51,7 +51,7 @@ const ELS = [6, 30, 55, 82];         // those heights, degrees
 const CELL = 9.5;                    // spacing of candidate positions, m
 const GRID = 16;                     // each patch indexes its trees in GRID x GRID squares for the near-mesh search
 const NEAR_CAP = 1024;               // most real meshes of one model at a time
-const FIT = 1.06;                    // margin round a model in its atlas frame
+const FIT = 1.06;                    // margin around a model in its atlas frame
 const PATCH = 1024;                  // the terrain patches that propose trees, m
 const HAND = 4000, HAND_BAND = 250, HAND_JIT = 600;   // fine patches hand over to the far tiles here (m), each tree at its own distance
 const FAR_SIZE = 2048;               // far tiles, m: four patches each
@@ -72,7 +72,7 @@ const OCC = [0.52, 0.95];
 // The terrain shader darkens woodland in the picture, for the shade under the trees, out to the first of these
 // distances, fading by the second (chunks.js: the line that scales `photo` by woodsP). The far trees brighten to match.
 const GROUND_SHADE = [3500, 9000];
-const NEAR_BAND = 55;                // the mesh and its card dissolve into each other over this many metres
+const NEAR_BAND = 55;                // the mesh and its card dissolve into each other over this many meters
 // The maps of the trees' shade: texels across each (by quality tier), and half the width of the innermost (m).
 // The outermost reaches as far as the tier's shadows go; the ones between are spaced evenly by ratio.
 const SHADE_N = { low: 512, med: 1024, high: 2048, ultra: 2048 }, SHADE_INNER = 128;
@@ -89,12 +89,12 @@ const SHADE_MIPS = 4;                // smaller copies kept of each map, each ha
 function makeLeafTexture() {
   const T = 256, c = document.createElement('canvas'); c.width = c.height = 2 * T;
   const g = c.getContext('2d'), rnd = mulberry32(4242), r = (a, b) => a + (b - a) * rnd();
-  const grey = (lum, twig = 0) => `rgb(${Math.round(clamp(lum, 0, 1) * 255)},${twig ? 255 : 0},0)`;
+  const gray = (lum, twig = 0) => `rgb(${Math.round(clamp(lum, 0, 1) * 255)},${twig ? 255 : 0},0)`;
   const leaf = (x, y, ang, len, wid, lum) => {
-    g.fillStyle = grey(lum); g.beginPath();
+    g.fillStyle = gray(lum); g.beginPath();
     g.ellipse(x + Math.cos(ang) * len * 0.5, y + Math.sin(ang) * len * 0.5, len * 0.5, wid * 0.5, ang, 0, 6.2832); g.fill();
   };
-  const twig = (x0, y0, x1, y1, w) => { g.strokeStyle = grey(0.5, 1); g.lineWidth = w; g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke(); };
+  const twig = (x0, y0, x1, y1, w) => { g.strokeStyle = gray(0.5, 1); g.lineWidth = w; g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke(); };
   const tile = (i, fn) => { g.save(); g.beginPath(); g.rect((i % 2) * T + 3, (i >> 1) * T + 3, T - 6, T - 6); g.clip(); g.translate((i % 2) * T, (i >> 1) * T); fn(); g.restore(); };
 
   // A spray is built in three sizes so that it still has a shape when it is small on screen: a handful of
@@ -119,7 +119,7 @@ function makeLeafTexture() {
     }
   };
   const bough = () => {
-    const needle = (x, y, a, len, lum) => { g.strokeStyle = grey(lum); g.lineWidth = r(1.4, 2.4); g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len); g.stroke(); };
+    const needle = (x, y, a, len, lum) => { g.strokeStyle = gray(lum); g.lineWidth = r(1.4, 2.4); g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len); g.stroke(); };
     const shoot = (x0, y0, a, L, depth) => {
       const x1 = x0 + Math.cos(a) * L, y1 = y0 + Math.sin(a) * L;
       twig(x0, y0, x1, y1, depth ? 1.3 : 2.6);
@@ -182,7 +182,7 @@ class Builder {
     this.rnd = mulberry32(seed);
     this.P = []; this.N = []; this.UV = []; this.A = []; this.I = [];
     this.lobes = [];                     // foliage masses as ellipsoids [cx, cy, cz, rx, ry, rz]
-    this.dense = 0.3;                    // how fast light dies inside a mass, per metre
+    this.dense = 0.3;                    // how fast light dies inside a mass, per meter
   }
   r(a = 0, b = 1) { return a + (b - a) * this.rnd(); }
   dir() { const y = this.r(-1, 1), a = this.r(0, 6.2832), s = Math.sqrt(1 - y * y); return [s * Math.cos(a), y, s * Math.sin(a)]; }
@@ -199,9 +199,9 @@ class Builder {
       for (const l of this.lobes) {
         const qx = (p[0] - l[0]) / l[3], qy = (p[1] - l[1]) / l[4], qz = (p[2] - l[2]) / l[5], mx = d[0] / l[3], my = d[1] / l[4], mz = d[2] / l[5];
         // the solid heart of a mass lies a little inside its leafy surface (0.72 = 0.85 squared)
-        const a = mx * mx + my * my + mz * mz, b = qx * mx + qy * my + qz * mz, disc = b * b - a * (qx * qx + qy * qy + qz * qz - 0.72);
-        if (disc <= 0) continue;
-        const root = Math.sqrt(disc);
+        const a = mx * mx + my * my + mz * mz, b = qx * mx + qy * my + qz * mz, disk = b * b - a * (qx * qx + qy * qy + qz * qz - 0.72);
+        if (disk <= 0) continue;
+        const root = Math.sqrt(disk);
         path += Math.max((-b + root) / a, 0) - Math.max((-b - root) / a, 0);
       }
       const T = Math.exp(-this.dense * path), w = d[1] < 0 ? T * 0.45 : T;      // the ground gives less light than the sky
@@ -227,7 +227,7 @@ class Builder {
     }
   }
 
-  /** One foliage card: centre c, half-axes U and V, a tile of the leaf texture. shade gives each corner [normal, openness]. */
+  /** One foliage card: center c, half-axes U and V, a tile of the leaf texture. shade gives each corner [normal, openness]. */
   card(c, U, V, tile, shade, lum = 1) {
     const flip = tile < 2 && this.rnd() < 0.5, u0 = (tile % 2) * 0.5, v0 = 1 - ((tile >> 1) + 1) * 0.5, m = 0.012;
     const idx = [];
@@ -241,11 +241,11 @@ class Builder {
 
   /**
    * A clump of foliage: several cards through one point at different angles.
-   * o.flat tips them toward horizontal layers, o.star adds conifer boughs laid out from the centre,
+   * o.flat tips them toward horizontal layers, o.star adds conifer boughs laid out from the center,
    * o.hang drops strands below it.
    */
   cluster(c, cr, o) {
-    // The clump takes its light from where it sits in the crown; each corner leans out from the clump's centre,
+    // The clump takes its light from where it sits in the crown; each corner leans out from the clump's center,
     // so the crown has a lit side and every clump on it a highlight.
     // Each card also keeps a little of its own facing, so the cards of a clump catch the light differently.
     const s = this.sky(c);
@@ -259,7 +259,7 @@ class Builder {
     };
     const lum = this.r(0.74, 1.18);
     for (let k = 0; k < (o.star || 0); k++) {
-      // a conifer bough laid out from the centre of the clump
+      // a conifer bough laid out from the center of the clump
       const a = ((k + this.r(-0.3, 0.3)) / o.star) * 6.2832, tilt = this.r(-0.3, 0.5);
       const d = norm([Math.cos(a), tilt, Math.sin(a)]), side = norm(cross(d, [0, 1, 0])), roll = this.r(-0.6, 0.6);
       const V = add(mul(side, Math.cos(roll)), mul(cross(side, d), Math.sin(roll)));
@@ -323,7 +323,7 @@ function lobed(seed, o) {
 function whorled(seed, o) {
   const B = new Builder(seed), H = o.H;
   const reach = (t) => H * o.spread * Math.pow(Math.max(1 - (t - o.base) / (1 - o.base), 0), o.pow) + 0.3;
-  // for the light, the crown is a stack of discs narrowing to the tip
+  // for the light, the crown is a stack of disks narrowing to the tip
   B.lobes = Array.from({ length: 6 }, (_, k) => { const t = o.base + ((1 - o.base) * (k + 0.5)) / 6, r = reach(t) * 0.8; return [0, t * H, 0, r, (((1 - o.base) * H) / 6) * 0.9, r]; });
   B.dense = o.dense || 0.4;
   B.limb([0, -0.6, 0], [0, H * 0.5, 0], o.trunkR * 1.15, o.trunkR * 0.6, 7);
@@ -353,10 +353,10 @@ const ring = (B, H, n, y0, y1, d0, d1, rx, ry) => Array.from({ length: n }, (_, 
   return [Math.cos(a) * d, H * B.r(y0, y1), Math.sin(a) * d, H * rx * k, H * ry * B.r(0.9, 1.1), H * rx * k];
 });
 
-// leaf and bark colours are linear albedo; tint is how far the foliage follows the colour of the picture under it;
-// dense is how fast light dies inside the crown's masses (per metre).
+// leaf and bark colors are linear albedo; tint is how far the foliage follows the color of the picture under it;
+// dense is how fast light dies inside the crown's masses (per meter).
 const SPECIES = [
-  // 0-2 southern beech: tiers of fine foliage, very dark; the third is the tall, high-crowned forest form
+  // 0-2 broadleaved forest trees (oak, maple, ash): tiers of fine foliage, very dark; the third is the tall, high-crowned forest form
   { leaf: [0.068, 0.112, 0.036], bark: [0.085, 0.075, 0.06], tint: 0.6,
     make: () => lobed(11, { dense: 0.28, H: 21, trunkR: 0.34, trunkTop: 0.72, cr: 0.095, per: 11, twigs: 0.2, leaf: { cards: 5, flat: 0.3, tile: 0 },
       lobes: (B, H) => [[B.r(-1, 1), H * 0.77, B.r(-1, 1), H * 0.2, H * 0.17, H * 0.2], ...ring(B, H, 5, 0.45, 0.66, 0.14, 0.21, 0.18, 0.15)] }) },
@@ -366,26 +366,26 @@ const SPECIES = [
   { leaf: [0.070, 0.110, 0.034], bark: [0.09, 0.08, 0.065], tint: 0.6,
     make: () => lobed(13, { dense: 0.28, H: 25, trunkR: 0.36, trunkTop: 0.8, cr: 0.078, per: 11, twigs: 0.25, leaf: { cards: 5, flat: 0.3, tile: 0 },
       lobes: (B, H) => [[B.r(-1, 1), H * 0.83, B.r(-1, 1), H * 0.16, H * 0.13, H * 0.16], ...ring(B, H, 4, 0.6, 0.76, 0.1, 0.16, 0.14, 0.12)] }) },
-  // 3-4 podocarps: rimu with hanging foliage, and a narrow kahikatea, both standing above the canopy
+  // 3-4 tall forest conifers: one with hanging foliage (hemlock, cedar) and a narrow one, both standing above the canopy
   { leaf: [0.090, 0.114, 0.036], bark: [0.10, 0.075, 0.055], tint: 0.45,
     make: () => lobed(21, { dense: 0.20, H: 31, trunkR: 0.42, trunkTop: 0.9, cr: 0.062, per: 8, twigs: 0.6, leaf: { cards: 3, flat: 0.4, tile: 0, hang: 2, hangLen: 1.9 },
       lobes: (B, H) => [[0, H * 0.92, 0, H * 0.1, H * 0.08, H * 0.1], ...ring(B, H, 3, 0.74, 0.86, 0.08, 0.14, 0.1, 0.08), ...ring(B, H, 3, 0.55, 0.7, 0.1, 0.17, 0.095, 0.075)] }) },
   { leaf: [0.068, 0.106, 0.041], bark: [0.11, 0.10, 0.09], tint: 0.45,
     make: () => lobed(22, { dense: 0.24, H: 28, trunkR: 0.36, trunkTop: 0.93, cr: 0.058, per: 8, twigs: 0.5, leaf: { cards: 4, flat: 0.3, tile: 0 },
       lobes: (B, H) => Array.from({ length: 8 }, (_, i) => { const t = i / 7, a = i * 2.4, d = H * (0.13 - 0.1 * t); return [Math.cos(a) * d, H * (0.46 + 0.5 * t), Math.sin(a) * d, H * (0.1 - 0.035 * t), H * 0.07, H * (0.1 - 0.035 * t)]; }) }) },
-  // 5 small broadleaved bush tree, 6 kanuka scrub: grey-green, rounded, many stems
+  // 5 small broadleaved understory tree, 6 brush (juniper and sagebrush country): gray-green, rounded, many stems
   { leaf: [0.076, 0.132, 0.041], bark: [0.08, 0.07, 0.055], tint: 0.6,
     make: () => lobed(31, { dense: 0.37, H: 8.5, trunkR: 0.16, trunkTop: 0.55, cr: 0.16, per: 8, twigs: 0.1, leaf: { cards: 4, flat: 0.2, tile: 1 },
       lobes: (B, H) => [[0, H * 0.72, 0, H * 0.3, H * 0.24, H * 0.3], ...ring(B, H, 4, 0.42, 0.58, 0.22, 0.3, 0.27, 0.2)] }) },
   { leaf: [0.080, 0.108, 0.052], bark: [0.11, 0.095, 0.08], tint: 0.4,
     make: () => lobed(32, { dense: 0.42, H: 6.5, trunkR: 0.11, stems: 1, cr: 0.17, per: 8, twigs: 0.3, leaf: { cards: 4, flat: 0.25, tile: 0 },
       lobes: (B, H) => [[0, H * 0.7, 0, H * 0.3, H * 0.25, H * 0.3], ...ring(B, H, 3, 0.48, 0.62, 0.2, 0.3, 0.27, 0.21)] }) },
-  // 7-8 young radiata pine: a dense cone to the ground
+  // 7-8 young pine: a dense cone to the ground
   { leaf: [0.048, 0.094, 0.054], bark: [0.085, 0.06, 0.045], tint: 0.3,
     make: () => whorled(41, { dense: 0.37, H: 15, trunkR: 0.2, base: 0.07, spread: 0.3, pow: 0.85, step: 0.066, per: 6, rise: 0.32, width: 0.44, gaps: 0.1 }) },
   { leaf: [0.046, 0.090, 0.054], bark: [0.085, 0.06, 0.045], tint: 0.3,
     make: () => whorled(42, { dense: 0.37, H: 19, trunkR: 0.25, base: 0.12, spread: 0.25, pow: 0.7, step: 0.06, per: 6, rise: 0.22, width: 0.46, gaps: 0.16 }) },
-  // 9 mature radiata: a bare lower trunk under a ragged, heavy-limbed crown; 10 macrocarpa, the dense dark shelter-belt tree
+  // 9 mature pine (ponderosa): a bare lower trunk under a ragged, heavy-limbed crown; 10 a dense dark windbreak conifer
   { leaf: [0.050, 0.092, 0.050], bark: [0.08, 0.058, 0.045], tint: 0.25,
     make: () => lobed(51, { dense: 0.28, H: 30, trunkR: 0.42, trunkTop: 0.9, cr: 0.07, per: 9, twigs: 0.5, leaf: { star: 3, cards: 3, tile: 2 },
       lobes: (B, H) => [[H * 0.02, H * 0.88, 0, H * 0.14, H * 0.1, H * 0.14], ...ring(B, H, 4, 0.68, 0.8, 0.1, 0.19, 0.14, 0.09), ...ring(B, H, 4, 0.48, 0.62, 0.13, 0.22, 0.13, 0.085)] }) },
@@ -395,7 +395,7 @@ const SPECIES = [
   // 11 Douglas fir: a tall narrow spire with drooping tiers
   { leaf: [0.038, 0.078, 0.054], bark: [0.075, 0.06, 0.05], tint: 0.25,
     make: () => whorled(61, { dense: 0.37, H: 31, trunkR: 0.34, base: 0.16, spread: 0.2, pow: 0.72, step: 0.05, per: 5, rise: -0.22, width: 0.4, gaps: 0.08 }) },
-  // 12 Lombardy poplar, 13 crack willow, 14-15 broad paddock and town trees
+  // 12 Lombardy poplar (it also stands in for aspen and birch), 13 willow, 14-15 broad field and town trees (ash, cottonwood)
   { leaf: [0.110, 0.175, 0.052], bark: [0.16, 0.15, 0.13], tint: 0.35,
     make: () => lobed(71, { dense: 0.28, H: 27, trunkR: 0.3, trunkTop: 0.95, cr: 0.045, per: 9, twigs: 0, leaf: { cards: 3, upright: 0.85, tall: 1.7, tile: 1 },
       lobes: (B, H) => Array.from({ length: 7 }, (_, i) => { const t = i / 6, w = 0.058 * Math.pow(Math.sin(Math.PI * (0.12 + 0.82 * Math.pow(t, 0.8))), 0.6) + 0.01; return [B.r(-0.3, 0.3), H * (0.17 + 0.76 * t), B.r(-0.3, 0.3), H * w, H * 0.085, H * w]; }) }) },
@@ -468,7 +468,7 @@ const HEAD = /* glsl */`
 // Vertex-stage code shared by the impostors, the near meshes and the shade maps.
 const TREE_VERT_FN = /* glsl */`
 uniform float uLandHalf, uNow;
-uniform vec4 uVar[NV];       // atlas frame half-width, centre height, bounding radius, share of colour taken from the picture
+uniform vec4 uVar[NV];       // atlas frame half-width, center height, bounding radius, share of color taken from the picture
 uniform vec3 uLeaf[NV];
 uniform vec4 uLod;           // share of candidates in use, thinning starts (m), thinning length (m), trees end (m)
 uniform vec4 uNear;          // real meshes give way to cards between x and y (m); z: the shade on the ground ends (m)
@@ -482,17 +482,17 @@ float treeKeep(float d) { float t = max(d - uLod.y, 0.0) / uLod.z; return 1.0 / 
 float treeGrow(float rank, float keep) { float D = uLod.x * keep; return 1.0 - smoothstep(0.8 * D, D, rank); }
 // A number 0..1 that belongs to the tree (its rank is stored in 16 bits, the same in every buffer that holds it).
 float treeHash(float rank, float k) { return fract(floor(rank * 65535.0 + 0.5) * k); }
-// What a tree left standing among thinned-out neighbours makes up for them. x: how much taller it is drawn,
-// y: how many crowns wide its card is. A tree that stands alone has no neighbours to stand for.
+// What a tree left standing among thinned-out neighbors makes up for them. x: how much taller it is drawn,
+// y: how many crowns wide its card is. A tree that stands alone has no neighbors to stand for.
 vec2 treeSize(float keep, float solitary) {
   float hs = min(pow(keep, -0.2), 1.8);                 // not much taller: on a skyline every tree is seen whole
   return vec2(hs, mix(max(inversesqrt(keep) / hs, 1.0), 1.0, solitary));
 }
 
-// How wooded a colour from the picture is: 1 dark green, 0 open. The picture's own shadows are deep blue and
+// How wooded a color from the picture is: 1 dark green, 0 open. The picture's own shadows are deep blue and
 // hide what grows in them, so there the vegetation rules (ruleDense) are trusted instead; and the very darkest
 // ground on the flat (level: 1), where no hill can shade it, is dense conifer plantation whatever its hue.
-// shadowed: 1 where the picture's colour is no guide to the foliage.
+// shadowed: 1 where the picture's color is no guide to the foliage.
 float woodsIn(vec3 c, float ruleDense, float level, out float shadowed) {
   float lum = dot(c, vec3(0.3, 0.55, 0.15));
   float rule = smoothstep(0.25, 0.6, ruleDense);
@@ -507,9 +507,9 @@ float woodsAt(vec2 xz, float ruleDense) {
   float shadowed;
   return im.a < 0.5 ? -1.0 : woodsIn(im.rgb, ruleDense, 1.0, shadowed);
 }
-// The picture a tree is judged by. The finest level only reaches a few kilometres from the camera, and a tree
+// The picture a tree is judged by. The finest level only reaches a few kilometers from the camera, and a tree
 // must not change its mind when the edge of that level passes over it: the level follows the tree's distance,
-// blended from one to the next, so the judgement drifts instead of jumping.
+// blended from one to the next, so the judgment drifts instead of jumping.
 vec4 treePicture(vec2 xz, float d) {
   float lv = clamp(log2(max(d, 1.0) / 3000.0), 0.0, 3.0), l0 = floor(lv), f = lv - l0;
   vec4 a = imagery(xz, l0);
@@ -521,7 +521,7 @@ ${BUILDING_COVER_GLSL}
 // Does a tree stand here? 0 no, 1 yes, between the two it is drawn part-grown, so a tree whose picture changes
 // under it (a finer level arriving) swells or shrinks instead of appearing. Where the picture has loaded it decides:
 // dark green ground is woodland, and ground darker than its surroundings is a shelter belt or a clump.
-// ground: the tree's slope and rule density (aC). pic: the picture's colour (r < 0 where there is none);
+// ground: the tree's slope and rule density (aC). pic: the picture's color (r < 0 where there is none);
 // dense: 0 a lone tree .. 1 inside closed forest.
 float treeKept(vec3 base, float d, float rank, float flags, vec4 ground, out vec3 pic, out float dense) {
   if (buildingCover(base.xz) > 0.5) { pic = vec3(-1.0); dense = 0.0; return 0.0; }       // a building stands here (world/cities.js)
@@ -533,11 +533,19 @@ float treeKept(vec3 base, float d, float rank, float flags, vec4 ground, out vec
     float lum = dot(im.rgb, W), shadowed;
     float green = step(im.r, im.g * 1.1) * step(im.b, im.g * 1.15);
     float woods = woodsIn(im.rgb, ruleDense, 1.0 - smoothstep(0.12, 0.3, length(ground.xy) * 2.0), shadowed);
+    // In prairie and plowed country a dark green field is a crop far more often than a wood: on level ground
+    // there (the regional map says how wooded the lowlands are) only the darkest of the picture is taken for trees.
+    // Shelter belts and clumps (below) and whatever the rules plant are not touched by this.
+    float moist = texture2D(tRegion, base.xz / (2.0 * uWxHalf) + 0.5).g;
+    // (Nothing is plowed in the mountains: from about 1,500 m under the tree line up, the picture is trusted as it was.)
+    float tlHere = treeLine(base.xz);
+    float crop = (1.0 - smoothstep(0.44, 0.62, moist)) * (1.0 - smoothstep(0.05, 0.12, length(ground.xy) * 2.0)) * (1.0 - smoothstep(tlHere - 1560.0, tlHere - 1160.0, base.y));
+    woods *= mix(1.0, smoothstep(0.026, 0.014, lum), crop);
     float lumW = dot(imagery(base.xz, 3.0).rgb, W);
     float line = smoothstep(0.1, 0.35, 1.0 - lum / max(lumW, 0.004)) * smoothstep(0.085, 0.045, lum) * green;
     woods = max(woods, line);
     dense = woods * smoothstep(0.075, 0.035, lumW);
-    pic = shadowed > 0.5 ? vec3(-1.0) : im.rgb;                   // a tree takes no colour from a shadow
+    pic = shadowed > 0.5 ? vec3(-1.0) : im.rgb;                   // a tree takes no color from a shadow
     float pasture = step(im.r, im.g * 1.05) * step(im.b, im.g) * smoothstep(0.03, 0.05, lum) * smoothstep(0.2, 0.12, lum);
     // Thinning with distance takes the head of the list by rank. Whether the picture grows a tree here is drawn
     // on a second number of the tree's own, so that open woodland thins in step with closed forest instead of
@@ -566,9 +574,9 @@ vec3 treeLeaf(int vi, float tintRnd, vec3 pic, float d) {
   vec3 leaf = uLeaf[vi] * (0.78 + 0.44 * tintRnd);
   if (pic.r >= 0.0) {
     // Take the hue of the picture, but keep the brightness inside what foliage can be. Far away the trees
-    // follow the picture more closely: there they should give the forest relief, not a colour of their own.
+    // follow the picture more closely: there they should give the forest relief, not a color of their own.
     float lum = max(dot(pic, vec3(0.3, 0.55, 0.15)), 0.004), want = dot(leaf, vec3(0.3, 0.55, 0.15)), far = smoothstep(500.0, 2500.0, d);
-    float leafy = smoothstep(1.3, 1.05, pic.b / max(pic.g, 1e-4)) * smoothstep(1.3, 1.05, pic.r / max(pic.g, 1e-4));   // blue or brown ground lends no colour
+    float leafy = smoothstep(1.3, 1.05, pic.b / max(pic.g, 1e-4)) * smoothstep(1.3, 1.05, pic.r / max(pic.g, 1e-4));   // blue or brown ground lends no color
     float lit = treeFar(d);
     leaf = mix(leaf, pic / lum * clamp(lum * 3.4, want * mix(0.95, 0.9, far), want * mix(mix(1.55, 1.8, far), 3.2, lit)), mix(mix(uVar[vi].w, 0.85, far), 0.95, lit) * leafy);
   }
@@ -581,7 +589,7 @@ flat varying vec4 vLeaf, vTr, vIn, vView, vRot;
 flat varying vec2 vWood;
 void treeLight(vec3 C, vec3 leaf, float yaw, float dense, float fade, float lod) {
   float hReg = regionHeight(C.xz);
-  // Neighbours shade this tree only if they stand between it and the sun: look that way in the picture.
+  // Neighbors shade this tree only if they stand between it and the sun: look that way in the picture.
   float sunward = woodsAt(C.xz + normalize(uSunDir.xz + vec2(1e-4)) * 16.0, dense);
   vWood = vec2(dense, sunward < 0.0 ? dense * 0.7 : dense * sunward);
   float sh = terrainShadow(C, hReg) * (1.0 - 0.9 * cloudShadow(C));
@@ -624,7 +632,7 @@ vec3 treeShade(float lum, float bark, float open, vec3 N, float hRel, int vi, ve
   // Sunlight reaches the point if the sun stands inside the cone of open directions round N (open 0.625 = a full hemisphere).
   float d = dot(N, L);
   float vis = smoothstep(-0.5, 0.25, d - (1.0 - 1.6 * open));
-  // In closed forest the neighbours shade the lower crown, more of it as the sun drops.
+  // In closed forest the neighbors shade the lower crown, more of it as the sun drops.
   float line = clamp(1.0 - 1.45 * L.y, 0.0, 0.85);
   float sun = vLeaf.a * mix(1.0, smoothstep(line - 0.3, line + 0.05, hRel), vWood.y);
   vec3 light = uSunCol * (sun * vis * (0.62 + 0.38 * max(d, 0.0)));
@@ -696,7 +704,7 @@ void main() {
   float pix = dist * uPixAngle, mw = max(1.0, 1.4 * pix / halfW), mh = max(1.0, 1.4 * pix / halfH);
   vec2 corner = position.xy;
   vec3 right = normalize(vec3(v.z, 0.0, -v.x)), up = cross(v, right);
-  // A card that stands for neighbours stands for the ground they covered too: its top leans back along the slope
+  // A card that stands for neighbors stands for the ground they covered too: its top leans back along the slope
   // by the spacing of the trees still drawn. Seen across level ground that changes nothing; on a mountainside
   // that faces the camera it is what keeps the thinned forest closed.
   vec3 gn = normalize(vec3(-aC.x * 2.0, 1.0, -aC.y * 2.0)), back = -v - gn * dot(-v, gn);
@@ -726,7 +734,7 @@ void main() {
     if (vDim.w < 1.0 && dissolve() >= vDim.w) discard;                // the real mesh is drawn in the pixels left out
   #endif
   float lod = vRot.w, n = vFrame.w;
-  // Crowns side by side: the middle one is the tree itself, the others stand in for neighbours thinned away.
+  // Crowns side by side: the middle one is the tree itself, the others stand in for neighbors thinned away.
   // Each is another view of the same model, a little shorter, lit as if it had been turned that way.
   float X = (vUv.x - 0.5) * n, k = floor(X + 0.5), fu = X - k + 0.5, fv = vUv.y, turn = 0.0, side = 1.0;
   vec2 rot = vRot.xy;
@@ -825,12 +833,12 @@ void main() {
 }`;
 
 // The shade of the trees on the ground. Each tree's silhouette as the sun sees it is laid along the slope it
-// stands on and drawn FROM ABOVE into a map fixed to the ground (one of a few, one inside the other round the
+// stands on and drawn FROM ABOVE into a map fixed to the ground (one of a few, one inside the other around the
 // camera: see Trees.shade), and the ground shaders read the map (treeShade in world/groundlight.js).
 //
 // The shadows used to be drawn per tree on the screen, as quads multiplied into the picture. Seen at a shallow
 // angle such a quad is a few pixels deep: its mip level, its fade and so its shape followed the view, so a
-// shadow a kilometre off changed and crept as the camera moved, each stood at its tree's own height and slid
+// shadow a kilometer off changed and crept as the camera moved, each stood at its tree's own height and slid
 // against ground whose mesh was coarser, and where crowns overlapped the shadows multiplied. Drawn into a map,
 // a shadow is a property of the place:
 //   - the map's middle moves in whole texels, so a tree lands on the same texels every time it is drawn;
@@ -843,7 +851,7 @@ const SHADE_VERT = (light) => /* glsl */`${HEAD}
 attribute vec4 aA, aB, aC, aP;
 uniform vec4 uAtlas;
 uniform vec3 uShadeEye;          // the camera the picture is drawn from (this pass has none of its own)
-uniform vec4 uShadeM;            // this map: its middle x, z (m), 2 / its width (1/m), metres a texel
+uniform vec4 uShadeM;            // this map: its middle x, z (m), 2 / its width (1/m), meters a texel
 uniform vec4 uShadeL;            // xyz: where the light that throws the shade comes from; w: 1 the sun, 0 straight overhead (no sun)
 varying vec2 vUv;
 flat varying vec4 vFrame;
@@ -914,7 +922,7 @@ void main() {
 const QUAD = new Float32Array([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0]), QUAD_INDEX = new Uint16Array([0, 1, 2, 0, 2, 3]);
 const FAR_TRI = new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]);      // one triangle; the card is the square in its corner
 // Elevation zoom the terrain uses for a patch of a given size (as zoomFor in chunks.js).
-const zoomFor = (size) => Math.max(4, Math.min(dem.MAX_Z, Math.round(Math.log2((metresPerPixel(0) * 64) / size))));
+const zoomFor = (size) => Math.max(4, Math.min(dem.MAX_Z, Math.round(Math.log2((metersPerPixel(0) * 64) / size))));
 const NEVER = 1e9;
 
 // The layout the placement works to (treeplace.js), and the most trees a far tile can hold.
@@ -1222,7 +1230,7 @@ export class Trees {
       const key = x0 + ',' + z0;
       let t = far.get(key);
       if (!t) { t = { x0, z0, built: false, coarse: false, count: 0, mesh: null, geo: null, wait: 0, job: null }; far.set(key, t); }
-      // Which mesh does the terrain draw here? The 4 km patch round this tile splits when the camera is within
+      // Which mesh does the terrain draw here? The 4 km patch around this tile splits when the camera is within
       // SPLIT times its size (and merges again somewhat later: between the two, leave the tile as it is).
       const px = Math.floor(x0 / (2 * S)) * 2 * S, pz = Math.floor(z0 / (2 * S)) * 2 * S;
       const pd = Math.hypot(Math.max(px - cam.x, 0, cam.x - (px + 2 * S)), Math.max(pz - cam.z, 0, cam.z - (pz + 2 * S)), cam.y - (t.built && t.count ? t.lo + t.yr / 2 : 0));
@@ -1306,7 +1314,7 @@ export class Trees {
     const t = this.tier;
     perf.cpuBegin('trees');
     this.frame++;
-    // A clock of our own for the fades: it never runs backwards (the game's restarts with each flight), and it
+    // A clock of our own for the fades: it never runs backward (the game's restarts with each flight), and it
     // only counts as running while frames are being drawn (patches built while a flight loads are simply there).
     const et = ENV.uTime.value;
     this.now += clamp(et - this.envT, 0, 0.1); this.envT = et;
@@ -1333,11 +1341,11 @@ export class Trees {
    * Draw the shade of the trees into its maps: once a frame, after update() and before the scene is drawn.
    * eye: the camera's position. sunny: 1 in clear sun .. 0 with none (overcast), when the shade lies under the crowns.
    *
-   * There are TREE_SHADE_LEVELS maps, one inside the other, each fixed to the ground and re-centred on the
+   * There are TREE_SHADE_LEVELS maps, one inside the other, each fixed to the ground and re-centered on the
    * camera in whole texels. What a map holds only changes slowly (a tree growing in at the edge of the thinning,
    * the sun's march), so one map is redrawn every other frame, in turn; a map the camera has left behind (a new
    * flight, a change of view) is redrawn at once, and all of them when the light jumps (the clock is set). A map
-   * redrawn round a new middle lands on the same texels of the ground as before (the middle moves in whole
+   * redrawn around a new middle lands on the same texels of the ground as before (the middle moves in whole
    * texels), so the redrawing itself cannot be seen.
    */
   shade(renderer, eye, sunny = 1) {

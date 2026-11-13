@@ -4,11 +4,11 @@
 // Two maps, each RGBA float:
 //   r  the height of the mountain-shadow ceiling: a point lower than this has a ridge between it and the sun
 //   g  how far away (m) the ridge that sets that ceiling is, which gives the width of the shadow's soft edge
-//   b  the mean height of the ground in a ring round the point (valley floors see less sky than ridges)
+//   b  the mean height of the ground in a ring around the point (valley floors see less sky than ridges)
 //   a  the optical depth of the cloud on the sun's ray through the point at the map's reference height
 //
 //   far   the whole region at the regional grid's spacing (about 512 m), fixed in the world
-//   near  1024 x 1024 texels of 40 m round the camera, marched through a height map of its own made from
+//   near  1024 x 1024 texels of 40 m around the camera, marched through a height map of its own made from
 //         elevation tiles of about 55 m (zoom 11) as they arrive; it scrolls with the camera in whole
 //         blocks of 32 texels and is addressed toroidally, so nothing in it ever moves
 //
@@ -30,13 +30,13 @@ import { FullscreenQuad, fsMaterial } from '../render/fullscreen.js';
 import { perf } from '../render/perf.js';
 
 const N = 1024;                      // texels across each map
-const TS = 40;                       // near map: metres a texel
+const TS = 40;                       // near map: meters a texel
 const BLOCK = 32, NB = N / BLOCK;    // the near height map is filled in blocks of this many texels
 const HEIGHT_Z = 11;                 // elevation zoom wanted for it (about 55 m a pixel here)
-const VALID = (NB / 2 - 1.5) * BLOCK * TS;   // the near map is trusted this far from its centre (the outermost blocks may be mid-scroll)
+const VALID = (NB / 2 - 1.5) * BLOCK * TS;   // the near map is trusted this far from its center (the outermost blocks may be mid-scroll)
 const BLEND = 1400;                  // and gives way to the far map over this distance inside that
 const SLICES = 8;                    // a full refresh takes this many frames
-const SOFT = 0.011, SOFT_MIN = 5;    // half-width of a shadow edge in height: metres per metre of distance to the ridge, and at least
+const SOFT = 0.011, SOFT_MIN = 5;    // half-width of a shadow edge in height: meters per meter of distance to the ridge, and at least
 const CLOUD_L_MIN = 0.12;            // the cloud code's own floor on the sun's height (see cloudShadowDepth)
 
 // ---- uniforms shared with every ground shader. Made here, at import, so a material built before the
@@ -44,19 +44,19 @@ const CLOUD_L_MIN = 0.12;            // the cloud code's own floor on the sun's 
 const hold = (k, v) => ENV[k] || (ENV[k] = { value: v });
 hold('tLmNear', null); hold('tLmFar', null);
 hold('uLmNear', new THREE.Vector4(1 / (N * TS), VALID - BLEND, 1 / BLEND, 0));   // 1 / window (1/m), radius the near map has to itself (m), 1 / blend width, cloud reference height (m)
-hold('uLmCentre', new THREE.Vector2(1e9, 1e9));                                 // centre of the near window (m)
+hold('uLmCenter', new THREE.Vector2(1e9, 1e9));                                 // center of the near window (m)
 hold('uLmView', 0.001);                                                          // radians a screen pixel spans
-hold('uLmSun', new THREE.Vector4(0, 0, SOFT, SOFT_MIN));                          // xz the sun's ray covers per metre of height (as the cloud code clamps it); shadow edge softness
+hold('uLmSun', new THREE.Vector4(0, 0, SOFT, SOFT_MIN));                          // xz the sun's ray covers per meter of height (as the cloud code clamps it); shadow edge softness
 hold('tAcShadow', null); hold('uAcShadowM', new THREE.Matrix4()); hold('uAcShadowP', new THREE.Vector4(0, 1, 0, 0));
 hold('tSunShadow', null); hold('uSunShadowM', [new THREE.Matrix4(), new THREE.Matrix4()]); hold('uSunShadowP', new THREE.Vector4(0, 1, 0.2, 1));
-// The trees' shade (world/trees.js draws it): top-down maps round the camera, one inside the other, as the layers of one texture.
+// The trees' shade (world/trees.js draws it): top-down maps around the camera, one inside the other, as the layers of one texture.
 export const TREE_SHADE_LEVELS = 6;
 hold('tTreeShade', null);
-hold('uTreeShadeA', Array.from({ length: TREE_SHADE_LEVELS }, () => new THREE.Vector4(0, 0, 0, 0)));   // each level: its centre x, z (m), 1 / its width (1/m; 0: not drawn yet)
+hold('uTreeShadeA', Array.from({ length: TREE_SHADE_LEVELS }, () => new THREE.Vector4(0, 0, 0, 0)));   // each level: its center x, z (m), 1 / its width (1/m; 0: not drawn yet)
 hold('uTreeShadeP', new THREE.Vector4(0, 0, 0, 1));                              // x: 1 once there is a map; y: how far the shade lies under the crowns (no sun) instead of along the sun's ray; z: 1 / texels across a map; w: how many times wider each map is than the one inside it
-hold('uSpot', [new THREE.Vector4(0, 0, 0, 0), new THREE.Vector4(0, -1, 0, 2), new THREE.Vector4(0, 0, 0, 0)]);   // the landing light: position + range, direction + cos of the cone, colour (see localLight)
+hold('uSpot', [new THREE.Vector4(0, 0, 0, 0), new THREE.Vector4(0, -1, 0, 2), new THREE.Vector4(0, 0, 0, 0)]);   // the landing light: position + range, direction + cos of the cone, color (see localLight)
 
-export const GROUND_LIGHT_UNIFORMS = ['tLmNear', 'tLmFar', 'uLmNear', 'uLmCentre', 'uLmSun', 'uLmView', 'tAcShadow', 'uAcShadowM', 'uAcShadowP', 'tSunShadow', 'uSunShadowM', 'uSunShadowP', 'uSpot', 'tTreeShade', 'uTreeShadeA', 'uTreeShadeP'];
+export const GROUND_LIGHT_UNIFORMS = ['tLmNear', 'tLmFar', 'uLmNear', 'uLmCenter', 'uLmSun', 'uLmView', 'tAcShadow', 'uAcShadowM', 'uAcShadowP', 'tSunShadow', 'uSunShadowM', 'uSunShadowP', 'uSpot', 'tTreeShade', 'uTreeShadeA', 'uTreeShadeP'];
 
 /**
  * Needs, declared by the including shader: tRegion, tWxB (sampler2D), uWxHalf (float), uSunDir (vec3), and
@@ -67,7 +67,7 @@ export const GROUND_LIGHT_UNIFORMS = ['tLmNear', 'tLmFar', 'uLmNear', 'uLmCentre
  *   float cloudShadow(vec3 p)                 0 clear .. 1 under thick cloud (or rain)
  *   float localShadow(vec3 p)                 1 lit .. 0 in the shadow of the aircraft or of a building
  *   float sunMapCover(vec3 p)                 1 where the building shadow maps reach, 0 beyond them (for whatever stands in for them there)
- *   vec3  localLight(vec3 p, vec3 n)          light from the aircraft's landing lamp falling on a surface
+ *   vec3  localLight(vec3 p, vec3 n)          light from the aircraft's landing light falling on a surface
  *   float treeShade(vec3 p, vec2 gx, vec2 gy) 0 open .. 1 in the shade of trees; gx, gy: how p.xz changes from one pixel to
  *                                             the next across and up the screen (dFdx and dFdy of it, in a fragment shader)
  * Define LOCAL_SHADOW_IN_TERRAIN before it to have terrainShadow() include localShadow().
@@ -80,16 +80,16 @@ uniform sampler2DArray tTreeShade;
 uniform vec4 uTreeShadeA[${TREE_SHADE_LEVELS}], uTreeShadeP;
 uniform sampler2DShadow tSunShadow;
 uniform vec4 uLmNear, uLmSun, uAcShadowP, uSunShadowP;
-uniform vec2 uLmCentre;
+uniform vec2 uLmCenter;
 uniform float uLmView;
 uniform mat4 uAcShadowM, uSunShadowM[2];
 uniform vec4 uSpot[3];
 
 // The aircraft's own shadow. Its silhouette as the sun sees it is kept with its mipmaps; the sun is half a
-// degree wide, so the shadow is that silhouette blurred by 0.0093 m for every metre the light travels on.
+// degree wide, so the shadow is that silhouette blurred by 0.0093 m for every meter the light travels on.
 float aircraftShadow(vec3 p) {
   if (uAcShadowP.x <= 0.0) return 1.0;
-  vec3 q = (uAcShadowM * vec4(p, 1.0)).xyz;                // xy: place in the map 0..1, z: metres past the aircraft's middle, down-sun
+  vec3 q = (uAcShadowM * vec4(p, 1.0)).xyz;                // xy: place in the map 0..1, z: meters past the aircraft's middle, down-sun
   if (q.z < -uAcShadowP.w || q.z > 1500.0 || q.x < 0.0 || q.y < 0.0 || q.x > 1.0 || q.y > 1.0) return 1.0;
   float blur = max(q.z, 0.0) * 0.0093;                     // width of the soft edge here (m)
   float lod = max(log2(blur / uAcShadowP.y + 1.0) - 1.0, 0.0);
@@ -138,12 +138,12 @@ float lmShade(vec4 m, float y) {
 }
 vec2 terrainLight(vec3 p, float hReg) {
   float k;
-  vec2 d = abs(p.xz - uLmCentre);
+  vec2 d = abs(p.xz - uLmCenter);
   k = clamp((max(d.x, d.y) - uLmNear.y) * uLmNear.z, 0.0, 1.0);
   vec2 r = vec2(1.0, 0.0);
   float yr = max(p.y, hReg);
   if (k < 1.0) { vec4 m = textureLod(tLmNear, p.xz * uLmNear.x, 0.0); r = vec2(lmShade(m, p.y + 3.0), clamp((m.b - yr) / 800.0, 0.0, 1.0)); }
-  // the regional map knows the ground only to the nearest half kilometre: stand well clear of it
+  // the regional map knows the ground only to the nearest half kilometer: stand well clear of it
   if (k > 0.0) { vec4 m = textureLod(tLmFar, p.xz / (2.0 * uWxHalf) + 0.5, 0.0); r = mix(r, vec2(lmShade(m, yr + 45.0), clamp((m.b - yr) / 800.0, 0.0, 1.0)), k); }
   #ifdef LOCAL_SHADOW_IN_TERRAIN
   r.x *= localShadow(p);
@@ -155,14 +155,14 @@ float skyOcclusion(vec3 p, float hReg) { return terrainLight(p, hReg).y; }
 
 // Cloud shadow: the cloud's optical depth along the sun's ray through p, which the bake worked out for the
 // point where that ray meets the map's reference height, plus the gloom under rain (baked in with it).
-// Far off and seen at a low angle, a pixel covers hundreds of metres of ground along the line of sight: the
+// Far off and seen at a low angle, a pixel covers hundreds of meters of ground along the line of sight: the
 // map is read at the mip level that matches, so distant cloud shadows are averaged instead of sparkling.
 float cloudShadow(vec3 p) {
   vec2 q = p.xz - uLmSun.xy * (p.y - uLmNear.w);
-  vec2 d = abs(q - uLmCentre);
+  vec2 d = abs(q - uLmCenter);
   float k = clamp((max(d.x, d.y) - uLmNear.y) * uLmNear.z, 0.0, 1.0);
   float dist = distance(p, cameraPosition);
-  float foot = dist * uLmView / max(abs(cameraPosition.y - p.y) / max(dist, 1.0), 0.04);    // metres of ground under one pixel, the long way
+  float foot = dist * uLmView / max(abs(cameraPosition.y - p.y) / max(dist, 1.0), 0.04);    // meters of ground under one pixel, the long way
   float od = 0.0;
   if (k < 1.0) od = textureLod(tLmNear, q * uLmNear.x, clamp(log2(foot * uLmNear.x * ${N}.0), 0.0, 5.0)).a;
   if (k > 0.0) od = mix(od, textureLod(tLmFar, (p.xz - uLmSun.xy * p.y) / (2.0 * uWxHalf) + 0.5, clamp(log2(foot * ${N}.0 / (2.0 * uWxHalf)), 0.0, 4.0)).a, k);
@@ -204,7 +204,7 @@ float treeShade(vec3 p, vec2 gx, vec2 gy) {
   return sh * uTreeShadeP.x;
 }
 
-// The landing lamp: a cone of light from the aircraft's nose. Zero unless the game switches it on.
+// The landing light: a cone of light from the aircraft's nose. Zero unless the game switches it on.
 vec3 localLight(vec3 p, vec3 n) {
   if (uSpot[2].w <= 0.0) return vec3(0.0);
   vec3 d = p - uSpot[0].xyz;
@@ -240,7 +240,7 @@ float cloudAt(vec3 p) {
 `;
 
 // The regional map. The ceiling over a point is the highest of (ridge height - what the sun's ray climbs on
-// the way to it) over everything sunward of it, from 600 m out (nearer than that the half-kilometre grid
+// the way to it) over everything sunward of it, from 600 m out (nearer than that the half-kilometer grid
 // cannot tell a ridge from the slope the point stands on).
 const FAR_FRAG = BAKE_HEAD + /* glsl */`
 void main() {
@@ -264,10 +264,10 @@ void main() {
 // answer where the near heights end.
 const NEAR_FRAG = BAKE_HEAD + /* glsl */`
 uniform sampler2D tHeight, tLmFar;
-uniform vec4 uWin;          // centre of the window (m) xz, radius of valid heights (m), reference height for the cloud (m)
+uniform vec4 uWin;          // center of the window (m) xz, radius of valid heights (m), reference height for the cloud (m)
 float nearHeight(vec2 xz) { return texture(tHeight, xz * ${(1 / (N * TS)).toExponential(8)}).r; }
 void main() {
-  // which piece of the world this texel holds: the one within half a window of the centre
+  // which piece of the world this texel holds: the one within half a window of the center
   vec2 ti = floor(gl_FragCoord.xy), ci = floor(uWin.xy * ${(1 / TS).toFixed(6)} + 0.5);
   vec2 xz = (ci + mod(ti - ci + ${N / 2}.0, ${N}.0) - ${N / 2}.0 + 0.5) * ${TS}.0;
   float tanE = uSunDir.y / max(length(uSunDir.xz), 1.0e-4);
@@ -410,7 +410,7 @@ export class GroundLight {
     if (this.sun.angleTo(sun) > 0.02 || this.last.distanceTo(cam) > 4000) full = true;
     this.sun.copy(sun); this.last.copy(cam);
     this.uWin.value.set(cx * span, cz * span, VALID, this.yRef);
-    ENV.uLmCentre.value.set(cx * span, cz * span);
+    ENV.uLmCenter.value.set(cx * span, cz * span);
     ENV.uLmNear.value.w = this.yRef;
     const L = tmpV.copy(sun).multiplyScalar(1 / Math.max(sun.y, CLOUD_L_MIN));
     ENV.uLmSun.value.x = L.x; ENV.uLmSun.value.y = L.z;

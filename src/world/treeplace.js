@@ -19,7 +19,7 @@ const hash2 = (x, y, s) => {
   h = Math.imul(h ^ (h >>> 13), 1274126177);
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 };
-// Where there is no picture to show the shelter belts, a loose grid of paddock boundaries stands in:
+// Where there is no picture to show the shelter belts, a loose grid of field boundaries stands in:
 // some of its edges carry a belt. Returns 0, or 1 + a number that picks the belt's species.
 function beltAt(x, z) {
   const G = 310, c = 0.9563, s = 0.2924;                          // turned 17 degrees off north
@@ -47,7 +47,7 @@ export const candidates = (P) => Math.floor(P.PATCH / P.CELL) ** 2;
 /**
  * Propose trees for one PATCH-sized square of ground: the first `share` of its list of candidates (all of it for a
  * terrain patch, the head of it for a far tile: the same trees either way, because the list is made from the
- * square's own seed). H, W: height and water grids, GN across with one cell of margin, `step` metres apart.
+ * square's own seed). H, W: height and water grids, GN across with one cell of margin, `step` meters apart.
  * Fills PA (x and z in the square, height, rank), PB and PC as the shaders' aA, aB and aC; returns how many.
  */
 function propose(P, x0, z0, H, W, GN, step, flats, share, env) {
@@ -61,7 +61,7 @@ function propose(P, x0, z0, H, W, GN, step, flats, share, env) {
   const A = PA, B = PB, C = PC;
   const tl = env.tl + 60, TNm = GN - 4, foot = Math.max(1, Math.round(24 / step));
   const towny = env.towny;
-  // Smooth noise on lattices that divide the patch: each node is hashed once, and neighbouring patches agree along their edges.
+  // Smooth noise on lattices that divide the patch: each node is hashed once, and neighboring patches agree along their edges.
   const lattice = (cells, seed) => {
     const m = cells + 1, g = new Float32Array(m * m), s = size / cells, ix0 = Math.round(x0 / s), iz0 = Math.round(z0 / s);
     for (let j = 0; j < m; j++) for (let i = 0; i < m; i++) g[j * m + i] = hash2(ix0 + i, iz0 + j, seed);
@@ -72,7 +72,7 @@ function propose(P, x0, z0, H, W, GN, step, flats, share, env) {
     };
   };
   const standAt = lattice(3, 11), grownAt = lattice(8, 23), block = size / 3;     // stands about 340 m across, growth about 130 m
-  // moisture changes over kilometres: the patch's corners are enough
+  // moisture changes over kilometers: the patch's corners are enough
   const m00 = env.m[0], m10 = env.m[1], m01 = env.m[2], m11 = env.m[3];
   let count = 0;
   const last = Math.min(total, Math.ceil(total * share));
@@ -143,7 +143,7 @@ function meshHeight(L, n, step, lx, lz) {
 
 /**
  * The trees of one terrain patch, packed as the shaders read them. H, W: the patch's height and water grids
- * (GN across, one cell of margin, `step` metres apart); flats: airfields touching the patch.
+ * (GN across, one cell of margin, `step` meters apart); flats: airfields touching the patch.
  * Returns null if nothing grows there, else { count, lo, yr, A, B, C, start, list }: positions as 16-bit
  * fractions of the patch (heights of lo .. lo + yr), and the index of its GRID x GRID squares.
  */

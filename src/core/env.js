@@ -18,10 +18,10 @@ export const ENV = {
   uSunE: { value: 1000 },
   uSkyP: { value: new THREE.Vector4(0.8, 1, 0, 0) },
   uHaze: { value: new THREE.Vector4(5e-5, 1800, 1, 0) },
-  uHorizon: { value: new THREE.Color(0.6, 0.7, 0.85) },   // horizon sky colour averaged round the compass
+  uHorizon: { value: new THREE.Color(0.6, 0.7, 0.85) },   // horizon sky color averaged around the compass
   // Lookup-table atmosphere and sky light (see world/atmosphere.js, world/skylut.js)
-  tAtmSky: { value: null },                                        // sky-view table: the sky all round, from the camera's height
-  tAtmAP: { value: null },                                         // aerial table: the haze's colour by direction and distance
+  tAtmSky: { value: null },                                        // sky-view table: the sky all around, from the camera's height
+  tAtmAP: { value: null },                                         // aerial table: the haze's color by direction and distance
   uAtmSky: { value: new THREE.Vector4(0, 0, 0, 0) },               // x: sine of the horizon's dip, y: how clear the horizon stays under overcast
   uAtmAP: { value: new THREE.Vector4(32, Math.log(50), 1, 1 / 64) },   // x: slices, y: ln(first slice, m), z: 1 / ln(slice ratio), w: half a row
   uSkySH: { value: Array.from({ length: 9 }, () => new THREE.Vector3()) },   // sky irradiance / pi as spherical harmonics (skyIrradiance in ATMO_GLSL)
@@ -31,7 +31,7 @@ export const ENV = {
   // Satellite imagery clip levels (see world/imagery.js)
   tImagery: { value: null },
   uImgA: { value: Array.from({ length: 7 }, () => new THREE.Vector4(0, 0, 1, 0)) },   // x0, z0, 1/extent, valid half-width
-  uImgC: { value: Array.from({ length: 7 }, () => new THREE.Vector2()) },            // window centre
+  uImgC: { value: Array.from({ length: 7 }, () => new THREE.Vector2()) },            // window center
   uImgOn: { value: 0 },
   uPixAngle: { value: 0.001 },   // radians per screen pixel         // surface wind speed, m/s (whitecaps)
   uTime: { value: 0 },

@@ -12,9 +12,9 @@
 import * as THREE from 'three';
 import { mulberry32 } from '../core/noise.js';
 
-// Water and frost live on the windscreen, not on the screen. In cockpit view the aircraft's
+// Water and frost live on the windshield, not on the screen. In cockpit view the aircraft's
 // glazing (the hull shell, cut to the window openings by its mask) is drawn from the pilot's eye
-// into a small target that records, per pixel, the position on the glass in metres along and
+// into a small target that records, per pixel, the position on the glass in meters along and
 // around the hull. The final pass builds every drop in those coordinates, so the water stays put
 // on the glass when the head turns, and nothing can land on the panel or the posts.
 export const GLASS_VERT = /* glsl */`
@@ -34,15 +34,15 @@ void main() {
 export const GLASS_FRAG = /* glsl */`
 precision highp float;
 uniform sampler2D tMask;       // 1 where the hull is glass
-uniform float uBase;           // station of the windscreen's lower edge (m)
+uniform float uBase;           // station of the windshield's lower edge (m)
 in vec2 vHull;
 in vec3 vObj;
 in float vZ, vNz;
-layout(location = 0) out vec4 outGlass;   // xy: metres along the surface (aft +) and round the hull (0 on the roof line), z: distance, signed + on the windscreen; a: how far inside the pane
-layout(location = 1) out vec4 outGrad;    // d(xy)/dx, d(xy)/dy: metres of glass per pixel
+layout(location = 0) out vec4 outGlass;   // xy: meters along the surface (aft +) and around the hull (0 on the roof line), z: distance, signed + on the windshield; a: how far inside the pane
+layout(location = 1) out vec4 outGrad;    // d(xy)/dx, d(xy)/dy: meters of glass per pixel
 void main() {
   if (texture(tMask, vHull).g < 0.5) discard;
-  // The windscreen leans back, so a metre of hull station is more than a metre of glass.
+  // The windshield leans back, so a meter of hull station is more than a meter of glass.
   float k = 1.0 / sqrt(max(1.0 - vNz * vNz, 0.25));
   vec2 p = vec2((vObj.z - uBase) * k, (vHull.y - 0.5) * 4.0);
   outGlass = vec4(p, vZ * (vNz < -0.25 ? 1.0 : -1.0), textureLod(tMask, vHull, 6.5).g);
@@ -59,7 +59,7 @@ out vec2 vUv;
 out float vSunVis;
 void main() {
   vUv = position * 0.5 + 0.5;
-  // How much of the sun's disc is in view: a few taps of the sky mask around it.
+  // How much of the sun's disk is in view: a few taps of the sky mask around it.
   float v = 0.0;
   if (uSunOn > 0.0) {
     for (int i = 0; i < 9; i++) {
@@ -98,7 +98,7 @@ float vnoise(vec2 p) {
 float fbm(vec2 p) { return vnoise(p) * 0.5 + vnoise(p * 2.03 + 11.0) * 0.25 + vnoise(p * 4.1 + 23.0) * 0.15 + vnoise(p * 8.3 + 37.0) * 0.1; }
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 
-// ---- Water on the glass. Coordinates are metres on the glass in a frame whose +y runs downstream.
+// ---- Water on the glass. Coordinates are meters on the glass in a frame whose +y runs downstream.
 // Each function returns xy: position inside the drop (-1..1), z: coverage, w: wet trail.
 
 // Beads on a jittered grid. They swell, sit, and are blown along; stretch pulls them into streaks.
@@ -170,7 +170,7 @@ vec3 curve(vec3 x) { return (x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0
 void main() {
   vec2 ac = vec2(uAspect, 1.0);
 
-  // ---- The lens: a little barrel distortion, colour fringes toward the corners.
+  // ---- The lens: a little barrel distortion, color fringes toward the corners.
   vec2 lq = (vUv - 0.5) * ac;
   float r2 = dot(lq, lq), r2c = 0.25 * (uAspect * uAspect + 1.0);
   vec2 uv = 0.5 + (vUv - 0.5) * (1.0 + uDistort * r2) / (1.0 + uDistort * r2c);
@@ -183,19 +183,19 @@ void main() {
     vec4 D = texture(tGlassD, uv);
     float zg = abs(G.z), det = D.x * D.w - D.y * D.z;
     // Glass shows only where it is the nearest thing: the panel, coaming, posts and compass stand in
-    // front of it. Water also keeps clear of the seal round each pane.
+    // front of it. Water also keeps clear of the seal around each pane.
     float open = smoothstep(zg - 0.05, zg + 0.03, uNF.x * uNF.y / (uNF.y - texture(tDepth, uv).r * (uNF.y - uNF.x))) * smoothstep(0.5, 0.66, G.a);
     if (open > 0.0 && abs(det) > 1.0e-14) {
       bool ws = G.z > 0.0;
       vec2 p = G.xy;
-      mat2 toPx = inverse(mat2(D.xy, D.zw));                             // metres on the glass -> pixels
+      mat2 toPx = inverse(mat2(D.xy, D.zw));                             // meters on the glass -> pixels
       float fine = 1.0 - smoothstep(0.0012, 0.003, sqrt(abs(det)));       // drops under a pixel across would only sparkle
       float sd = p.y < 0.0 ? -1.0 : 1.0;
       vec2 dir = vec2(0.0), flow = vec2(0.0, -1.0), q = p;
       if (uWet > 0.004) {
         float amt = clamp(uWet, 0.0, 1.0) * (ws ? 1.0 : 0.55), heavy = smoothstep(0.55, 1.0, uWet);
         // Still air: water beads, creeps and runs down the glass. At speed the airflow takes over:
-        // it climbs the windscreen in streaks fanning out from the base, and runs aft on the sides.
+        // it climbs the windshield in streaks fanning out from the base, and runs aft on the sides.
         float wind = smoothstep(9.0, 26.0, uAir);
         vec4 b;
         if (wind < 0.97) {
@@ -252,7 +252,7 @@ void main() {
     }
   }
 
-  // ---- Colour fringes toward the corners.
+  // ---- Color fringes toward the corners.
   vec3 col;
   #if CHROMA
     vec2 cd = (uv - 0.5) * r2 * uChroma;
@@ -311,7 +311,7 @@ void main() {
     float sp = abs(cos(ang * 7.0 + 0.4));
     float star = pow(sp, 90.0) * (0.6 + 0.4 * cos(ang * 3.0 + 1.0)) * exp(-r * 6.0) * 0.5 + pow(abs(cos(ang * 3.5 + 1.3)), 240.0) * exp(-r * 4.2) * 0.25;
     vec3 fl = uSunCol * (star + exp(-r * r * 60.0) * 0.5);
-    // Ghosts strung along the line from the sun through the centre of the lens.
+    // Ghosts strung along the line from the sun through the center of the lens.
     vec2 g1 = sd - cdir * 1.45, g2 = sd - cdir * 1.9, g3 = sd - cdir * 0.55, g4 = sd - cdir * 2.6;
     fl += vec3(0.5, 0.75, 1.0) * (1.0 - smoothstep(0.03, 0.05, length(g1))) * 0.05;
     fl += vec3(1.0, 0.7, 0.4) * (1.0 - smoothstep(0.075, 0.085, length(g2))) * smoothstep(0.02, 0.085, length(g2)) * 0.045;
@@ -340,11 +340,11 @@ void main() {
   col /= vg * vg;
   // Exposure, white balance, then the film curve. The curve runs in a slightly
   // narrowed gamut, so bright saturated light rolls off toward white instead of
-  // clipping to a pure hue; greys pass through untouched.
+  // clipping to a pure hue; grays pass through untouched.
   col = max(col * uExposure * uWB, 0.0);
   col = uOutset * curve(uInset * col);
   col = pow(clamp(col, 0.0, 1.0), vec3(1.0 / 2.2));
-  // Grade: a touch more contrast and colour, cooler shadows, warmer highlights.
+  // Grade: a touch more contrast and color, cooler shadows, warmer highlights.
   float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
   col = mix(vec3(l), col, 1.0 + 0.06 * uGrade);
   col = mix(col, col * col * (3.0 - 2.0 * col), 0.12);
@@ -372,7 +372,7 @@ void main() {
 
 export const OUT_FRAG = /* glsl */`
 precision highp float;
-uniform sampler2D tSrc;        // gamma-space colour, luma in alpha
+uniform sampler2D tSrc;        // gamma-space color, luma in alpha
 uniform vec2 uTexel;
 uniform float uTime, uGrain, uSharp, uFxaa;
 in vec2 vUv;
@@ -401,8 +401,8 @@ void main() {
   } else if (uSharp > 0.0) {
     // Contrast-adaptive sharpening on everything the edge filter left alone: strongest where the picture is
     // smooth and soft, backing off as the local contrast rises, and never past the brightest or darkest of the
-    // pixel's neighbours. So an edge gets steeper but grows no halo (fine dial markings do not ring), and a
-    // pixel that flickers against its neighbours is not made to flicker harder.
+    // pixel's neighbors. So an edge gets steeper but grows no halo (fine dial markings do not ring), and a
+    // pixel that flickers against its neighbors is not made to flicker harder.
     vec3 n = texture(tSrc, vUv + vec2(0.0, uTexel.y)).rgb, s = texture(tSrc, vUv - vec2(0.0, uTexel.y)).rgb;
     vec3 e = texture(tSrc, vUv + vec2(uTexel.x, 0.0)).rgb, w = texture(tSrc, vUv - vec2(uTexel.x, 0.0)).rgb;
     vec3 mn = min(col, min(min(n, s), min(e, w))), mx = max(col, max(max(n, s), max(e, w)));

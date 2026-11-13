@@ -1,8 +1,8 @@
 // Turns one vector tile of building footprints into meshes. Pure arithmetic on typed arrays (no DOM, no
 // three.js objects), so it runs in the city worker and can be exercised from Node.
 //
-//   parseTile   the tile's `building` layer -> a list of buildings in metres from the tile's north-west
-//               corner (+x east, +z south), each with a height, a kind and its colours decided once, so
+//   parseTile   the tile's `building` layer -> a list of buildings in meters from the tile's northwest
+//               corner (+x east, +z south), each with a height, a kind and its colors decided once, so
 //               every level of detail of a tile agrees about them
 //   buildLevel  one level of detail of a tile (or of one quarter of it) -> vertex and index arrays in
 //               chunks of at most 60,000 vertices, the footprints for collision, and the obstruction lights
@@ -13,9 +13,9 @@
 //          'tall'  buildings of 35 m and over as plain prisms: the skyline
 //
 // Vertex layout (28 bytes): position f32 x3 (tile-local x, absolute height, tile-local z), normal i8 x4,
-// aUV i16 x2 (metres along the wall and above the ground, in eighths), colour u8 x4 (rgb, a = a random
+// aUV i16 x2 (meters along the wall and above the ground, in eighths), color u8 x4 (rgb, a = a random
 // number per building), aK u8 x4 (what the surface is, how its wall is glazed (+8 on a building that only
-// the near level draws), and where to sample the satellite picture: the offset in metres to the
+// the near level draws), and where to sample the satellite picture: the offset in meters to the
 // building's middle + 128, or 128, 128 to sample under the pixel itself).
 
 import earcut from 'three/src/extras/lib/earcut.js';
@@ -66,7 +66,7 @@ function clipBox(p, size) {
   return r;
 }
 
-/** Drop repeated points and (tol > 0) points that stand less than `tol` metres off the line through their neighbours. */
+/** Drop repeated points and (tol > 0) points that stand less than `tol` meters off the line through their neighbors. */
 function tidy(p, tol) {
   const pts = [];
   for (let i = 0; i < p.length; i += 2) { const n = pts.length; if (n && Math.abs(pts[n - 2] - p[i]) < 0.02 && Math.abs(pts[n - 1] - p[i + 1]) < 0.02) continue; pts.push(p[i], p[i + 1]); }
@@ -88,8 +88,8 @@ function tidy(p, tol) {
 }
 
 const NAMED = { white: 'ffffff', whitesmoke: 'f5f5f5', ivory: 'fffff0', beige: 'f5f5dc', tan: 'd2b48c', khaki: 'f0e68c', gray: '808080', grey: '808080', darkgray: 'a9a9a9', darkgrey: 'a9a9a9', lightgray: 'd3d3d3', lightgrey: 'd3d3d3', silver: 'c0c0c0', dimgray: '696969', black: '000000', brown: '8b5a3c', maroon: '800000', red: 'b03020', firebrick: 'b22222', orange: 'd08030', yellow: 'e0d060', green: '407040', blue: '4060a0', navy: '202850', teal: '306e6e', pink: 'e0b0b0', sienna: 'a0522d', peru: 'cd853f', wheat: 'f5deb3', gold: 'd4af37', lightblue: 'add8e6', steelblue: '4682b4', slategray: '708090', sandybrown: 'f4a460', burlywood: 'deb887', bisque: 'ffe4c4', linen: 'faf0e6', cream: 'fffdd0', saddlebrown: '8b4513', chocolate: '7b3f00', darkred: '8b0000', darkgreen: '006400', lightyellow: 'ffffe0', gainsboro: 'dcdcdc', antiquewhite: 'faebd7' };
-/** A CSS colour from the map -> a wall albedo, or null. */
-function parseColour(s) {
+/** A CSS color from the map -> a wall albedo, or null. */
+function parseColor(s) {
   if (typeof s !== 'string') return null;
   let h = s.trim().toLowerCase();
   if (h[0] === '#') h = h.slice(1); else h = NAMED[h.replace(/[\s_-]/g, '')];
@@ -110,13 +110,14 @@ const GLASS = [[0.10, 0.15, 0.22], [0.09, 0.17, 0.165], [0.19, 0.145, 0.10], [0.
 const TOWER = [[0.55, 0.53, 0.49], [0.46, 0.44, 0.40], [0.62, 0.60, 0.56], [0.30, 0.27, 0.24], [0.36, 0.24, 0.18], [0.50, 0.42, 0.34], [0.40, 0.40, 0.41], [0.66, 0.63, 0.57]];
 const pick = (list, h, k) => { const c = list[Math.floor(frac(h, k) * list.length) % list.length], s = 0.9 + 0.2 * frac(h, k + 3); return [c[0] * s, c[1] * s, c[2] * s]; };
 
-// Roads drawn, by the map's class: half the width of the made road (m; a motorway's carriageways are mapped one by one), and a rank 0..1 (how strongly it is drawn).
+// Roads drawn, by the map's class: half the width of the made road (m; a motorway's roadways are mapped one by one), and a rank 0..1 (how strongly it is drawn).
 const ROAD = { motorway: [6.4, 1], trunk: [5.6, 0.9], primary: [5.4, 0.9], secondary: [4.6, 0.8], tertiary: [3.9, 0.7], minor: [3.3, 0.5] };       // (ranks in tenths: they are packed with the width)
+const ROAD_CLASS = Object.keys(ROAD);            // a road's class as a number, 0 freeway .. 5 minor, for the traffic (world/traffic.js)
 
 // ------------------------------------------------------------------ the tile
 
 /**
- * Read the buildings of a tile. buf: the tile's bytes; size: metres across the tile; tx, ty: its indices
+ * Read the buildings of a tile. buf: the tile's bytes; size: meters across the tile; tx, ty: its indices
  * (only to make each building's random numbers its own).
  */
 export function parseTile(buf, size, tx, ty) {
@@ -128,7 +129,9 @@ export function parseTile(buf, size, tx, ty) {
     const w = ROAD[f.props.class];
     if (f.type !== 2 || !w || f.props.brunnel === 'tunnel' || f.props.brunnel === 'bridge') continue;      // (a bridge would be laid on the river: bridges are built as structures, in world/bridgebuild.js)
     const k = size / T.extent;
-    for (const g of f.geom) { if (g.length < 4) continue; const p = new Float32Array(g.length); for (let i = 0; i < g.length; i++) p[i] = g[i] * k; roads.push({ p, hw: f.props.ramp ? w[0] * 0.75 : w[0], rank: w[1] }); }
+    // Which way the traffic runs: 1 along the line as mapped, -1 against it, 0 both ways (a motorway's roadways are one way each).
+    const cls = ROAD_CLASS.indexOf(f.props.class), one = +f.props.oneway === -1 ? -1 : +f.props.oneway === 1 || cls === 0 || f.props.ramp ? 1 : 0;
+    for (const g of f.geom) { if (g.length < 4) continue; const p = new Float32Array(g.length); for (let i = 0; i < g.length; i++) p[i] = g[i] * k; roads.push({ p, hw: f.props.ramp ? w[0] * 0.75 : w[0], rank: w[1], cls, one, ramp: f.props.ramp ? 1 : 0 }); }
   }
   if (!L) return { blds, roads, size, tall: 0, br };
   const ext = L.extent, k = size / ext, lo = -0.0155 * ext, hi = ext * 1.0155;
@@ -136,7 +139,7 @@ export function parseTile(buf, size, tx, ty) {
     if (f.type !== 3 || f.props.hide_3d) continue;
     const h = +f.props.render_height || 5, mh = Math.max(0, +f.props.render_min_height || 0);
     if (h - mh < 0.8) continue;
-    const col = parseColour(f.props.colour);
+    const col = parseColor(f.props.colour);
     let cur = null;
     for (const g of f.geom) {
       if (g.length < 6) continue;
@@ -159,7 +162,7 @@ export function parseTile(buf, size, tx, ty) {
       }
       cx /= 6 * A; cz /= 6 * A;
       if (!(cx >= x0 && cx <= x1 && cz >= z0 && cz <= z1)) { cx = (x0 + x1) / 2; cz = (z0 + z1) / 2; }
-      // A building whole in this tile's margin belongs to the neighbour its middle lies in.
+      // A building whole in this tile's margin belongs to the neighbor its middle lies in.
       if (!cut && (cx < 0 || cx >= size || cz < 0 || cz >= size)) { cur = null; continue; }
       cur = { ring: Float32Array.from(p), holes: [], h, mh, known: h !== 5, col, area: A, cx: Math.min(size - 0.01, Math.max(0, cx)), cz: Math.min(size - 0.01, Math.max(0, cz)), box: [x0, z0, x1, z1], cut };
       blds.push(cur);
@@ -170,10 +173,10 @@ export function parseTile(buf, size, tx, ty) {
   return { blds, roads, size, tall, br };
 }
 
-/** Decide each building's height where the map gives none, what kind of building it is, and its colours. */
+/** Decide each building's height where the map gives none, what kind of building it is, and its colors. */
 function classify(blds, size, tx, ty) {
   // How built-up each part of the tile is: the mean known height over all the footprint there (a downtown
-  // scores tens of metres, streets of houses nothing).
+  // scores tens of meters, streets of houses nothing).
   const G = 8, cell = size / G, hA = new Float32Array(G * G), aA = new Float32Array(G * G);
   for (const b of blds) {
     const k = Math.min(G - 1, Math.floor(b.cz / cell)) * G + Math.min(G - 1, Math.floor(b.cx / cell));
@@ -214,7 +217,7 @@ function classify(blds, size, tx, ty) {
     else if (kind === 'low') { style = S_PUNCHED; wall = pick(MASONRY, hs, 4); top = pick(FLATROOF, hs, 5); }
     else if (kind === 'mid') { style = r3 < 0.58 ? S_PUNCHED : r3 < 0.82 ? S_RIBBON : S_GLASS; wall = style === S_GLASS ? pick(GLASS, hs, 4) : r4 < 0.6 ? pick(MASONRY, hs, 4) : pick(TOWER, hs, 4); top = pick(FLATROOF, hs, 5); }
     else { style = r3 < 0.55 ? S_GLASS : r3 < 0.82 ? S_RIBBON : S_PUNCHED; wall = style === S_GLASS ? pick(GLASS, hs, 4) : pick(TOWER, hs, 4); top = pick(FLATROOF, hs, 5); }
-    // What the walls are made of. A brick-coloured wall is brick; the rest follows the kind of building.
+    // What the walls are made of. A brick-colored wall is brick; the rest follows the kind of building.
     const bricky = (c) => c[0] > c[2] * 1.4;
     let mat;
     if (kind === 'house' || kind === 'garage') {
@@ -262,7 +265,7 @@ export class Out {
     }
     if (this.ni + ni > this.icap) { while (this.ni + ni > this.icap) this.icap *= 2; const a = new Uint16Array(this.icap); a.set(this.idx.subarray(0, this.ni)); this.idx = a; }
   }
-  colour(c, seed) { this.c = c; this.seed = seed; }
+  color(c, seed) { this.c = c; this.seed = seed; }
   v(x, y, z, nx, ny, nz, u, h) {
     const n = this.n++, a = n * 3, b = n * 4;
     this.pos[a] = x; this.pos[a + 1] = y; this.pos[a + 2] = z;
@@ -302,7 +305,7 @@ export class Out {
 
 // ------------------------------------------------------------------ one building
 
-/** The smallest rectangle round a ring that lies along one of its edges: centre, long axis, half length and half width. */
+/** The smallest rectangle around a ring that lies along one of its edges: center, long axis, half length and half width. */
 function boundingRect(p) {
   let best = null;
   for (let i = 0, n = p.length, j = n - 2; i < n; j = i, i += 2) {
@@ -332,7 +335,7 @@ function wallQuad(o, ax, az, bx, bz, ya0, yb0, ya1, yb1, nx, nz, u0, u1, G) {
   o.tri(a, c, b); o.tri(b, c, d);
 }
 
-/** Walls round a ring from y0 up to y1, skipping the cuts a tile's edge made through a building. */
+/** Walls around a ring from y0 up to y1, skipping the cuts a tile's edge made through a building. */
 function walls(o, p, y0, y1, G, size, cut, u = 0) {
   for (let j = 0, n = p.length; j < n; j += 2) {
     const i = (j + 2) % n, ax = p[j], az = p[j + 1], bx = p[i], bz = p[i + 1], l = Math.hypot(bx - ax, bz - az);
@@ -431,12 +434,15 @@ function isRect(ring, R) {
 
 /**
  * The roads inside a rectangle of a tile, as ribbons laid on the ground: two vertices every 18 m or less, each
- * standing on the ground under it. Returns { pos (x, y, z), ar (-1 | 1 across, metres along, half-width + rank / 2 packed as hw + 100 * rank), idx, bounds } or null.
+ * standing on the ground under it. Returns { pos (x, y, z), ar (-1 | 1 across, meters along, half-width + rank / 2 packed as hw + 100 * rank), idx, bounds,
+ * paths } or null. paths is for the traffic: p, the center line of every piece as x, y, z; m, five numbers a piece (where
+ * it starts in p, how many points, the road's class 0 freeway .. 5 minor (+ 8 for a ramp), which way it runs (1, -1, 0 both), half-width).
  */
 function buildRoads(tile, x0, z0, x1, z1, hAt, skip) {
-  const pos = [], ar = [], idx = [];
+  const pos = [], ar = [], idx = [], cp = [], cm = [];
   let n = 0;
-  const piece = (q, hw, rank) => {
+  const piece = (q, r) => {
+    const hw = r.hw, rank = r.rank;
     // resample
     const P = [q[0], q[1]];
     for (let i = 2; i < q.length; i += 2) {
@@ -446,7 +452,9 @@ function buildRoads(tile, x0, z0, x1, z1, hAt, skip) {
       for (let k = 1; k <= m; k++) P.push(ax + ((bx - ax) * k) / m, az + ((bz - az) * k) / m);
     }
     const m = P.length / 2;
-    if (m < 2 || (skip && skip(P[2 * (m >> 1)], P[2 * (m >> 1) + 1]))) return;         // (not across an aerodrome: the airfield lays its own pavement)
+    if (m < 2 || (skip && skip(P[2 * (m >> 1)], P[2 * (m >> 1) + 1]))) return;         // (not across an airport: the airfield lays its own pavement)
+    cm.push(cp.length / 3, m, r.cls + 8 * r.ramp, r.one, hw);
+    for (let i = 0; i < m; i++) cp.push(P[2 * i], hAt(P[2 * i], P[2 * i + 1]) + 0.3, P[2 * i + 1]);
     let along = 0;
     for (let i = 0; i < m; i++) {
       const a = Math.max(0, i - 1), b = Math.min(m - 1, i + 1);
@@ -467,16 +475,17 @@ function buildRoads(tile, x0, z0, x1, z1, hAt, skip) {
       for (const [pp, qq] of [[-dx, ax - x0], [dx, x1 - ax], [-dz, az - z0], [dz, z1 - az]]) {
         if (pp === 0) { if (qq < 0) ok = false; } else { const t = qq / pp; if (pp < 0) { if (t > t1) ok = false; else if (t > t0) t0 = t; } else if (t < t0) ok = false; else if (t < t1) t1 = t; }
       }
-      if (!ok || t1 - t0 <= 0) { if (cur) { piece(cur, r.hw, r.rank); cur = null; } continue; }
-      if (!cur || t0 > 0) { if (cur) piece(cur, r.hw, r.rank); cur = [ax + dx * t0, az + dz * t0]; }
+      if (!ok || t1 - t0 <= 0) { if (cur) { piece(cur, r); cur = null; } continue; }
+      if (!cur || t0 > 0) { if (cur) piece(cur, r); cur = [ax + dx * t0, az + dz * t0]; }
       cur.push(ax + dx * t1, az + dz * t1);
-      if (t1 < 1) { piece(cur, r.hw, r.rank); cur = null; }
+      if (t1 < 1) { piece(cur, r); cur = null; }
     }
-    if (cur) piece(cur, r.hw, r.rank);
+    if (cur) piece(cur, r);
   }
   if (!n) return null;
   let y0 = Infinity, y1 = -Infinity; for (let i = 1; i < pos.length; i += 3) { if (pos[i] < y0) y0 = pos[i]; if (pos[i] > y1) y1 = pos[i]; }
-  return { pos: Float32Array.from(pos), ar: Float32Array.from(ar), idx: n > 65535 ? Uint32Array.from(idx) : Uint16Array.from(idx), bounds: [(x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2, Math.hypot(x1 - x0, y1 - y0, z1 - z0) / 2 + 8] };
+  return { pos: Float32Array.from(pos), ar: Float32Array.from(ar), idx: n > 65535 ? Uint32Array.from(idx) : Uint16Array.from(idx), bounds: [(x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2, Math.hypot(x1 - x0, y1 - y0, z1 - z0) / 2 + 8],
+    paths: { p: Float32Array.from(cp), m: Float32Array.from(cm) } };
 }
 
 // ------------------------------------------------------------------ a level of a tile
@@ -486,8 +495,8 @@ function buildRoads(tile, x0, z0, x1, z1, hAt, skip) {
  *   tile     from parseTile
  *   level    'near' | 'mid' | 'tall'
  *   quad     which quarter (0..3: +1 east half, +2 south half) for 'near'; ignored otherwise (all four)
- *   ground   { n, x0, z0, step, h: Float32Array(n * n) }: heights of the ground on a grid, in tile-local metres
- *   skip     (x, z) => true where a building must not stand (inside an aerodrome), tile-local
+ *   ground   { n, x0, z0, step, h: Float32Array(n * n) }: heights of the ground on a grid, in tile-local meters
+ *   skip     (x, z) => true where a building must not stand (inside an airport), tile-local
  * Returns { chunks, foot, lights, count, roads }.
  */
 export function buildLevel(tile, level, quad, ground, skip) {
@@ -517,26 +526,28 @@ export function buildLevel(tile, level, quad, ground, skip) {
       const R = pitched ? boundingRect(ring) : null;
       const rise = R ? Math.min(4.2, Math.max(1.0, R.hw * (b.roof === 'hip' ? 0.52 : 0.6))) : 0;
       const yE = G + b.mh + (pitched && R ? b.eave : b.H), yTop = yE + rise;
-      // where the roof takes its colour from the satellite picture: the building's middle for a small one
+      // where the roof takes its color from the satellite picture: the building's middle for a small one
       const central = b.A < 600 && b.box[2] - b.box[0] < 120 && b.box[3] - b.box[1] < 120;
       o.central = false; o.cenX = b.cx; o.cenZ = b.cz;
       const sFlag = b.small ? 8 : 0;
 
       // walls
-      o.colour(b.wall, b.seed); o.kind = K_WALL; o.style = b.style + sFlag;
-      o.raw = true; o.kz = b.mat; o.kw = 0;              // (a wall has no use for the roof's offset: it carries its material there)
+      o.color(b.wall, b.seed); o.kind = K_WALL; o.style = b.style + sFlag;
+      // (a wall has no use for the roof's offset: it carries its material there, and how high above the ground its top
+      // is, in meters up to 254, for the roof-line band and a tower's crown: 0 where there is none to draw, as on a house)
+      o.raw = true; o.kz = b.mat; o.kw = b.kind === 'house' || b.kind === 'garage' || (pitched && R) ? 0 : Math.max(1, Math.min(254, Math.round(yE - G)));
       const u1 = walls(o, ring, y0, yE, G, size, b.cut);
       if (holes) for (const h of holes) walls(o, h, y0, yE, G, size, b.cut, u1);
       o.raw = false;
       // roof
-      o.colour(b.roofCol, b.seed); o.style = sFlag; o.central = central;
+      o.color(b.roofCol, b.seed); o.style = sFlag; o.central = central;
       if (pitched && R) {
         o.kind = K_PITCH;
         if (b.roof === 'hip' && isRect(ring, R)) hipRoof(o, R, yE, rise, G);
         else gableRoof(o, ring, R, yE, rise, G, b.wall, S_BLANK + sFlag, b.mat);
       } else { o.kind = K_FLAT; flatRoof(o, ring, holes, yE, G); }
       o.central = false;
-      if (b.mh > 0 && !tallOnly) { o.kind = K_UNDER; o.colour(b.wall, b.seed); flatRoof(o, ring, holes, y0, G, true); }
+      if (b.mh > 0 && !tallOnly) { o.kind = K_UNDER; o.color(b.wall, b.seed); flatRoof(o, ring, holes, y0, G, true); }
       let crown = yTop;
       // a plant room on a tall roof, and a few units on a big flat one
       if (!tallOnly && !pitched && b.kind !== 'house' && b.kind !== 'garage' && !b.cut) {
@@ -546,11 +557,11 @@ export function buildLevel(tile, level, quad, ground, skip) {
           let ok = true;
           for (let i = 0; i < ring.length; i += 2) { p[i] = b.cx + (ring[i] - b.cx) * s; p[i + 1] = b.cz + (ring[i + 1] - b.cz) * s; if (!inRing(p[i], p[i + 1], b.ring)) { ok = false; break; } if (holes) for (const h of holes) if (inRing(p[i], p[i + 1], h)) ok = false; }
           if (ok && inRing(b.cx, b.cz, b.ring)) {
-            o.kind = K_WALL; o.style = S_BLANK; o.colour(b.style === S_GLASS ? [0.2, 0.21, 0.22] : b.wall.map((v) => v * 0.8), b.seed);
+            o.kind = K_WALL; o.style = S_BLANK; o.color(b.style === S_GLASS ? [0.2, 0.21, 0.22] : b.wall.map((v) => v * 0.8), b.seed);
             o.raw = true; o.kz = b.style === S_GLASS ? M_NONE : M_CONC; o.kw = 0;
             walls(o, p, yE, yE + ph, G, size, false);
             o.raw = false;
-            o.kind = K_FLAT; o.colour(b.roofCol, b.seed); flatRoof(o, p, null, yE + ph, G);
+            o.kind = K_FLAT; o.color(b.roofCol, b.seed); flatRoof(o, p, null, yE + ph, G);
             crown = yE + ph;
           }
         }
@@ -563,7 +574,7 @@ export function buildLevel(tile, level, quad, ground, skip) {
             const x = R2.cx + s * R2.ax - d * R2.az, z = R2.cz + s * R2.az + d * R2.ax, hl = 1.2 + 2.2 * frac(hs, 20 + k), hw = 0.9 + 1.2 * frac(hs, 26 + k), r = Math.hypot(hl, hw) + 0.8;
             if (!inRing(x, z, b.ring) || !inRing(x + r, z, b.ring) || !inRing(x - r, z, b.ring) || !inRing(x, z + r, b.ring) || !inRing(x, z - r, b.ring)) continue;
             if (crown > yE && Math.hypot(x - b.cx, z - b.cz) < Math.max(R2.hw, 6)) continue;
-            const g = 0.38 + 0.3 * frac(hs, 32 + k); o.colour([g, g, g * 1.02], b.seed);
+            const g = 0.38 + 0.3 * frac(hs, 32 + k); o.color([g, g, g * 1.02], b.seed);
             box(o, x, z, R2.ax, R2.az, hl, hw, yE, yE + 1.1 + 1.3 * frac(hs, 38 + k), G);
             made++;
           }

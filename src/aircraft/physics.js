@@ -257,7 +257,7 @@ export class Aircraft {
       }
       // Anything else that meets the ground. A light touch is survivable: the part pushes back and drags
       // (a tail scrape on over-rotation nudges the nose down and bleeds speed, a wingtip on the grass
-      // swings the aircraft round it). It is a crash only when the part arrives faster than it can take,
+      // swings the aircraft around it). It is a crash only when the part arrives faster than it can take,
       // when a wingtip digs in at speed (a cartwheel), or when the aircraft comes down on its back.
       let scr = 0, part = null;
       up.set(0, 1, 0).applyQuaternion(q);

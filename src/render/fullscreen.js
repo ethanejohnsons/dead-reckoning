@@ -32,7 +32,7 @@ export class FullscreenQuad {
   }
 }
 
-/** Colour-only HDR render target for intermediate passes. */
+/** Color-only HDR render target for intermediate passes. */
 export function hdrTarget(w, h, opts = {}) {
   return new THREE.WebGLRenderTarget(Math.max(1, w), Math.max(1, h), {
     type: THREE.HalfFloatType, depthBuffer: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, ...opts,

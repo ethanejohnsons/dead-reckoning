@@ -11,7 +11,7 @@
 //
 // The region must be set (geo.setRegion) as it is on the thread that made the window.
 
-import { pixelX, pixelY, metresPerPixel, WORLD_HALF } from './geo.js';
+import { pixelX, pixelY, metersPerPixel, WORLD_HALF } from './geo.js';
 import { DOUBT_Z } from './water.js';
 
 /**
@@ -19,7 +19,7 @@ import { DOUBT_Z } from './water.js';
  * bilinearly filtered. outW (optional) receives water coverage (0..255).
  */
 export function sampleWindow(win, x0, z0, step, n, outH, outW) {
-  const z = win.z, mpp = metresPerPixel(z), sx = step / mpp;
+  const z = win.z, mpp = metersPerPixel(z), sx = step / mpp;
   const fx0 = pixelX(x0, z) - 0.5, fy0 = pixelY(z0, z) - 0.5;
   const ww = win.w, wh = win.h, ox = win.x0, oy = win.y0, h = win.H, w = win.W;
   const hAt = (ix, iy) => { const i = ix - ox, j = iy - oy; return i >= 0 && j >= 0 && i < ww && j < wh ? h[j * ww + i] : NaN; };
@@ -34,7 +34,7 @@ export function sampleWindow(win, x0, z0, step, n, outH, outW) {
         b = h[o + 1]; c = h[o + ww]; d = h[o + ww + 1];
         if (outW) { const wa = w[o] ? 1 : 0, wb = w[o + 1] ? 1 : 0, wc = w[o + ww] ? 1 : 0, wd = w[o + ww + 1] ? 1 : 0; outW[k] = ((wa + (wb - wa) * u) * (1 - v) + (wc + (wd - wc) * u) * v) * 255; }
       } else {
-        // across a tile's edge: missing neighbours clamp to what is there, and water goes by the nearest texel
+        // across a tile's edge: missing neighbors clamp to what is there, and water goes by the nearest texel
         a = hAt(ix, iy); b = hAt(ix + 1, iy); c = hAt(ix, iy + 1); d = hAt(ix + 1, iy + 1);
         if (a !== a) a = b === b ? b : c === c ? c : d === d ? d : 0;
         if (b !== b) b = a; if (c !== c) c = a; if (d !== d) d = a;

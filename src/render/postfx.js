@@ -5,7 +5,7 @@
 //   lens       depth of field with autofocus, barrel distortion, chromatic aberration,
 //              bloom (widening into halos in mist), dirt, streak, halation, flare, glare
 //   air        crepuscular rays through cloud gaps, heat shimmer behind the exhaust
-//   glass      rain beading and running on the windscreen, frost feathering in from the edges
+//   glass      rain beading and running on the windshield, frost feathering in from the edges
 //   print      exposure, white balance, film curve, grade, vignette
 //   finish     sharpening (and FXAA where there is no temporal anti-aliasing), grain, dither
 //
@@ -51,7 +51,7 @@ out vec4 outColor;
 #endif
 float kw(vec3 c) { return 1.0 / (1.0 + max(c.r, max(c.g, c.b))); }
 void main() {
-  // 13-tap downsample: five overlapping 2x2 boxes, the centre one weighted double.
+  // 13-tap downsample: five overlapping 2x2 boxes, the center one weighted double.
   vec3 a = s(-2.0, 2.0), b = s(0.0, 2.0), c = s(2.0, 2.0), d = s(-2.0, 0.0), e = s(0.0, 0.0), f = s(2.0, 0.0);
   vec3 g = s(-2.0, -2.0), h = s(0.0, -2.0), i = s(2.0, -2.0), j = s(-1.0, 1.0), k = s(1.0, 1.0), l = s(-1.0, -1.0), m = s(1.0, -1.0);
   vec3 g0 = (j + k + l + m) * 0.25, g1 = (a + b + d + e) * 0.25, g2 = (b + c + e + f) * 0.25, g3 = (d + e + g + h) * 0.25, g4 = (e + f + h + i) * 0.25;
@@ -137,14 +137,14 @@ export class PostFX {
      * Strengths are 1 = as a real camera would give it, 0 = off, more = heavier.
      *   time        seconds, animates drops and grain and times the shutter
      *   rain, snow  0..1 precipitation at the camera        ice  0..1 frost on the glass
-     *   cockpit     0 outside views (no water or frost at all), 1 behind the windscreen. There the eye replaces the
-     *               camera: no depth of field, lens distortion or colour fringing, and the cabin keeps its full sharpness
+     *   cockpit     0 outside views (no water or frost at all), 1 behind the windshield. There the eye replaces the
+     *               camera: no depth of field, lens distortion or color fringing, and the cabin keeps its full sharpness
      *   glass       the aircraft's glazing mesh (hull uv, alphaMap = 1 on glass): rain and frost are drawn on it
      *   airspeed    m/s; above ~20 the airflow drives water up the glass
-     *   clearance   metres from the camera to the nearest scenery (height above ground will do); lets motion blur be
+     *   clearance   meters from the camera to the nearest scenery (height above ground will do); lets motion blur be
      *               skipped when nothing can streak. Left unset it is taken as 20 m
      *   flash       0..1 additive lightning flash
-     *   exposure    linear exposure before the tone curve (0.64 keeps mid-grey where the game was tuned)
+     *   exposure    linear exposure before the tone curve (0.64 keeps mid-gray where the game was tuned)
      *   subject     the aircraft's Object3D: it keeps its own motion (stable under TAA) and is never motion-blurred
      *   exhaust     exhaust outlets in the subject's coordinates, for the heat plume
      *   bloom       share of the image replaced by its blur (0.07)
@@ -316,9 +316,9 @@ export class PostFX {
   }
 
   /**
-   * hdr: linear HDR colour with the open-sky mask in alpha. target null = screen.
+   * hdr: linear HDR color with the open-sky mask in alpha. target null = screen.
    * opts.depth  the scene's depth texture; without it only the flat passes run
-   * opts.scene  the scene colour before clouds; its alpha marks open water (0.25) against everything else (1)
+   * opts.scene  the scene color before clouds; its alpha marks open water (0.25) against everything else (1)
    * opts.cloud  the cloud layer (alpha = how much of the scene shows through it), so
    *             occlusion and reflections fade behind cloud and TAA leaves cloud to its own history
    */
@@ -523,14 +523,14 @@ export class PostFX {
     fu.tGlass.value = glassOn ? this.glassRT.textures[0] : this.black; fu.tGlassD.value = glassOn ? this.glassRT.textures[1] : this.black;
     fu.tDepth.value = glassOn ? opts.depth : this.black;
     fu.uWet.value = this.wet; fu.uMist.value = this.wet * 0.22; fu.uIce.value = fx.ice || 0;
-    // Barrel distortion and colour fringes belong to a camera lens. From the pilot's seat they would only soften
-    // and fringe the panel (every pixel resampled off-centre), so the cockpit view has neither.
+    // Barrel distortion and color fringes belong to a camera lens. From the pilot's seat they would only soften
+    // and fringe the panel (every pixel resampled off-center), so the cockpit view has neither.
     const lens = cockpit > 0.5 ? 0 : 1;
     fu.uVignette.value = 0.32 * (fx.vignette ?? 1); fu.uChroma.value = 0.005 * (fx.chroma ?? 1) * lens; fu.uDistort.value = 0.022 * (fx.distort ?? 1) * lens;
     fu.uDofOn.value = dofOn ? 1 : 0; fu.uDeep.value = deep ? 1 : 0;
     fu.uDirt.value = 0.6 * (fx.dirt ?? 1); fu.uStreak.value = streak; fu.uHalation.value = 0.1 * (fx.halation ?? 1);
     fu.uClarity.value = 0.14 * (fx.clarity ?? 1); fu.uGrade.value = fx.grade ?? 1;
-    // White balance: lean a third of the way toward neutralising the light that is falling on the scene.
+    // White balance: lean a third of the way toward neutralizing the light that is falling on the scene.
     const sc = ENV.uSunCol.value, sk = ENV.uAmbSky.value, lum = (c) => c.r * 0.2126 + c.g * 0.7152 + c.b * 0.0722;
     const ls = Math.max(lum(sc), 1e-5), lk = Math.max(lum(sk), 1e-5), s = 0.3 * (fx.wb ?? 1);
     const wb = fu.uWB.value.set(1, 1, 1);
@@ -538,7 +538,7 @@ export class PostFX {
       wb.set(Math.pow(Math.max(0.5 * (sc.r / ls + sk.r / lk), 0.05), -s), Math.pow(Math.max(0.5 * (sc.g / ls + sk.g / lk), 0.05), -s), Math.pow(Math.max(0.5 * (sc.b / ls + sk.b / lk), 0.05), -s));
       wb.multiplyScalar(1 / (wb.x * 0.2126 + wb.y * 0.7152 + wb.z * 0.0722));
     }
-    // The tone curve works in a gamut pulled a little toward grey, and is pushed back out afterwards.
+    // The tone curve works in a gamut pulled a little toward gray, and is pushed back out afterward.
     const k = 0.24 * clamp(fx.filmic ?? 1, 0, 2), a = 1 - k + k / 3, b = k / 3;
     fu.uInset.value.set(a, b, b, b, a, b, b, b, a); fu.uOutset.value.copy(fu.uInset.value).invert();
     perf.begin('final');

@@ -4,20 +4,21 @@
 - Browser game: vanilla JS (ES modules), three.js 0.187 on WebGL2 (`THREE.WebGLRenderer`), Vite 8.
   Nearly all shading is hand-written GLSL in ShaderMaterial / RawShaderMaterial. No WebGPU, no TSL.
 - Design rule: arcade, not simulator. Visuals and weather come first; keep HUD and menus minimal.
-- Assets: prefer free-licence sources (CC0 / CC BY / public domain) over generated ones. Add every
+- Assets: prefer free-license sources (CC0 / CC BY / public domain) over generated ones. Add every
   attribution to the title-screen credit (`main.js`, `$('credit')`).
 - Testing: drive the sim with `window.DR.tick` / `window.DR.sim`; screenshots lag one frame;
   clear the test save between runs.
 - Priority: P1 = biggest visible gain, P2 = strong, P3 = polish.
 
 ## Data
-- [P1] Ground imagery: Sentinel-2 at 10 m/px (`world/imagery.js`) → LINZ Basemaps aerial imagery,
-  0.1–0.3 m/px, CC BY 4.0, free API key (the user must sign up). The sharper photos have harder
+- [P1] Ground imagery: Sentinel-2 at 10 m/px (`world/imagery.js`) → USGS NAIP aerial imagery,
+  0.6–1 m/px, public domain, no key (the National Map services). The sharper photos have harder
   baked shadows, so revisit the de-lighting step in `world/chunks.js` (~line 160).
-- [P1] Elevation: Terrain Tiles zoom 13 (`world/dem.js:9`) → LINZ elevation (1 m LiDAR / 8 m DEM).
+- [P1] Elevation: Terrain Tiles zoom 13 (`world/dem.js:9`) → USGS 3DEP elevation (1 m lidar / 10 m DEM).
   Confirm the tile format and encoding first.
-- [P2] Water mask for rivers: the braided Canterbury rivers (Waimakariri, Rakaia, Rangitata) are
-  only photo pixels now. Use LINZ Topo50 river polygons so they get the water shader's sun glint.
+- [P2] Water mask for rivers: the free-flowing rivers (the braided Platte, the Yellowstone, the
+  upper Missouri) are only photo pixels now. Use the river polygons of the USGS National
+  Hydrography Dataset so they get the water shader's sun glint.
 
 ## Sky and atmosphere
 - [P1] Replace the Preetham sky + exponential haze (`world/atmosphere.js`) with Hillaire's 2020
@@ -25,13 +26,13 @@
   volume (WebGL3DRenderTarget). Wanted: correct dawn and dusk, the Earth's shadow / Belt of Venus,
   the sky darkening with altitude. Keep the `skyRadiance` / `atmosphereTransmittance` interface so
   terrain, water, trees and clouds pick it up.
-- [P2] Real southern night sky: the hash stars in `world/sky.js` → a star catalogue (Yale Bright
-  Star, public domain) placed for NZ latitude and time, the Southern Cross, the Magellanic Clouds, a
-  Milky Way texture (NASA SVS Deep Star Maps; check the licence). Aoraki Mackenzie is a dark-sky
-  reserve, so this is a selling point.
-- [P2] Moon: a disc with phase and earthshine, and moonlight colour and strength from the phase.
+- [P2] Real night sky: the hash stars in `world/sky.js` → a star catalog (Yale Bright
+  Star, public domain) placed for the latitude and time, the Big Dipper, Orion, a
+  Milky Way texture (NASA SVS Deep Star Maps; check the license). The northern plains and the
+  Great Basin are some of the darkest skies in the country, so this is a selling point.
+- [P2] Moon: a disk with phase and earthshine, and moonlight color and strength from the phase.
   `sky.js` lights the scene from the "sun (or moon)" but draws no moon.
-- [P3] Optical phenomena: a glory round the aircraft's shadow on cloud tops (the antisolar point);
+- [P3] Optical phenomena: a glory around the aircraft's shadow on cloud tops (the antisolar point);
   a 22° halo and sundogs in cirrostratus; a fogbow / cloudbow (pale, wide) next to the rainbow code
   in `weather/clouds.js`.
 
@@ -40,9 +41,9 @@
   puddles on aprons and grass strips, runway and approach lights reflected at night.
   Drying time comes from the weather state.
 - [P2] Virga: rain shafts that evaporate before reaching the ground, under high-based showers.
-- [P2] Canterbury nor'wester: the Föhn arch (a clear slot over the Alps under a sharp-edged
-  cloud sheet) and lenticular stacks downwind of the Divide. Check the `weather.js` presets first.
-- [P3] Prop-tip vapour spirals and wingtip condensation in humid air at high power.
+- [P2] Chinook: the chinook arch (a clear slot over the Rocky Mountain Front under a sharp-edged
+  cloud sheet) and lenticular stacks downwind of the Continental Divide. Check the `weather.js` presets first.
+- [P3] Prop-tip vapor spirals and wingtip condensation in humid air at high power.
 - [P3] Spray from the wheels on wet runways; dust and grass clippings blown back by the
   propeller on dry grass strips.
 
@@ -50,37 +51,37 @@
 - [P1] Mountain shadows: the march through the 512 m regional grid (`chunks.js:36`) gives soft,
   shifted valley shadows at low sun. Add a finer near-field source (per-patch horizon angles
   from the patch data, or a mid-resolution height texture around the camera).
-- [P1] Sky light: replace the two-colour ambient mix (`chunks.js:192`) with irradiance from the
+- [P1] Sky light: replace the two-color ambient mix (`chunks.js:192`) with irradiance from the
   real sky, e.g. spherical harmonics fitted to `skyRadiance` each frame. Share it with the trees.
-- [P2] Vegetation hotspot: brightening of vegetation round the antisolar point (the opposition
-  effect), plus mild backscatter for forest and tussock. A strong cue in aerial photos, and cheap.
+- [P2] Vegetation hotspot: brightening of vegetation around the antisolar point (the opposition
+  effect), plus mild backscatter for forest and prairie grass. A strong cue in aerial photos, and cheap.
 - [P2] Snow and ice: a microfacet specular in place of `pow(...,24)`, a blue tint in shadowed
-  snow, crevasse and serac detail on the glaciers (Tasman, Fox, Franz Josef).
-- [P2] Coast: a surf/foam line on exposed West Coast beaches, shallow-water colour from depth,
+  snow, crevasse and serac detail on the glaciers (Glacier National Park, the Wind Rivers, the Alaska Range).
+- [P2] Coast: a surf/foam line on exposed Pacific and Great Lakes beaches, shallow-water color from depth,
   wave breaking linked to the wind.
-- [P3] Seasons: snow line by month, autumn gold in the poplars and willows of Central Otago
-  (Arrowtown), spring lupins in the Mackenzie.
+- [P3] Seasons: snow line by month, fall gold in the aspens of Colorado and the hardwoods of
+  New England, spring green on the prairie.
 
-## Near-ground detail (taxiing, take-off, low flying)
+## Near-ground detail (taxiing, takeoff, low flying)
 - [P1] Sun shadows near the ground: only the aircraft casts real shadows, inside an 18 m box
   (`main.js:100`). Add cascaded shadow maps (`three/addons/csm/CSM.js`) over roughly 1–2 km, so
   hangars, terminals and parked objects cast shadows.
 - [P2] Grass on grass strips and verges: instanced blades or shell rendering within ~100 m,
   bent by the propeller wash and the wind.
-- [P2] Buildings: towns are point lights only (`world/towns.js`). Extrude LINZ / OSM footprints
-  near towns and airfields (Queenstown, Wānaka, Christchurch) with simple roofs.
-- [P3] Roads, fences, shelterbelts, power lines and pylons from OSM / LINZ (power lines are
+- [P2] Buildings: towns are point lights only (`world/towns.js`). Extrude OSM footprints
+  near towns and airfields (Minneapolis, Denver, Bozeman) with simple roofs.
+- [P3] Roads, fences, shelterbelts, power lines and transmission towers from OSM (power lines are
   also a real low-flying hazard).
 
 ## Night lighting
 - [P2] Landing and taxi lights: today they are glow sprites (`aircraft/model.js:1054`). Cast a
   real cone onto the terrain and runway, with fog and rain scattering in the beam.
 - [P2] Town lights: the points → a street-light layout from the OSM road network, mixing
-  sodium-orange and LED-white; or NASA Black Marble for distant towns (check the licence).
+  sodium-orange and LED-white; or NASA Black Marble for distant towns (check the license).
 
 ## Aircraft and cockpit
-- [P2] The instrument panel reflected faintly in the windscreen in bright sun; fine scratches
-  in the perspex that catch light near the sun.
+- [P2] The instrument panel reflected faintly in the windshield in bright sun; fine scratches
+  in the plexiglass that catch light near the sun.
 - [P3] Weathering: exhaust soot behind the stacks, oil streaks under the cowl, chipped leading
   edges, bug splatter.
 - [P3] Rain on the airframe: a wet sheen and droplets running back over the wing, as seen from
@@ -92,7 +93,7 @@
 
 ## Small wins
 - [P1] Imagery level rings: `imagery()` in `world/imagery.js` (~line 131) rounds the level down
-  and switches level abruptly, so each halving of resolution shows as a ring round the aircraft.
+  and switches level abruptly, so each halving of resolution shows as a ring around the aircraft.
   Sample level l and l+1 and blend by `fract(level)` (falling back to l+1 where l isn't loaded).
 - [P1] Imagery mipmaps + anisotropic filtering: the imagery DataArrayTexture has no mipmaps
   (`imagery.js:29`), so it can't be filtered anisotropically, and the ground is mostly seen at a
@@ -100,7 +101,7 @@
   `createImageBitmap` resizing) to the matching mip of the same slot. Tiles sit on 256-px
   boundaries, so the toroidal addressing holds at every mip. Then use the GPU's maximum
   anisotropy, and pick the level from screen-space derivatives instead of distance alone.
-- [P2] Imagery pop-in: a newly arrived tile replaces the procedural colours instantly (the
+- [P2] Imagery pop-in: a newly arrived tile replaces the procedural colors instantly (the
   `s.a > 0.98` test). Keep each slot's arrival time and fade it in over about 0.5 s.
 - [P2] Terrain geomorphing: the quadtree patches (`world/chunks.js`) jump between levels when
   they split or merge, which shows on ridgelines against the sky. In the vertex shader, ease
@@ -122,7 +123,7 @@
   and `cloudShadowDepth` (`weather/clouds.js` ~line 250: about 4–5 `getSite` reads plus 3–4
   `cloudDensity` calls with 3D-noise lookups). Trees run the same per vertex (`trees.js:511`,
   `:698`) and airfields per vertex or pixel (`airfield.js:78`, `:323`, `:346`, `:407`).
-  Render these once into a top-down texture centred on the camera (e.g. 1024² over ~40 km plus
+  Render these once into a top-down texture centered on the camera (e.g. 1024² over ~40 km plus
   a coarser ring): r = terrain shadow, g = cloud optical depth, b = sky occlusion. Refresh it
   a slice at a time over several frames, since the sun moves slowly, and between refreshes
   just shift the cloud term along with the wind drift. All the ground shaders then do one

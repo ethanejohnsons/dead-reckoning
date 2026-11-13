@@ -7,21 +7,21 @@ Bake the building wall materials in public/facades/ from ambientCG material sets
 Download each set as  https://ambientcg.com/get?file=<AssetId>_1K-JPG.zip  and unpack it into <dir>/<AssetId>/.
 
 Two kinds of layer come out, all 512 x 512 and tiling:
-  facade    a whole stretch of wall with its windows. The picture is twice as wide: colour on the left, and on the
+  facade    a whole stretch of wall with its windows. The picture is twice as wide: color on the left, and on the
             right a mask that is white on glass. It is rolled so that the lines between window cells lie on the
             picture's edges, and stored bottom row first (v runs up the wall).
   cladding  a wall surface with no windows (brick, concrete, sheeting, boards); the game draws the windows on it.
-manifest.json lists them in layer order with the metres one tile covers, the window cells across and up (0 for a
-cladding), the linear mean colour of the part that takes the building's own colour, whether the glass is tinted too, and (a cladding) how strongly it shows.
+manifest.json lists them in layer order with the meters one tile covers, the window cells across and up (0 for a
+cladding), the linear mean color of the part that takes the building's own color, whether the glass is tinted too, and (a cladding) how strongly it shows.
 """
 import json, os, sys
 import numpy as np
 from PIL import Image
 
 S = 512
-# id, kind, metres across, metres up, cells across, cells up, mask map, and
-#   for a facade: whether it is all glass (the glass takes the building's colour too)
-#   for a cladding: how strongly the picture shows through the building's colour, 0..1
+# id, kind, meters across, meters up, cells across, cells up, mask map, and
+#   for a facade: whether it is all glass (the glass takes the building's color too)
+#   for a cladding: how strongly the picture shows through the building's color, 0..1
 LAYERS = [
     ('Facade001', 'facade', 37.0, 37.0, 16, 10, 'Metalness', True),     # dark glass curtain wall
     ('Facade006', 'facade', 29.6, 29.6, 14, 8, 'Metalness', False),     # bands of glass between pale spandrels

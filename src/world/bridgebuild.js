@@ -3,23 +3,23 @@
 // so it runs in the city worker and can be exercised from Node.
 //
 //   parseBridges   a decoded tile -> its bridge lines cut to the tile's own square, the lines that pass under
-//                  bridges (roads, railways, rivers) and its water polygons, in metres from the tile's corner
-//   assemble       the tiles round one tile -> the bridges that touch it, whole: lines joined end to end across
+//                  bridges (roads, railroads, rivers) and its water polygons, in meters from the tile's corner
+//   assemble       the tiles around one tile -> the bridges that touch it, whole: lines joined end to end across
 //                  tile edges into chains, sampled at stations, with what each station passes over. Says which
 //                  further tiles it needs when a bridge runs on beyond what it was given. The result names the
 //                  points whose ground height it needs (the main thread has the elevation; the worker has not)
 //   buildBridges   that, with the ground heights -> the height of every deck, and the meshes of the part
-//                  that lies in the tile: decks, parapets, piers, abutments, arches, trusses, lamp posts
+//                  that lies in the tile: decks, parapets, piers, abutments, arches, trusses, light poles
 //
 // Heights. The elevation is bare earth: under a bridge it follows the river or the road beneath. A deck is
 // the taut string between its abutments (the ground where the bridge meets the land, read a little way back
-// along the approach), held up wherever it must clear something: the ground itself, a road or railway that
+// along the approach), held up wherever it must clear something: the ground itself, a road or railroad that
 // crosses beneath, water. Where chains meet (a ramp leaving a viaduct) their heights are solved together.
 // Every tile that holds part of a bridge assembles all of it and reaches the same heights, so the parts
 // built by different tiles join.
 
 const KIND_ROAD = 0, KIND_RAIL = 1, KIND_PATH = 2;
-// class -> kind, half the width of the made way (m), rank (0 lane .. 3 motorway)
+// class -> kind, half the width of the made way (m), rank (0 lane .. 3 freeway)
 const SPEC = {
   motorway: [KIND_ROAD, 6.4, 3], trunk: [KIND_ROAD, 5.6, 2], primary: [KIND_ROAD, 5.4, 2], secondary: [KIND_ROAD, 4.6, 2], tertiary: [KIND_ROAD, 3.9, 1],
   minor: [KIND_ROAD, 3.3, 0], service: [KIND_ROAD, 2.6, 0], track: [KIND_ROAD, 2.2, 0], busway: [KIND_ROAD, 3.3, 0],
@@ -27,7 +27,7 @@ const SPEC = {
 };
 const DEPTH = [1.5, 1.9, 0.7];             // structure depth under the running surface, by kind (m)
 const GRADE = [0.07, 0.03, 0.10];          // the steepest a deck climbs to clear something, by kind
-// what passes beneath: 1 road, 2 railway, 3 path, 4 river or canal, 5 stream, 6 open water
+// what passes beneath: 1 road, 2 railroad, 3 path, 4 river or canal, 5 stream, 6 open water
 const U_ROAD = 1, U_RAIL = 2, U_PATH = 3, U_RIVER = 4, U_STREAM = 5, U_WATER = 6;
 const STEP = 14;                           // stations are no farther apart than this (m)
 const AP = 8;                              // points read back along the approach from each abutment, 7 m apart
@@ -37,14 +37,14 @@ export const LONG = 200;                   // a crossing this long is a landmark
 // A few crossings whose form no rule could guess from the map (it does not say what a bridge is made of, nor
 // how high it must stand for ships): latitude, longitude, form, length of the main span (m), height of what
 // stands over the deck (m), height of the deck over the water at the main span (m; 0: as the land has it),
-// the colour of the steel (or of the concrete, for an arch that is concrete).
+// the color of the steel (or of the concrete, for an arch that is concrete).
 //   'lift'     a truss span between two towers        'through'  an arch over the deck, the deck hung from it
-//   'arch'     arches under the deck (the rule finds most of these by their height; not on a motorway)
+//   'arch'     arches under the deck (the rule finds most of these by their height; not on a freeway)
 const LANDMARKS = [
   [46.77895, -92.09283, 'lift', 118, 41, 0, [0.36, 0.38, 0.39]],        // Aerial Lift Bridge, Duluth
   [46.74800, -92.10030, 'through', 180, 36, 40, [0.17, 0.26, 0.22]],    // Blatnik Bridge, Duluth - Superior
   [46.73300, -92.14700, 'through', 152, 30, 40, [0.40, 0.42, 0.43]],    // Bong Bridge, Duluth - Superior
-  [44.94385, -93.08665, 'through', 80, 16, 0, [0.52, 0.50, 0.46]],      // Robert Street, St Paul (a concrete rainbow arch)
+  [44.94385, -93.08665, 'through', 80, 16, 0, [0.52, 0.50, 0.46]],      // Robert Street, St. Paul (a concrete rainbow arch)
   [45.01305, -93.27550, 'through', 137, 27, 0, [0.55, 0.56, 0.57]],     // Lowry Avenue, Minneapolis
   [44.74680, -92.85300, 'through', 166, 30, 0, [0.50, 0.17, 0.09]],     // Hastings
   [45.05660, -92.80200, 'lift', 43, 24, 0, [0.20, 0.27, 0.23]],         // Stillwater
@@ -75,7 +75,7 @@ const lineLength = (p) => { let l = 0; for (let i = 2; i < p.length; i += 2) l +
 function boxOf(p) { let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity; for (let i = 0; i < p.length; i += 2) { if (p[i] < x0) x0 = p[i]; if (p[i] > x1) x1 = p[i]; if (p[i + 1] < z0) z0 = p[i + 1]; if (p[i + 1] > z1) z1 = p[i + 1]; } return [x0, z0, x1, z1]; }
 
 /**
- * layers: decodeTile()'s result with `transportation`, `water` and `waterway`; size: metres across the tile.
+ * layers: decodeTile()'s result with `transportation`, `water` and `waterway`; size: meters across the tile.
  * Returns { ways, under, water }: bridge lines cut to the tile (each { p, kind, hw, rank, layer, oneway, sig, box }),
  * what may pass beneath ({ p, t, hw, box }), and water polygons ({ rings, box }).
  */
@@ -111,7 +111,7 @@ export function parseBridges(layers, size) {
       if (pr.subclass === 'pedestrian') hw = 2.4;
       if (pr.service === 'driveway' || pr.service === 'parking_aisle' || pr.service === 'alley') hw = Math.min(hw, 2.2);
       const layer = +pr.layer || 1, oneway = pr.oneway ? 1 : 0;
-      // road paint: 0 none, 1 a centre line, 2 centre and edge lines, 3 lane dashes and edge lines (a carriageway)
+      // road paint: 0 none, 1 a center line, 2 center and edge lines, 3 lane dashes and edge lines (a roadway)
       const mark = kind !== KIND_ROAD ? 0 : sp[2] === 0 ? 0 : pr.class === 'motorway' || (oneway && !pr.ramp && sp[2] >= 2) ? 3 : pr.ramp ? 0 : sp[2] >= 2 ? 2 : 1;
       const sig = `${pr.class}|${pr.ramp ? 1 : 0}|${oneway}|${layer}|${hw.toFixed(1)}`;
       for (const g of f.geom) {
@@ -159,7 +159,7 @@ export function parseBridges(layers, size) {
   return out;
 }
 
-// ------------------------------------------------------------------ the bridges round a tile, whole
+// ------------------------------------------------------------------ the bridges around a tile, whole
 
 /** Where segment a-b meets c-d: [t along a-b, u along c-d], or null. */
 function meet(ax, az, bx, bz, cx, cz, dx, dz) {
@@ -181,14 +181,14 @@ const tkey = (dx, dy) => dx + ',' + dy;
  * plan: { chains, nodes, cross, pts } with pts the points (x, z from the tile's corner) whose ground is wanted.
  */
 export function assemble(tiles, size, maxR = 3, origin = null) {
-  // ---- every piece of every tile to hand, in this tile's metres
+  // ---- every piece of every tile to hand, in this tile's meters
   const P = [];
   for (const [k, br] of tiles) {
     if (!br) continue;
     const [dx, dy] = k.split(',').map(Number), ox = dx * size, oz = dy * size;
     for (const w of br.ways) P.push({ w, dx, dy, ox, oz, n0: -1, n1: -1, comp: -1, used: false, box: [w.box[0] + ox, w.box[1] + oz, w.box[2] + ox, w.box[3] + oz] });
   }
-  // ---- nodes: where pieces end. Ends cut by a tile's edge find their other half within a metre and a half.
+  // ---- nodes: where pieces end. Ends cut by a tile's edge find their other half within a meter and a half.
   const nodes = [], grid = new Map();
   const nodeAt = (x, z, pi, tk) => {
     const onEdge = Math.abs(x / size - Math.round(x / size)) * size < 1e-4 || Math.abs(z / size - Math.round(z / size)) * size < 1e-4;
@@ -327,7 +327,7 @@ export function assemble(tiles, size, maxR = 3, origin = null) {
   const RANK = [0, 4, 5, 3, 2, 1, 0];
   for (const c of chains) {
     const p = c.poly, X = [], Z = [], S = [], OWN = [];
-    // (a line that meets the bridge within a few metres of where it lands is the junction there, not something beneath)
+    // (a line that meets the bridge within a few meters of where it lands is the junction there, not something beneath)
     for (const x of c.cross) if (x.t && x.t <= U_PATH && ((x.s < 6 && planNodes[c.nA].abut) || (x.s > c.L - 6 && planNodes[c.nB].abut))) x.skip = true;
     let s = 0;
     for (let i = 2; i < p.length; i += 2) {
@@ -364,7 +364,7 @@ export function assemble(tiles, size, maxR = 3, origin = null) {
     delete c.poly;
   }
   // A deck's width, from the outline the map gives of the bridge, where a chain has one to itself (the lines
-  // alone say only what kind of way it is: an old railway viaduct that now carries a path is as wide as ever).
+  // alone say only what kind of way it is: an old railroad viaduct that now carries a path is as wide as ever).
   {
     const inside = new Map();        // outline -> the chains that run through it
     for (const c of chains) {
@@ -487,7 +487,7 @@ function clearance(c, i) {
   if (u === U_PATH) return 3.0 + D;
   if (c.lm && c.lm.clear && Math.abs(c.S[i] - c.lm.s) < c.lm.span / 2) return c.lm.clear;
   // a river a ship can use is wide, and a bridge over it stands high (the map does not say how high: this much is common)
-  // (a railway cannot climb to it: its bridges over such rivers are low, with a span that lifts or swings)
+  // (a railroad cannot climb to it: its bridges over such rivers are low, with a span that lifts or swings)
   if (u === U_RIVER) return Math.max(Math.min(5, 1.5 + c.L / 40), c.kind === KIND_ROAD ? Math.min(16, 5 + (c.wet - 100) / 25) : 0);
   if (u === U_STREAM) return Math.min(1.6, 0.6 + c.L / 60);
   if (u === U_WATER) return Math.min(3.5, 1.2 + c.L / 50);
@@ -499,7 +499,7 @@ export function solveHeights(plan, H) {
   const { chains, nodes, cross } = plan;
   for (const c of chains) {
     const n = c.n; c.g = new Float32Array(n); c.h = new Float32Array(n); c.ob = new Float32Array(n);
-    c.wet = 0; for (let i = 1; i < n; i++) if ((c.under[i] === U_WATER || c.under[i] === U_RIVER) && (c.under[i - 1] === U_WATER || c.under[i - 1] === U_RIVER)) c.wet += c.S[i] - c.S[i - 1];      // metres of it over open water
+    c.wet = 0; for (let i = 1; i < n; i++) if ((c.under[i] === U_WATER || c.under[i] === U_RIVER) && (c.under[i - 1] === U_WATER || c.under[i - 1] === U_RIVER)) c.wet += c.S[i] - c.S[i - 1];      // meters of it over open water
     for (let i = 0; i < n; i++) { c.g[i] = H[c.pt0 + i]; c.ob[i] = c.g[i] + clearance(c, i); }
     // (where a bridge runs into a tunnel the survey shows the hillside over the tunnel's mouth, not the road: no guide to the deck there)
     if (nodes[c.nA].mouth) for (let i = 0; i < n && c.S[i] < 45; i++) c.ob[i] = -1e6;
@@ -579,7 +579,7 @@ function ribbon(o, n, put, skip) {
     triN(o, a, a + 1, a + 2, m[0], m[1], m[2]); triN(o, a + 1, a + 3, a + 2, m[0], m[1], m[2]);
   }
 }
-/** An upright block: centre, across axis (ax, az), half-widths across and along, from y0 to y1, its foot `flare` times as big. caps: 1 top, 2 bottom. */
+/** An upright block: center, across axis (ax, az), half-widths across and along, from y0 to y1, its foot `flare` times as big. caps: 1 top, 2 bottom. */
 function block(o, cx, cz, ax, az, a, b, y0, y1, flare = 1, caps = 0) {
   const bx = -az, bz = ax;
   const corner = (s, d, k) => [cx + s * a * k * ax + d * b * k * bx, cz + s * a * k * az + d * b * k * bz];
@@ -637,7 +637,7 @@ function layout(c, hGroup = 0) {
   for (let i = 0; i < n; i++) { const H = c.h[i] - D - c.g[i]; if (H > hMax) hMax = H; hSum += H; if (c.under[i] === U_RIVER || c.under[i] === U_WATER) wet++; }
   const hMean = hSum / n;
   c.hMax = hMax; hMax = Math.max(hMax, hGroup);
-  // the form: a deck arch for a high road bridge, a through truss for a railway over water, a girder otherwise
+  // the form: a deck arch for a high road bridge, a through truss for a railroad over water, a girder otherwise
   c.form = c.kind === KIND_ROAD && c.rank < 3 && c.rank >= 1 && hMax >= 17 && c.L >= 110 ? 'arch' : c.kind === KIND_RAIL && wet && c.L >= 55 ? 'truss' : c.kind === KIND_PATH && c.hw >= 3 && hMax >= 9 && c.L >= 150 ? 'arch' : 'girder';
   c.main = null;
   if (c.lm && c.lm.form === 'arch' && hMax >= 12) c.form = 'arch';
@@ -696,7 +696,7 @@ export function buildBridges(plan, H, detail, o, urban = true) {
   const nb = chains.length, bBest = new Float64Array(nb), bD = new Float64Array(nb), bH = new Float64Array(nb), bDot = new Float64Array(nb), bStamp = new Int32Array(nb), touched = [];
   let stamp = 0;
   const beside = (c, x, z, rx, rz, h, out, sAt = 0) => {
-    out[0] = -c.hw; out[1] = c.hw; out[2] = 0; out[3] = 0; out[4] = 0; out[5] = -1;       // left edge, right edge (m from the centre line, signed), joined left, joined right, beside a wider deck, the other deck of the same crossing
+    out[0] = -c.hw; out[1] = c.hw; out[2] = 0; out[3] = 0; out[4] = 0; out[5] = -1;       // left edge, right edge (m from the center line, signed), joined left, joined right, beside a wider deck, the other deck of the same crossing
     let eL = -Infinity, eR = Infinity;
     const reach = c.hw + 7 + 14;
     stamp++; touched.length = 0;
@@ -707,7 +707,7 @@ export function buildBridges(plan, H, detail, o, urban = true) {
         const b = chains[l[k]], i = l[k + 1];
         const ax = b.X[i], az = b.Z[i], ex = b.X[i + 1] - ax, ez = b.Z[i + 1] - az, l2 = ex * ex + ez * ez || 1;
         const t = ((x - ax) * ex + (z - az) * ez) / l2;
-        if (t < -0.02 || t > 1.02 || (b === c && Math.abs(b.S[i] - sAt) < 60)) continue;       // (a chain that doubles back runs beside itself: the two carriageways of one crossing)
+        if (t < -0.02 || t > 1.02 || (b === c && Math.abs(b.S[i] - sAt) < 60)) continue;       // (a chain that doubles back runs beside itself: the two roadways of one crossing)
         const px = ax + ex * t - x, pz = az + ez * t - z, d = Math.hypot(px, pz), id = b.id;
         if (bStamp[id] !== stamp) { bStamp[id] = stamp; bBest[id] = Infinity; touched.push(id); }
         if (d < bBest[id]) { bBest[id] = d; bD[id] = px * rx + pz * rz; bH[id] = b.h[i] + (b.h[i + 1] - b.h[i]) * t; bDot[id] = Math.abs(ex * rz - ez * rx) / Math.sqrt(l2); }
@@ -715,7 +715,7 @@ export function buildBridges(plan, H, detail, o, urban = true) {
     }
     for (const id of touched) {
       const b = chains[id], best = bBest[id], bd = bD[id], bh = bH[id];
-      const join = (c.kind === KIND_PATH) !== (b.kind === KIND_PATH) ? 6 : JOIN;       // (a footway is mapped where people walk: well out from the road's centre line on a wide bridge)
+      const join = (c.kind === KIND_PATH) !== (b.kind === KIND_PATH) ? 6 : JOIN;       // (a sidewalk is mapped where people walk: well out from the road's center line on a wide bridge)
       if (bDot[id] < 0.9 || Math.abs(Math.abs(bd) - best) > 0.5) continue;
       if (b !== c && best <= c.hw + b.hw + 14 && Math.abs(bh - h) <= 5 && (out[5] < 0 || prio(b, chains[out[5]]))) { out[5] = b.id; out[6] = bh; out[7] = best <= c.hw + b.hw + join ? 1 : 0; out[8] = bd; }
       if (best > c.hw + b.hw + join || Math.abs(bh - h) > 1.6) continue;
@@ -729,7 +729,7 @@ export function buildBridges(plan, H, detail, o, urban = true) {
     return out;
   };
 
-  // A narrow deck that runs along a wider one (the footway of a road bridge, mapped as a line of its own) is part of
+  // A narrow deck that runs along a wider one (the sidewalk of a road bridge, mapped as a line of its own) is part of
   // that structure: it takes that deck's height, easing back to its own where the two part.
   {
     const e = [0, 0, 0, 0, 0, 0, 0, 0];
@@ -754,8 +754,8 @@ export function buildBridges(plan, H, detail, o, urban = true) {
     }
   }
   for (const c of chains) { c.hGroup = 0; layout(c); }
-  // Decks that run side by side for most of their length are one crossing: a narrow one beside a wider (a footway
-  // along a road bridge) stands on that one's piers; two alike (the carriageways of a motorway) take the same form
+  // Decks that run side by side for most of their length are one crossing: a narrow one beside a wider (a sidewalk
+  // along a road bridge) stands on that one's piers; two alike (the roadways of a freeway) take the same form
   // and stand their piers in line.
   {
     const e = [0, 0, 0, 0, 0, 0, 0, 0, 0];
@@ -780,7 +780,7 @@ export function buildBridges(plan, H, detail, o, urban = true) {
       const m = lead(c);
       if (!m) continue;
       c.form = m.form; c.piers = m.piers.map((s) => (s / m.L) * c.L); c.follows = true; c.main = null;
-      if (c.mate === m) { m.extL = Math.min(m.extL, -c.mateOff - c.hw); m.extR = Math.max(m.extR, -c.mateOff + c.hw); }       // (what a truss round both must span)
+      if (c.mate === m) { m.extL = Math.min(m.extL, -c.mateOff - c.hw); m.extR = Math.max(m.extR, -c.mateOff + c.hw); }       // (what a truss around both must span)
     }
   }
   const isLit = (c) => c.kind === KIND_ROAD && c.rank >= 1 && c.total >= 50 && (urban || c.total >= 400);

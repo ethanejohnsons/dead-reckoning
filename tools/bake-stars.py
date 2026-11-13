@@ -2,7 +2,7 @@
 # usage: python3 -I bake_stars.py <bsc5.dat.gz> <out.bin>
 # Layout: 'DRS1', uint32 count, then per star 6 bytes little-endian:
 #   uint16 RA  (0..65535 -> 0..2pi, J2000)   int16 Dec (-32767..32767 -> -pi/2..pi/2, J2000)
-#   uint8  V magnitude: (V + 2) * 25           uint8  B-V colour: (B-V + 0.5) * 100
+#   uint8  V magnitude: (V + 2) * 25           uint8  B-V color: (B-V + 0.5) * 100
 # Sorted brightest first, so a reader can stop early.
 import gzip, struct, sys, math
 src, out = sys.argv[1], sys.argv[2]

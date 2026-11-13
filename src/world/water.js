@@ -2,28 +2,28 @@
 // data alone, by rules that hold for the United States' elevation data at every zoom the terrain uses.
 //
 // What the data looks like (checked on tiles from Michigan to Montana):
-//   zoom 11 and finer   metres with fractions (the USGS 3DEP survey). Water bodies are levelled: a lake is one
+//   zoom 11 and finer   meters with fractions (the USGS 3DEP survey). Water bodies are leveled: a lake is one
 //                       value, give or take the 4 mm the tiles are stored to, or a plane tilting by a few
-//                       millimetres a pixel. The flattest farmland (the Red River valley) still wanders by
-//                       centimetres from pixel to pixel, so none of it passes as level.
-//   zoom 10 and coarser whole metres. Water is one value here too, but so are terraces of the plains a few
-//                       pixels across, where the land falls less than a metre in a kilometre.
-// So: a patch of pixels each level with all its neighbours is water if it is big enough for its zoom
-// (a few hectares in the fine data; some square kilometres in the coarse data, where only the larger
-// lakes can be told from terraces). Rivers that flow are not levelled in the survey and are not found.
+//                       millimeters a pixel. The flattest farmland (the Red River valley) still wanders by
+//                       centimeters from pixel to pixel, so none of it passes as level.
+//   zoom 10 and coarser whole meters. Water is one value here too, but so are terraces of the plains a few
+//                       pixels across, where the land falls less than a meter in a kilometer.
+// So: a patch of pixels each level with all its neighbors is water if it is big enough for its zoom
+// (a few acres in the fine data; some square kilometers in the coarse data, where only the larger
+// lakes can be told from terraces). Rivers that flow are not leveled in the survey and are not found.
 //
 // Two traps:
-//   Under big cities (Chicago above all) the survey has dead-level blobs hundreds of metres across where
+//   Under big cities (Chicago above all) the survey has dead-level blobs hundreds of meters across where
 //   buildings were taken out. A lake has banks; these have none: the ground stays within a hand's breadth
-//   of their level for 150 m all round. Such patches are marked doubtful (2) rather than water (1), at the
+//   of their level for 150 m all around. Such patches are marked doubtful (2) rather than water (1), at the
 //   one zoom where a tile is wide enough to judge it, and the game drops the doubtful ones where the map
 //   says the land is built up. The Great Lakes have beaches as flat as that and cities on them, so a patch
 //   at a Great Lake's own level, where that lake is, is never doubted (the only list in here: five levels).
-//   The Great Lakes were levelled a survey quadrangle at a time, to slightly different heights, and the
-//   joins are ramps a hundred metres wide: they are filled in (step 3b).
+//   The Great Lakes were leveled a survey quadrangle at a time, to slightly different heights, and the
+//   joins are ramps a hundred meters wide: they are filled in (step 3b).
 
 const N = 256, NN = N * N;
-const TOL = 0.011;                      // level means within this of every neighbour (m)
+const TOL = 0.011;                      // level means within this of every neighbor (m)
 // Smallest patch that can be water, in pixels of its level core, by zoom (a pixel is about 7 m at zoom 14
 // and doubles each step down). A patch that runs off the edge of the tile may be the corner of something
 // bigger, and gets by on half of this.
@@ -35,7 +35,7 @@ const SEAM_LAKE = 3000;                 // joins are only looked for between pat
 const bigPair = (a, b, great) => Math.max(a, b) >= SEAM_LAKE && (great || Math.min(a, b) >= SEAM_LAKE / 10);
 const SEAM = 0.006;                     // see step 3b: how far a join's ramp may step back (the tiles are stored to 4 mm)
 // The doubt is judged at one zoom only, where a tile (14 km) is wide enough to take in a blob and the ground
-// round it; the game looks there for every finer patch. Nothing over DOUBT_MAX pixels (6 km2) is doubted.
+// around it; the game looks there for every finer patch. Nothing over DOUBT_MAX pixels (6 km2) is doubted.
 export const DOUBT_Z = 11;
 const DOUBT_MAX = 2000;
 const BANK = 0.3, BANK_SHARE = 0.05;    // a lake's surroundings: this share of the ground about 150 m out from its edge differs from its level by this much (m)
@@ -46,11 +46,11 @@ const stack = new Int32Array(NN), seen = new Uint8Array(NN), owner = new Int32Ar
 
 /**
  * z, x, y: the tile; h: its 256 x 256 heights (m). Returns 256 x 256 of 0 (land), 1 (water) or, at zoom
- * DOUBT_Z, 2 (level like water, but with no bank anywhere round it: not to be believed in a city).
+ * DOUBT_Z, 2 (level like water, but with no bank anywhere around it: not to be believed in a city).
  */
 export function waterMask(z, x, y, h) {
   const w = new Uint8Array(NN), flat = new Uint8Array(NN);
-  // 1. Level pixels: the whole 3 x 3 neighbourhood within the tolerance.
+  // 1. Level pixels: the whole 3 x 3 neighborhood within the tolerance.
   for (let j = 0; j < N; j++) {
     const j0 = (j > 0 ? j - 1 : 0) * N, j1 = j * N, j2 = (j < N - 1 ? j + 1 : j) * N;
     for (let i = 0; i < N; i++) {
@@ -130,8 +130,8 @@ export function waterMask(z, x, y, h) {
     if (found) grown.push(k, found);
   }
   for (let g = 0; g < grown.length; g += 2) w[grown[g]] = grown[g + 1];
-  // 3b. Seams. A big lake is levelled quadrangle by quadrangle of the survey, a few centimetres or decimetres
-  // apart, and along the joins the tiles ramp from one level to the other: bands of "land" a hundred metres
+  // 3b. Seams. A big lake is leveled quadrangle by quadrangle of the survey, a few centimeters or decimeters
+  // apart, and along the joins the tiles ramp from one level to the other: bands of "land" a hundred meters
   // wide, straight across the water. A short run (up to about 700 m) of pixels along a row or a column, with
   // big water at both ends and climbing steadily from the one level to the other, is water.
   if (z >= 11) {
@@ -144,7 +144,7 @@ export function waterMask(z, x, y, h) {
           if (!w[k]) continue;
           if (last >= 0 && p - last > 1 && p - last - 1 <= reach && bigPair(sizes[owner[k]], sizes[owner[at(line, last)]], great(h[k]) && great(h[at(line, last)]))) {
             // The ramp of a join climbs steadily from one level to the other; ground between two ponds does not.
-            // (Round Duluth the pieces of Lake Superior stand as much as four metres apart, and the filter that
+            // (Round Duluth the pieces of Lake Superior stand as much as four meters apart, and the filter that
             // resampled the tiles rings beside a step: it steps back by up to an eighth of the step in one pixel,
             // on either side. Allowing a twentieth left most joins on the open lake as dark straight bands.)
             const k0 = at(line, last), gap = Math.abs(h[k] - h[k0]), sign = h[k] >= h[k0] ? 1 : -1, back = SEAM + 0.15 * gap;
@@ -159,7 +159,7 @@ export function waterMask(z, x, y, h) {
     const row = (j, i) => j * N + i, col = (i, j) => j * N + i;
     run(1, N, row); run(N, N, col); run(1, N, row);
   }
-  // 4. The sea: everything below zero, and the stray ridges a pixel or two wide and under a metre high that
+  // 4. The sea: everything below zero, and the stray ridges a pixel or two wide and under a meter high that
   // the surveys leave in it (flooded from the sea beside them, a few pixels at most).
   let sea = false;
   for (let k = 0; k < NN; k++) if (h[k] < 0) { w[k] = 1; sea = true; }

@@ -21,7 +21,7 @@ import { sampleWindow, doubtfulIn, urbanAt } from './demwindow.js';
 import { placeFine } from './treeplace.js';
 
 // A patch is N x N quads (V x V vertices) with a data texture TN x TN: SUB texels to a quad. It is sampled
-// on a grid one texel wider all round (GN x GN), for the slopes along its edge.
+// on a grid one texel wider all around (GN x GN), for the slopes along its edge.
 export const N = 32, V = N + 1, SUB = 4, TN = N * SUB + 1, GN = TN + 2;
 export const VERTS = V * V + 4 * V;      // with the skirt: a strip of vertices hanging from each edge
 
@@ -63,7 +63,7 @@ export function buildPatch(job) {
   }
   // The Great Lakes. The survey levels each of its quadrangles on its own (up to 4 m apart on Superior) and the
   // coarse tiles use another datum (4 m lower), so far out the water showed straight steps along the seams, gone
-  // again close in. Water within a few metres of a lake's level is put at that one level, at every zoom.
+  // again close in. Water within a few meters of a lake's level is put at that one level, at every zoom.
   {
     const ll = toLatLon(x0 + size / 2, z0 + size / 2), near = GREAT_LAKES.filter((l) => ll.lat > l[1] - 0.6 && ll.lat < l[2] + 0.6 && ll.lon > l[3] - 0.8 && ll.lon < l[4] + 0.8);
     if (near.length) for (let k = 0; k < GN * GN; k++) {

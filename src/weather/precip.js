@@ -1,9 +1,9 @@
-// Weather particles: rain, snow and hail around the camera, vapour rushing
+// Weather particles: rain, snow and hail around the camera, vapor rushing
 // past inside cloud, condensation trails off the wingtips, and lightning.
 //
-// Falling particles live in a wrapping box centred on the camera. Each is a
+// Falling particles live in a wrapping box centered on the camera. Each is a
 // soft capsule stretched along its velocity relative to the viewer, so rain
-// streaks sideways at cruise speed and snow blurs into the windscreen.
+// streaks sideways at cruise speed and snow blurs into the windshield.
 // Everything is drawn in HDR before the cloud pass, so cloud and fog between
 // the eye and a particle still dim it and bloom picks up the bright ones.
 //
@@ -11,7 +11,7 @@
 // the fuselage (a tube of superellipse sections, in the aircraft's own axes)
 // and dropped if it is inside, so precipitation is seen only through the windows.
 // Hail also strikes the airframe (see Impacts): stones bounce off the wing,
-// cowl, windscreen and tail and break up, and leave brief marks on the glass.
+// cowl, windshield and tail and break up, and leave brief marks on the glass.
 
 import * as THREE from 'three';
 import { ENV } from '../core/env.js';
@@ -19,13 +19,13 @@ import { ENV } from '../core/env.js';
 const MAX = 9000;
 
 /**
- * The airframe as the weather sees it, in the aircraft's own axes (x right, y up, -z forward, metres). The defaults
+ * The airframe as the weather sees it, in the aircraft's own axes (x right, y up, -z forward, meters). The defaults
  * are the Cessna 172 of aircraft/model.js; another variant passes its own numbers to Precip.setAirframe().
  *   hull    fuselage stations, nose to tail: [z, top, bottom, half width, height of the widest point, superellipse exponent]
  *   cabin   [z0, z1] the part of the hull with windows (nothing is drawn inside the hull anywhere, this is for reference)
- *   cowl, screen, aft   [z0, z1] stretches of the hull's upper surface that hail lands on: engine cowl, windscreen, rear fuselage
+ *   cowl, screen, aft   [z0, z1] stretches of the hull's upper surface that hail lands on: engine cowl, windshield, rear fuselage
  *   wing    span, height of the upper surface at the root, rise to the tip, leading and trailing edge z, thickness
- *   stab    tailplane: half span, height, leading and trailing edge z
+ *   stab    stabilizer: half span, height, leading and trailing edge z
  *   fin     leading edge from [z, y] at its foot to [z, y] at its tip, and its thickness
  */
 export const AIRFRAME_172 = {
@@ -157,7 +157,7 @@ void main() {
   gl_FragColor = vec4(uColor * (core * 1.0 + glow * 0.25) * uGain * (0.2 + 0.8 * vI), 1.0);
 }`;
 
-/** One population of falling particles in a camera-centred wrapping box. */
+/** One population of falling particles in a camera-centered wrapping box. */
 class Field {
   constructor(scene, geo, o, shared) {
     this.o = o;
@@ -246,7 +246,7 @@ uniform vec3 uCol;
 varying vec3 vUv;
 varying float vA;
 void main() {
-  // A bruise of crushed ice: a bright core, a splash of short rays round it, a faint ring where the spray lands.
+  // A bruise of crushed ice: a bright core, a splash of short rays around it, a faint ring where the spray lands.
   float r = length(vUv.xy), ang = atan(vUv.y, vUv.x);
   float rays = pow(abs(sin(ang * (3.0 + floor(vUv.z * 4.0)) + vUv.z * 40.0)), 6.0) * (0.6 + 0.4 * sin(ang * 11.0 + vUv.z * 90.0));
   float a = (1.0 - smoothstep(0.0, 0.3, r)) + rays * (1.0 - smoothstep(0.15, 0.95, r)) * 0.7 + 0.25 * (1.0 - smoothstep(0.0, 0.12, abs(r - 0.6))) * (1.0 - vA);
@@ -259,7 +259,7 @@ void main() {
  * Hail meeting the airframe. The falling hail is drawn by a Field, whose stones know nothing of the aircraft; this
  * decides, from how many stones the air holds and how fast each surface is sweeping through them, how many strike
  * each surface this frame, and for every strike throws off a puff of shattered ice, the stone rebounding and a few
- * fragments, all carried away by the airflow. Strikes on the windscreen also leave a mark lying on the glass itself.
+ * fragments, all carried away by the airflow. Strikes on the windshield also leave a mark lying on the glass itself.
  * Everything is worked out in the aircraft's own axes against simple shapes (see AIRFRAME_172).
  */
 class Impacts {
@@ -288,7 +288,7 @@ class Impacts {
     this.group.visible = false;
     // particle state, in the aircraft's axes: position, velocity, age, life, radius, opacity, drag, growth
     this.p = new Float32Array(N * 12); this.live = 0; this.next = 0;
-    this.m = new Float32Array(M * 16); this.mnext = 0; this.mlive = 0;      // marks: centre, two half-edges, age, life, seed
+    this.m = new Float32Array(M * 16); this.mnext = 0; this.mlive = 0;      // marks: center, two half-edges, age, life, seed
     this.acc = []; this.rate = 0; this.frame = 0; this.glass = 0; this.total = 0;
     this.q = new THREE.Quaternion(); this.v = new THREE.Vector3(); this.vf = new THREE.Vector3(); this.g = new THREE.Vector3(); this.last = new THREE.Vector3(); this.has = false;
     this.setAirframe(AIRFRAME_172);
@@ -299,12 +299,12 @@ class Impacts {
     const W = A.wing, S = A.stab, F = A.fin, h = W.span / 2;
     const fl = Math.hypot(F.tip[0] - F.foot[0], F.tip[1] - F.foot[1]);
     // Surfaces a stone can land on. Flat ones: a corner, two edges, the outward normal. Stretches of the hull's upper
-    // surface: a range of z, sampled on the hull itself (kind 1: the windscreen, which shows marks).
+    // surface: a range of z, sampled on the hull itself (kind 1: the windshield, which shows marks).
     this.faces = [
       { o: [-h, W.y + W.rise, W.zLE], u: [h, -W.rise, 0], v: [0, 0, W.zTE - W.zLE], n: [0, 1, 0] },                 // upper wing, left and right (it rises to the tip)
       { o: [0, W.y, W.zLE], u: [h, W.rise, 0], v: [0, 0, W.zTE - W.zLE], n: [0, 1, 0] },
       { o: [-h, W.y - W.thick + W.rise * 0.5, W.zLE], u: [2 * h, 0, 0], v: [0, W.thick, 0], n: [0, 0, -1] },        // its leading edge
-      { o: [-S.half, S.y, S.zLE], u: [2 * S.half, 0, 0], v: [0, 0, S.zTE - S.zLE], n: [0, 1, 0] },                  // tailplane
+      { o: [-S.half, S.y, S.zLE], u: [2 * S.half, 0, 0], v: [0, 0, S.zTE - S.zLE], n: [0, 1, 0] },                  // stabilizer
       { o: [-F.thick / 2, F.foot[1], F.foot[0]], u: [F.thick, 0, 0], v: [0, F.tip[1] - F.foot[1], F.tip[0] - F.foot[0]], n: [0, (F.tip[0] - F.foot[0]) / fl, -(F.tip[1] - F.foot[1]) / fl] },   // leading edge of the fin (square to the swept edge, facing forward and up)
       { hull: A.cowl }, { hull: A.screen, glass: true }, { hull: A.aft },
     ];
@@ -355,7 +355,7 @@ class Impacts {
 
   /**
    * level: hail 0..1. ac: { pos, quat, vel?, root? }. wind: air velocity (world). fall: the stones' fall speed (m/s).
-   * density: stones per cubic metre at level 1 (the falling field's own, so what strikes matches what is seen falling).
+   * density: stones per cubic meter at level 1 (the falling field's own, so what strikes matches what is seen falling).
    */
   update(dt, level, ac, wind, fall, density, col, camera) {
     this.frame = 0; this.glass = 0;
@@ -399,7 +399,7 @@ class Impacts {
           this.emit(x + nx * 0.02, y + ny * 0.02, z + nz * 0.02, (hx - 2 * vn * nx) * 0.3 + (R() - 0.5) * 3, (hy - 2 * vn * ny) * 0.3 + (R() - 0.5) * 3, (hz - 2 * vn * nz) * 0.3 + (R() - 0.5) * 3, 0.5 + R() * 0.3, 0.008 + R() * 0.005, 1, 1.6, 0);
           // a puff of crushed ice stands on the skin for an instant and is blown back,
           this.emit(x + nx * 0.03, y + ny * 0.03, z + nz * 0.03, nx * 1.5, ny * 1.5, nz * 1.5, 0.11 + R() * 0.07, 0.02 + R() * 0.018, 0.4, 2.5, 3.5);
-          // and the fragments spray out round the normal.
+          // and the fragments spray out around the normal.
           const nf = 3 + (R() < 0.5 ? 1 : 0), kick = 3 + 0.09 * sp;
           for (let j = 0; j < nf; j++) {
             const rx = R() - 0.5, ry = R() - 0.5, rz = R() - 0.5, d = rx * nx + ry * ny + rz * nz, up = (0.5 + R()) * kick;
@@ -508,13 +508,13 @@ export class Precip {
     // Snow the wind has lifted off the ground: a shallow sheet of it streaming along the surface under the camera.
     this.blow = F({ count: 8000, box: 44, radius: 0.03, fall: 0.25, shutter: 1 / 24, maxStreak: 1.6, opacity: 0.5, gain: 1.4, flutter: 0.22, core: 0.0, near: 0.5, vary: 0.5, rate: 1.2 });
     this.blowDepth = 11;
-    // Hail striking the airframe; `hits` is for whoever wants to follow it (sound): strikes per second, this frame's count, how many of those on the windscreen.
+    // Hail striking the airframe; `hits` is for whoever wants to follow it (sound): strikes per second, this frame's count, how many of those on the windshield.
     this.impacts = new Impacts(scene);
     this.hits = { rate: 0, frame: 0, glass: 0, total: 0 };
     this.mat3 = new THREE.Matrix4(); this.qi = new THREE.Quaternion();
     this.setAirframe(AIRFRAME_172);
-    // Vapour: big soft puffs fixed in the air, so they rush past when flying in cloud.
-    this.vapour = F({ count: 320, box: 56, radius: 3.6, fall: 0, shutter: 1 / 50, maxStreak: 2.5, opacity: 0.3, core: 0.0, near: 2.5, vary: 1.2, rate: 2.5, order: 3 });
+    // Vapor: big soft puffs fixed in the air, so they rush past when flying in cloud.
+    this.vapor = F({ count: 320, box: 56, radius: 3.6, fall: 0, shutter: 1 / 50, maxStreak: 2.5, opacity: 0.3, core: 0.0, near: 2.5, vary: 1.2, rate: 2.5, order: 3 });
 
     // Condensation trails: two ribbons of N points each, rebuilt every frame.
     this.TN = 72;
@@ -579,7 +579,7 @@ export class Precip {
    *   hail            0..1 (optional) hail in a storm core
    *   wind            {x,y,z} air velocity, m/s
    *   camPos, camVel  THREE.Vector3 camera position and velocity
-   *   cloud           0..1 (optional) cloud density around the aircraft; shows vapour
+   *   cloud           0..1 (optional) cloud density around the aircraft; shows vapor
    *   camera          (optional) THREE.PerspectiveCamera, keeps distant lightning a few pixels wide
    *   aircraft        (optional) { pos: Vector3, quat: Quaternion, tas, gLoad, onGround } for wingtip trails; with it nothing is
    *                   drawn inside the fuselage and hail strikes the airframe. Also read: vel (Vector3, its velocity; else worked
@@ -587,7 +587,7 @@ export class Precip {
    *   humidity        (optional) 0..1 moist air; trails also form in cloud, rain, or under high g
    *   blow            0..1 (optional) snow blowing along the ground here; needs `ground`
    *   ground          (optional) height of the ground under the camera, m
-   * Afterwards `hits` holds the hail strikes on the airframe: { rate per second (smoothed), frame, glass, total }.
+   * Afterward `hits` holds the hail strikes on the airframe: { rate per second (smoothed), frame, glass, total }.
    */
   update(s) {
     if (typeof s === 'number') { const a = arguments; s = { dt: a[0], time: performance.now() / 1000, rain: a[2] ? 0 : a[1], snow: a[2] ? a[1] : 0, wind: a[3], camVel: a[4], camPos: a[5] }; }
@@ -618,14 +618,14 @@ export class Precip {
     this.sun.copy(sun).multiplyScalar(0.22);
     this.snowNear.update(dt, time, snow, wind, camVel, camPos, this.amb, this.sun);
     this.snowFar.update(dt, time, snow, wind, camVel, camPos, this.amb, this.sun);
-    // Blowing snow lies in the lowest few metres: the sheet is laid on the ground under the camera, and is out of sight from higher up.
+    // Blowing snow lies in the lowest few meters: the sheet is laid on the ground under the camera, and is out of sight from higher up.
     const hasGround = typeof s.ground === 'number', camAgl = hasGround ? camPos.y - s.ground : 1e9;
     this.blow.u.uLayer.value.set(hasGround ? s.ground + 0.42 * this.blowDepth - camPos.y : 0, this.blowDepth);
     this.blow.update(dt, time, (s.blow || 0) * (1 - THREE.MathUtils.smoothstep(camAgl, 25, 70)), wind, camVel, camPos, this.amb, this.sun);
-    // Vapour takes the colour of the cloud it is part of.
+    // Vapor takes the color of the cloud it is part of.
     this.amb.copy(sky).multiplyScalar(1.25).add(this.tmp.copy(fog).multiplyScalar(0.35)).add(this.tmp.copy(sun).multiplyScalar(0.1)).addScalar(flashL * 1.5);
     this.sun.copy(sun).multiplyScalar(0.05);
-    this.vapour.update(dt, time, Math.min(1, (s.cloud || 0) * 1.4), wind, camVel, camPos, this.amb, this.sun);
+    this.vapor.update(dt, time, Math.min(1, (s.cloud || 0) * 1.4), wind, camVel, camPos, this.amb, this.sun);
 
     this.updateTrails(s, dt, wind, camPos);
     this.updateLightning(dt, s.camera);
@@ -649,7 +649,7 @@ export class Precip {
       for (let i = 0; i < N; i++) { P.age[i] += dt; P.x[i] += wind.x * dt; P.y[i] += (wind.y - 0.6) * dt; P.z[i] += wind.z * dt; }
       const moved = Math.hypot(tip.x - P.lx, tip.y - P.ly, tip.z - P.lz);
       if (moved > 60) P.age.fill(99);                         // the aircraft was repositioned: drop the old trail
-      // Lay a new point every few metres of travel.
+      // Lay a new point every few meters of travel.
       if (moved > 2.2) {
         P.head = (P.head + 1) % N;
         P.x[P.head] = tip.x; P.y[P.head] = tip.y; P.z[P.head] = tip.z; P.s[P.head] = strength; P.age[P.head] = 0;

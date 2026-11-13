@@ -1,6 +1,6 @@
 // Weather simulation. The atmosphere is built from the same pieces a real
 // synoptic chart shows: highs and lows (wind blows along the isobars,
-// anticlockwise round a low north of the equator, clockwise south of it), cold and warm fronts trailing from each low,
+// counterclockwise around a low north of the equator, clockwise south of it), cold and warm fronts trailing from each low,
 // air-mass thunderstorm cells with a life cycle, sea-fog banks, fair-weather
 // cumulus with thermals, and terrain effects (upslope cloud, lee sink,
 // mountain wave). One function answers "what is the air doing here?" for the
@@ -23,10 +23,10 @@ export const NOISE_SCALE = 12700;
 export const LOBE_SCALE = 1830, FINE_SCALE = 137;
 const turn = (ax, ay, az, ang) => { const l = Math.hypot(ax, ay, az), x = ax / l, y = ay / l, z = az / l, c = Math.cos(ang), s = Math.sin(ang), t = 1 - c; return [t * x * x + c, t * x * y + s * z, t * x * z - s * y, t * x * y - s * z, t * y * y + c, t * y * z + s * x, t * x * z + s * y, t * y * z - s * x, t * z * z + c]; };
 export const LOBE_ROT = turn(0.36, 0.48, 0.8, 0.93), FINE_ROT = turn(0.7, -0.3, 0.65, 2.11);   // (columns of a rotation matrix)
-export const LOBE_AMP = [0.13, 0.2], FINE_AMP = 0.17;  // how far the lobes move the surface, in units of the base noise: layer cloud .. heaps; the fine octaves against the coarse (0.6 an octave down from 460 m to 34 m is 0.15: at 0.3 the skin was a sponge seventy metres deep)
+export const LOBE_AMP = [0.13, 0.2], FINE_AMP = 0.17;  // how far the lobes move the surface, in units of the base noise: layer cloud .. heaps; the fine octaves against the coarse (0.6 an octave down from 460 m to 34 m is 0.15: at 0.3 the skin was a sponge seventy meters deep)
 export const LOBE_WARP = 300;                            // m: the lobe lookup is bent by the base noise, so lobes are of uneven size, not packed bubbles
 // Above the base noise: cloud shapes are sampled through a slowly bending domain, and their amount swells and
-// thins in clusters a few kilometres across and again over tens of kilometres, from scales that share no period
+// thins in clusters a few kilometers across and again over tens of kilometers, from scales that share no period
 // with the noise tiles: cells shear and merge instead of sitting in rows, and the tiling never shows.
 export const WARP_SCALE = 23700, WARP_AMP = [500, 1700], VARY_SCALE = 61000, VARY_AMP = 1.1, MESO_AMP = 0.9;   // (the bend along x comes from a finer channel of the noise: any more of it would fold the clouds over)
 export const NOISE_SQUASH = 1.0;                         // vertical scale of the base shape lookup (below 1 stretches its cells into columns; 1 keeps turrets round)
@@ -40,29 +40,29 @@ const K_GEO = 1.0e5;                   // m/s of wind per hPa/m of pressure grad
 const D2R = Math.PI / 180;
 const wrap = (a) => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; };
 
-// Weather systems the game can stage. "local" ones are centred on the aircraft; the rest are
+// Weather systems the game can stage. "local" ones are centered on the aircraft; the rest are
 // laid out along a line from the aircraft toward a point about 100 km away.
 export const SITUATIONS = {
   clear: { title: 'Clear', blurb: 'A cloudless sky under a strong high. Unlimited visibility, light winds.' },
   fair: { title: 'Fair-weather cumulus', blurb: 'Settled air under a high. Light winds, scattered cumulus, afternoon thermals.' },
-  overcast: { title: 'Overcast', blurb: 'A flat grey stratus deck from horizon to horizon. Dull light, no rain.' },
-  rain: { title: 'Rain', blurb: 'Deep nimbostratus and steady rain. Low cloud, poor visibility, wet runways.' },
-  storms: { title: 'Thunderstorms', blurb: 'A cumulonimbus overhead and more on every side: heavy rain under the dark bases, lightning all round, violent up- and downdraughts.' },
+  overcast: { title: 'Overcast', blurb: 'A flat gray stratus deck from horizon to horizon. Dull light, no rain.' },
+  rain: { title: 'Rain', blurb: 'Deep nimbostratus and steady rain. Low clouds, poor visibility, wet runways.' },
+  storms: { title: 'Thunderstorms', blurb: 'A cumulonimbus overhead and more on every side: heavy rain under the dark bases, lightning all around, violent up- and downdrafts.' },
   scattered: { title: 'Scattered thunderstorms', blurb: 'Isolated cumulonimbus towers standing in clear air: sunshine between them, rain, lightning and turbulence underneath.' },
   hail: { title: 'Hailstorm', blurb: 'A severe storm cell with a hail core. Stay out from under the anvil.' },
   snow: { title: 'Snow', blurb: 'A cold air mass with low overcast and steady snow. The ground is white to the sea.' },
   fog: { title: 'Fog', blurb: 'Calm and clear on top, with a fog bank lying over the airfield and the low ground.' },
   coldfront: { title: 'Cold front', blurb: 'A squall line sweeping in: a wall of cumulonimbus, heavy rain, then a sharp wind shift and colder, clearer air.' },
   warmfront: { title: 'Warm front', blurb: 'Cirrus thickening to a lowering overcast with steady rain ahead.' },
-  gale: { title: 'Gale', blurb: 'A tight pressure gradient. Strong wind, wave cloud and sink in the lee of the ranges, white horses on the water.' },
+  gale: { title: 'Gale', blurb: 'A tight pressure gradient. Strong wind, wave clouds and sink in the lee of the ranges, whitecaps on the water.' },
   monsoon: { title: 'Squalls', blurb: 'Deep moist air, towering cumulus everywhere and sudden blinding downpours.' },
   blizzard: { title: 'Blizzard', blurb: 'Heavy snow driven by a gusting northerly gale, snow streaming across the ground, near whiteout and bitter cold.' },
   lakeeffect: { title: 'Lake-effect snow', blurb: 'Arctic air off open water: long narrow bands of blinding snow squalls lying along the wind, hard blue sky between them.' },
-  icestorm: { title: 'Ice storm', blurb: 'Rain falling from a warm layer aloft into freezing air at the surface. Low cloud, glaze on the glass; the air is warmer a thousand metres up.' },
-  derecho: { title: 'Derecho', blurb: 'A bowed squall line racing in behind a low shelf cloud: a violent wind shift, a wall of rain and lightning, then a long grey trailing shield.' },
-  heat: { title: 'Hot and hazy', blurb: 'A stifling summer afternoon. Thick haze below three kilometres, strong thermals, and cumulus towers building through the top of it.' },
-  chinook: { title: 'Chinook', blurb: 'A warm, gusting gale pouring off the mountains: a clear slot in their lee, lens clouds standing in the wave, and a sharp-edged arch of high cloud overhead.' },
-  virga: { title: 'Virga', blurb: 'High-based showers over dry country: grey shafts of rain that evaporate before they reach the ground, and gusty sinking air beneath them.' },
+  icestorm: { title: 'Ice storm', blurb: 'Rain falling from a warm layer aloft into freezing air at the surface. Low clouds, glaze on the glass; the air is warmer three thousand feet up.' },
+  derecho: { title: 'Derecho', blurb: 'A bowed squall line racing in behind a low shelf cloud: a violent wind shift, a wall of rain and lightning, then a long gray trailing shield.' },
+  heat: { title: 'Hot and hazy', blurb: 'A stifling summer afternoon. Thick haze below ten thousand feet, strong thermals, and cumulus towers building through the top of it.' },
+  chinook: { title: 'Chinook', blurb: 'A warm, gusting gale pouring off the mountains: a clear slot in their lee, lens clouds standing in the wave, and a sharp-edged arch of high clouds overhead.' },
+  virga: { title: 'Virga', blurb: 'High-based showers over dry country: gray shafts of rain that evaporate before they reach the ground, and gusty sinking air beneath them.' },
 };
 
 // How each situation reads while it is on its way in (for a line such as "clearing, 3 min"), and the
@@ -139,6 +139,7 @@ export class Weather {
     this.hemi = 0;                                       // +1 north of the equator, -1 south (read from REGION when a situation is staged)
     this.cellAreas = [];
     this.drift = { x: 0, y: 0, z: 0 };   // accumulated cloud-noise advection (m)
+    this.org = { x: 0, z: 0 };           // how far the window of the world has been moved under the weather (see shift)
     this.flashes = [];
     this.kind = 'fair';
 
@@ -155,8 +156,8 @@ export class Weather {
     this.setup('fair', null, 12);
   }
 
-  /** Which way round the weather turns: sea-level temperature falls toward the pole, and (see _geo, fronts) air circles a low
-   *  anticlockwise in the northern hemisphere, clockwise in the southern. */
+  /** Which way around the weather turns: sea-level temperature falls toward the pole, and (see _geo, fronts) air circles a low
+   *  counterclockwise in the northern hemisphere, clockwise in the southern. */
   _hemisphere() {
     const hs = REGION.lat0 < 0 ? -1 : 1;
     if (hs === this.hemi) return;
@@ -177,6 +178,22 @@ export class Weather {
     }
   }
 
+  /**
+   * The window of the world has moved under the weather (the aircraft flew on and the window followed): every
+   * system, cell and bank is carried dx, dz in the new world coordinates, and the cloud noise with them, so
+   * the sky stays what it was. The caller reads the terrain again and bakes the maps (readTerrain, bakeAll).
+   */
+  shift(dx, dz) {
+    const seen = new Set();
+    const move = (o) => { if (o && !seen.has(o)) { seen.add(o); o.x += dx; o.z += dz; } };
+    for (const list of [this.lows, this.highs, this.cells, this.fogs, this.bands, this.lines, this.arches, this.cellAreas, this.flashes]) list.forEach(move);
+    for (const c of this.cells) move(c.area);
+    if (this.trans) for (const b of this.trans.born) { move(b.c); move(b.c.area); }
+    const a = this.at; a.x += dx; a.z += dz; a.rx += dx; a.rz += dz;
+    this.org.x += dx; this.org.z += dz;
+    this.drift.x -= dx; this.drift.z -= dz;             // the noise is read at position + drift
+  }
+
   grid(g, x, z) {
     const N = WX_N, H = WORLD_HALF;
     const fx = clamp(((x + H) / (2 * H)) * N - 0.5, 0, N - 1.001), fz = clamp(((z + H) / (2 * H)) * N - 0.5, 0, N - 1.001);
@@ -186,7 +203,7 @@ export class Weather {
 
   // ---------------------------------------------------------------- scenarios
 
-  /** Build a weather situation around a route {ax, az, bx, bz} (or the map centre), at once. */
+  /** Build a weather situation around a route {ax, az, bx, bz} (or the map center), at once. */
   setup(kind, route, hour, seed = 1) {
     this.kind = kind; this.hour = hour; this.time = 0;
     this.flashes = []; this.trans = null;
@@ -238,13 +255,13 @@ export class Weather {
     };
     const high = (x, z, amp, sig, vx = 3, vz = 0) => this.highs.push({ x, z, amp, sig, vx, vz, s: 1 });
     const ux0 = (r.bx - r.ax) / (dist || 1), uz0 = (r.bz - r.az) / (dist || 1);
-    // A storm cell placed by hand: `ahead` and `right` in metres from the start of the route.
+    // A storm cell placed by hand: `ahead` and `right` in meters from the start of the route.
     const cell = (ahead, right, rad, phase, hail = false) => {
       const c = { area: null, x: r.ax + ux0 * ahead - uz0 * right, z: r.az + uz0 * ahead + ux0 * right, r: rad, life: 4200 + R() * 1200, age: 0, vx: 0, vz: 0, flashT: 1 + R() * 4, hail, rate: 1,
         base: Math.max(820, g0 + 650) };                          // a workable gap under the base even at the high inland fields
       c.age = phase * c.life; this.cells.push(c); return c;
     };
-    // A tower that builds to a few kilometres and subsides again without ever maturing into a storm.
+    // A tower that builds to a few kilometers and subsides again without ever maturing into a storm.
     const tower = (ahead, right, rad, phase) => { const c = cell(ahead, right, rad, 0); c.life = 2000 + R() * 900; c.cap = 0.2; c.age = phase * c.cap * c.life; return c; };
     const area = (x, z, rad, count, cap = 0) => { const a = { x, z, r: rad, count, cap }; this.cellAreas.push(a); for (let i = 0; i < count; i++) this.spawnCell(a, R() * 0.7); };
     const terr = (x, z) => this.grid(this.terr, x, hs * z);
@@ -353,7 +370,7 @@ export class Weather {
       this.humidity = 0.1; this.haze = 95000; this.cirrus = 0.03; this.gust = 0.35; this.blowing = 0.45;
       this.flowX = 3; this.flowZ = 2.5;
       const w = geo(r.ax, r.az), ws = Math.hypot(w.x, w.z) || 1;
-      // The field sits just inside the edge of a band: snow overhead, the clear lane a few kilometres off to one side.
+      // The field sits just inside the edge of a band: snow overhead, the clear lane a few kilometers off to one side.
       this.bands.push({ x: r.ax, z: r.az, ux: w.x / ws, uz: w.z / ws, off: 3200, spacing: 34e3, width: 9000, base: g0 + 480, top: g0 + 2700, precip: 0.9, r: 200e3, seed: R() * 50, s: 1 });
     } else if (kind === 'icestorm') {
       // Warm air riding up over a shallow wedge of freezing air: snow melts to rain in the warm layer, then falls into the cold.
@@ -364,7 +381,7 @@ export class Weather {
       this.humidity = 0.25; this.haze = 9000; this.cirrus = 0; this.flowX = 1.5; this.flowZ = -1;
       this.layer = { cov: 1, base: g0 + 230, top: g0 + 2500, precip: 0.5, steady: true, seed: R() * 100 };
     } else if (kind === 'derecho') {
-      // Hot, humid air ahead; the line comes out of the north-west at 25 m/s with its gust front under ten minutes from the field.
+      // Hot, humid air ahead; the line comes out of the northwest at 25 m/s with its gust front under ten minutes from the field.
       high(mx + 500e3, mz + 250e3, 8, 240e3);
       low(r.ax - 330e3, r.az - 240e3, -12, 200e3, 4, 0, false);
       this.humidity = 0.8; this.haze = 34000; this.tAnom = 9; this.cirrus = 0.25; this.flowX = 4; this.flowZ = 1.5;
@@ -393,7 +410,7 @@ export class Weather {
       const slot = 46e3;
       this.arches.push({ x: r.ax + nx * (dc + slot), z: r.az + nz * (dc + slot), nx, nz, slot, lens: Math.max(crest + 1100, g0 + 2400), base: Math.max(crest + 2900, g0 + 5200), seed: R() * 50, s: 1 });
     } else if (kind === 'virga') {
-      // Showers from a deck three kilometres up, over air so dry that the rain is gone long before the ground.
+      // Showers from a deck three kilometers up, over air so dry that the rain is gone long before the ground.
       high(mx + 380e3, mz + 150e3, 9, 240e3);
       low(mx - 300e3, mz - 200e3, -7, 200e3, 3, 0, false);
       this.humidity = 0.22; this.haze = 110000; this.tAnom = 7; this.cirrus = 0.2; this.dry = 1; this.gust = 0.3; this.flowX = 4; this.flowZ = 1;
@@ -402,7 +419,7 @@ export class Weather {
     if (this.layer) { const L = this.layer; L.steady = +L.steady; L.conv = L.conv ?? 0.08; L.k = 1; }
     for (const f of this.fogs) f.s = 1;
     if (hs < 0) {
-      // Back to the real map: mirror north-south. Front angles are measured anticlockwise from east, so they change sign.
+      // Back to the real map: mirror north-south. Front angles are measured counterclockwise from east, so they change sign.
       for (const l of this.lows) { l.z = -l.z; l.vz = -l.vz; l.thC = -l.thC; l.thW = -l.thW; l.curlC = -l.curlC; l.curlW = -l.curlW; l.hs = -1; }
       for (const o of [...this.highs, ...this.cells]) { o.z = -o.z; o.vz = -o.vz; }
       for (const o of [...this.fogs, ...this.cellAreas]) o.z = -o.z;
@@ -556,7 +573,7 @@ export class Weather {
   /**
    * The ground around the aircraft: `wet` rises under rain and while lying snow melts, and falls again at a rate set by
    * the temperature, the wind, the sun and how humid the air is (a quarter of an hour on a hot breezy afternoon, an hour or more on a
-   * cold grey day or at night; frozen ground hardly dries). `snowpack` builds under snow and melts above freezing. ENV.uWet follows `wet`.
+   * cold gray day or at night; frozen ground hardly dries). `snowpack` builds under snow and melts above freezing. ENV.uWet follows `wet`.
    */
   _ground(dt) {
     if ((this._gt = (this._gt || 0) + dt) < 0.5) return;
@@ -587,7 +604,7 @@ export class Weather {
     const W = this._w || (this._w = { x: 0, z: 0 });
     for (let i = this.cells.length - 1; i >= 0; i--) {
       const c = this.cells[i];
-      // A cell ages at its own rate: faster while a transition builds it up or runs it down, backwards while it subsides.
+      // A cell ages at its own rate: faster while a transition builds it up or runs it down, backward while it subsides.
       c.age += dt * c.rate;
       if (c.to != null && c.age >= c.to) { c.age = c.to; c.to = null; c.rate = 1; }
       if (c.cap && c.rate > 0 && c.age >= c.cap * c.life) c.rate = -1;       // a tower that never matures: it sinks back
@@ -686,7 +703,7 @@ export class Weather {
     out.x = (wx * cs + wz * sn) * sp; out.z = (-wx * sn + wz * cs) * sp;
     if (this.ctl.wind) return out;
     // A squall line's own wind: a light draw in toward it ahead, and behind its gust front the cold outflow, about as fast as
-    // the line itself moves, strongest in the lowest kilometre and dying away under the trailing rain.
+    // the line itself moves, strongest in the lowest kilometer and dying away under the trailing rain.
     for (const q of this.lines) {
       const e = this.lineAt(q, x, z);
       if (e <= 0.001) continue;
@@ -730,7 +747,7 @@ export class Weather {
     const terr = this.grid(this.terr, x, z), moist = this.grid(this.moist, x, z);
     const hr = this.hour, diurnal = 0.3 + 0.7 * clamp(Math.sin((Math.PI * (hr - 8)) / 12), 0, 1);
     const n = fbm(this.cu, (x + this.drift.x * 0.5) / 46e3, (z + this.drift.z * 0.5) / 46e3, 2);
-    const n2 = this.cu(x / 17e3 + 40, z / 17e3 - 9);
+    const n2 = this.cu((x - this.org.x) / 17e3 + 40, (z - this.org.z) / 17e3 - 9);
 
     let sub = 0;
     for (const h of this.highs) { const dx = x - h.x, dz = z - h.z; sub += h.s * Math.exp(-(dx * dx + dz * dz) / (2 * h.sig * h.sig)); }
@@ -839,7 +856,7 @@ export class Weather {
 
     const L = this.layer;
     if (L && L.k > 0.001) {
-      const br = 0.72 + 0.28 * smoothstep(-0.5, 0.3, this.cu(x / 60e3 + L.seed, z / 60e3));
+      const br = 0.72 + 0.28 * smoothstep(-0.5, 0.3, this.cu((x - this.org.x) / 60e3 + L.seed, (z - this.org.z) / 60e3));
       const showers = smoothstep(0.1, 0.65, n2 + 0.25 * n);
       // k < 1: the deck is forming or breaking up. It is in patches (the first to form are the last to go), which spread
       // and join as it thickens; while it is broken it sits higher, shallower and lumpier, and nothing falls from it.
@@ -924,8 +941,8 @@ export class Weather {
   // ---------------------------------------------------------------- point sample for the flight model
 
   /**
-   * The storm cell that shapes the cloud over a point. The weather map knows a cell only as a disc of
-   * full cover two kilometres to the texel, which on its own makes a featureless cylinder; with this
+   * The storm cell that shapes the cloud over a point. The weather map knows a cell only as a disk of
+   * full cover two kilometers to the texel, which on its own makes a featureless cylinder; with this
    * the cloud code builds a tower, shoulders and an anvil instead (see cellCover).
    *   rho   distance from the nearest cell's axis, in cell radii     rhoA  the same for its anvil, which
    *   ph    that cell's age as a fraction of its life                      lies downwind, drawn out along the flow
@@ -971,7 +988,7 @@ export class Weather {
   }
 
   /**
-   * The layer over a point as the renderer reads it: the baked weather maps (8 bits a channel, two kilometres
+   * The layer over a point as the renderer reads it: the baked weather maps (8 bits a channel, two kilometers
    * to the texel, bilinearly filtered), not column() itself. density() takes its layer from here, so that
    * "in cloud" is decided from exactly what is drawn.
    */
@@ -1003,9 +1020,9 @@ export class Weather {
   }
 
   /**
-   * The direction cloud is combed out along (fibres of an anvil, rolls on the top of a layer): the flow as it
+   * The direction cloud is combed out along (fibers of an anvil, rolls on the top of a layer): the flow as it
    * was when this weather was set up. It is held, not followed: these patterns are laid out along it across the
-   * whole map, so turning it by a degree would slide cloud a hundred kilometres away by kilometres.
+   * whole map, so turning it by a degree would slide cloud a hundred kilometers away by kilometers.
    */
   grain() {
     const g = this._grain || (this._grain = { x: 1, z: 0, rng: null });
@@ -1097,7 +1114,7 @@ export class Weather {
     const N = this.noise, L = N.detail, D = this.drift, G = this.grain(), wb = c.base - drop;
     const cv = smoothstep(0.1, 0.5, c.conv);
     const hh = lerp(clamp(h, 0, 1), clamp(hc, 0, 1), cw), cve = Math.max(cv, cw);
-    const hm = lerp(clamp(h, 0, 1) * thick, clamp(hc, 0, 1) * cthick, cw);   // metres above the base
+    const hm = lerp(clamp(h, 0, 1) * thick, clamp(hc, 0, 1) * cthick, cw);   // meters above the base
     // Towers lean downwind as they rise (same shear the renderer applies).
     const fl = Math.hypot(this.flowX, this.flowZ), lean = hh * hh * lerp(thick, cthick, cw) * 0.2 * lerp(c.conv, 1, cw);
     const qx = x + (fl > 0.2 ? this.flowX / fl : 1) * lean + warpX, qz = z + (fl > 0.2 ? this.flowZ / fl : 0) * lean + warpZ;
@@ -1115,7 +1132,7 @@ export class Weather {
       deep = smoothstep(5000, 8000, thick);
       // Cumulus: a flat base, and a dome over each cell of the noise, taller the stronger the cell.
       const tC = (0.12 + ce) * h * h + 0.05 * (1 - smoothstep(0, 200, h * thick)) - 0.45 * deep * smoothstep(0.76, 0.9, h) * (1 - smoothstep(0.95, 1, h)) + 1 - smoothstep(0, 0.035 + rag * 1.6, h);
-      // Layer cloud: a slab whose top rolls over a few hundred metres, in sheets where it is deep.
+      // Layer cloud: a slab whose top rolls over a few hundred meters, in sheets where it is deep.
       const zt = clamp(450 / thick, 0.06, 0.5), zb = clamp(110 / thick, 0.02, 0.2) + rag * 1.3;
       const tS = smoothstep(1 - zt, 1, h) + 1 - smoothstep(0, zb, h) + 0.3 * smoothstep(2000, 4000, thick) * (0.5 - 0.5 * Math.cos(h * thick * 0.0037));
       // The top of a layer is a pavement of cells with narrow clefts between them, half of them drawn out into rolls along the wind.
@@ -1133,7 +1150,7 @@ export class Weather {
     }
     const th = lerp(thG, thC, cw);
     if (anv > 0) {
-      // An anvil is a smooth sheet, not a heap, combed out along the wind into fibres; mammatus hangs in patches from its underside.
+      // An anvil is a smooth sheet, not a heap, combed out along the wind into fibers; mammatus hangs in patches from its underside.
       und *= anv;
       const streak = sampleNoise(N, fx / 14600, y / 7300, fz / 1825, 2), fib = sampleNoise(L, fx / 3650, y / 1825, fz / 608.3333, 2);
       let na = 0.5 + (n - 0.5) * 0.3 + ((streak - 0.5) * 0.5 + (fib - 0.5) * 0.2) * (1 - 0.9 * und);
@@ -1219,7 +1236,7 @@ export class Weather {
       up += c.front * 9 * cn * smoothstep(c.base - 300, c.base + 600, y) - c.front * 5 * (1 - smoothstep(c.base, c.base + 500, y)) * smoothstep(0, 250, agl) * c.precip;
       turb = Math.max(turb, c.front * 0.85);
     }
-    // Squall line: lift along the shelf, the downdraught in the rain behind it, small hail in the leading core, and a
+    // Squall line: lift along the shelf, the downdraft in the rain behind it, small hail in the leading core, and a
     // pool of rain-cooled air that reaches back under the trailing cloud.
     if (c.line > 0.02) {
       const d = c.lineD, e = c.line, low = 1 - smoothstep(1500, 3500, agl);

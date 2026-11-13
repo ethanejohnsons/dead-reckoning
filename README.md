@@ -1,11 +1,11 @@
 # Dead Reckoning
 
-A browser flight simulator set over the real terrain of the United States, from
-the Great Lakes to the northern Rockies. Fly a four-seat high-wing single from
-any of about a hundred real airfields in Minnesota, Wisconsin, Michigan,
-Illinois, the Dakotas, Nebraska, Colorado, Wyoming and Montana, from outside or
-from the cockpit, through volumetric cloud, rain, thunderstorms, hail, snow,
-fog and fronts.
+A browser flight simulator set over the real terrain of North America. Fly a
+four-seat high-wing single from any of more than four hundred real airfields in
+every state of the United States and every province and territory of Canada,
+or start in the air over any point you pin on the map, from outside or from the
+cockpit, through volumetric cloud, rain, thunderstorms, hail, snow, fog and
+fronts. There is no edge to the world: keep flying and the country keeps coming.
 
 ## Run
 
@@ -47,14 +47,30 @@ imagery and building tiles straight from the services named in the credits.
 
 ## The world
 
-The game holds one square window of the earth at a time, 524 km on a side,
-centred on the airfield you last chose (`REGION` in `src/world/geo.js`). Pick
-a field more than 120 km from the centre of the window and the window moves to
-it: `loadWorld` in `src/main.js` fetches the coarse elevation for the new
-square and rebuilds what depends on place (water, regional maps, towns,
-airfields and their grading, terrain, the weather's terrain grids, the chart)
-in a few seconds. Past the edge of the window the ground runs on flat into the
-haze; fly 15 km past the charted edge and you are put back on a runway.
+The game holds one square window of the earth at a time, 524 km on a side
+(`REGION` in `src/world/geo.js`). Pick an airfield, or pin a point on the map,
+more than 120 km from the center of the window and the window moves to it:
+`loadWorld` in `src/main.js` fetches the coarse elevation for the new square
+and rebuilds what depends on place (water, regional maps, towns, airfields and
+their grading, terrain, the weather's terrain grids, the map) in a few seconds.
+
+In flight the window follows the aircraft (`followAircraft` in `src/main.js`):
+150 km from its center the window is moved to lie around a point 60 km ahead,
+the aircraft is put where it was over the ground in the new coordinates, and
+the weather is carried along with it (`Weather.shift`). The flight stands still
+for the second or two that takes. So there is no edge to reach, in the United
+States, Canada or beyond them; only the airfields, the towns' lights and the
+climate rules stop at the two countries. (The plane the world lies on is Web
+Mercator, so the far Arctic is stretched, and a flight across the 180th
+meridian is not provided for.)
+
+What grows where no satellite picture has loaded, where the tree line is and
+how readily the picture's dark green is taken for woodland come from a rough
+climate of the continent in `src/world/terrain.js` (`lowlandMoisture`,
+`treelineAt`): prairie and plowed country keep trees to their shelter belts,
+river bottoms and towns, however green the crops are in the picture. Magnetic
+variation is interpolated from a table of values around the continent
+(`magVarAt` in `src/world/geo.js`), good to a degree or two.
 
 ## Terrain data
 
@@ -66,20 +82,20 @@ to zoom 14, about 7 m a pixel, which is as fine as the 10 m survey goes.
 Water is found in the data, with no list of lakes (`src/world/water.js`): the
 survey levels every lake, so a patch of pixels at one level, big enough for its
 zoom, is water. That finds the Great Lakes, Minnesota's lakes down to a few
-hectares, the reservoirs of the Missouri and the dammed pools of the big rivers,
-and nothing on the flattest farmland. Free-flowing rivers are not levelled in
+acres, the reservoirs of the Missouri and the dammed pools of the big rivers,
+and nothing on the flattest farmland. Free-flowing rivers are not leveled in
 the survey and show only in the satellite picture. Open water answers the
 weather: in a gale or under a storm the big lakes run long seas with white
 horses breaking on them, and small lakes take a share of it.
 
-The ground is coloured by real satellite imagery:
+The ground is colored by real satellite imagery:
 [Sentinel-2 cloudless 2016](https://s2maps.eu) by EOX IT Services GmbH
 (contains modified Copernicus Sentinel data 2016 & 2017), licensed
 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). It is streamed as
 seven nested windows of tiles around the aircraft, about 10 m a pixel at the
 finest, with shadows lifted and close-up detail added in the shader. Close to
 the aircraft it is sharpened by aerial photography from the USGS National Map
-(USDA NAIP orthoimagery, public domain), about a metre a pixel. Trees
+(USDA NAIP orthoimagery, public domain), about a meter a pixel. Trees
 stand where the picture shows woods. Until a tile arrives, and with imagery
 switched off in the menu, the surface falls back to cropland, prairie,
 sagebrush, forest, rock and snow derived from height, slope, latitude and a
@@ -89,17 +105,17 @@ The attribution is shown on the title screen and must stay with any copy.
 ## Airfields and towns
 
 The airfields are the real places: every runway where it really is, with its
-heading, length, width, surface and designators, the taxiways, aprons, holding
-points and stands, and the footprints of the terminals, hangars and towers.
+heading, length, width, surface and designators, the taxiways, aprons, hold
+lines and parking spots, and the footprints of the terminals, hangars and towers.
 The layout comes from [OpenStreetMap](https://www.openstreetmap.org). The list
 of fields is `tools/airfield-list.mjs`; the bake writes one file per field to
 `public/airfields/` (fetched when the field comes into the window) and the
 index of them all to `src/world/airfield-index.js`:
 
 ```bash
-node tools/fetch-airfields.mjs            # a batch of fields per Overpass request, with pauses
-node tools/fetch-airfields.mjs --offline  # rebuild from the cached answers
-node tools/fetch-towns.mjs                # towns and cities (eight requests) -> public/data/towns.json
+node tools/fetch-airfields.mjs            # the fields of the list not baked yet: a batch per Overpass request, with pauses
+node tools/fetch-airfields.mjs --all      # every field again (--offline: from the cached answers)
+node tools/fetch-towns.mjs                # towns and cities (seventeen requests) -> public/data/towns.json
 ```
 
 The scripts keep the raw answers in a cache directory outside the repository
@@ -119,7 +135,7 @@ a changed copy of those files must offer it under the ODbL too.
 
 The ground under each field is graded to one gently tilted plane fitted
 through the elevation data there, blending back into the natural terrain over
-a few hundred metres. Pavement, paint and lights are drawn in code
+a few hundred meters. Pavement, paint and lights are drawn in code
 (`src/world/airfield.js`): markings are worked out per pixel, so they stay
 sharp at any distance. A field's scenery exists within 60 km of the camera.
 
@@ -129,7 +145,7 @@ surface, the street trees and the lights at night.
 ## Cities
 
 The buildings are the real ones: footprints and, where the map has them,
-heights from [OpenStreetMap](https://www.openstreetmap.org), streamed round the
+heights from [OpenStreetMap](https://www.openstreetmap.org), streamed around the
 aircraft as vector tiles (zoom 14, the `building` and `transportation` layers of
 the [OpenMapTiles](https://www.openmaptiles.org) schema) from the public
 [OpenFreeMap](https://openfreemap.org) server. No key is needed and nothing is
@@ -137,33 +153,40 @@ bundled; a request carries no cookie and no referrer. A worker fetches, decodes
 and builds each tile (`src/world/cities.worker.js`, `citybuild.js`, `mvt.js`);
 `src/world/cities.js` decides what is wanted and draws it:
 
-- within 2 km every building, houses with pitched roofs, and the roads as
-  ribbons on the ground;
+- within 2 km every building, houses with pitched roofs, the roads as
+  ribbons on the ground, and the traffic on them (`src/world/traffic.js`):
+  cars, vans and trucks keeping to their lanes, one every sixty meters of a
+  motorway's roadway at the busiest hour and one a kilometer on a
+  residential street, fewer at night, when they show their lights;
 - to 8 km buildings of 350 m² or 12 m and over, simplified;
-- to 42 km buildings of 35 m and over, as plain prisms, looked for round the
-  centre of every town of 60,000 people or more and wherever towers turn up
+- to 42 km buildings of 35 m and over, as plain prisms, looked for around the
+  center of every town of 60,000 people or more and wherever towers turn up
   next to towers: the skyline.
 
 A building without a mapped height gets one from its footprint and from how tall
-its neighbours are. Its walls are photographed materials from
+its neighbors are. Its walls are photographed materials from
 [ambientCG](https://ambientcg.com) (CC0), in `public/facades` (baked by
 `tools/bake-facades.py`): towers and office blocks take a whole facade with its
 windows (glass curtain wall, banded glass, brick, concrete frame), in the
-building's own colour; houses, shops and sheds take a surface (boards, brick,
+building's own color; houses, shops and sheds take a surface (boards, brick,
 stone, concrete, steel sheeting) and the shader draws their windows on it. The
 map says nothing about what a building is made of, so the choice follows its
-size and shape. A roof takes its tone from the satellite picture under it. Windows are lit after dark, and
-buildings over 60 m carry red obstruction lights. Buildings inside an aerodrome's
+size and shape. Whatever the material, a building of several stories has a
+ground floor of storefronts and lobbies between piers, a coping along its roof
+line and, on a tower, a blind band of louvres for the plant floor at the top;
+drawn windows are set back in the wall, with the shadow of their head and jamb
+on the glass, and each pane of a glass wall reflects a slightly different sky. A roof takes its tone from the satellite picture under it. Windows are lit after dark, and
+buildings over 60 m carry red obstruction lights. Buildings inside an airport's
 boundary are left to the airfield. Flying into one ends the flight. If the tile
 server cannot be reached the game carries on without buildings and tries again
 every half minute. `Cities.setSource(url)` points it at another server of the
 same schema.
 
 Bridges come from the same tiles (`src/world/bridgebuild.js`): every road,
-railway and footway the map marks as a bridge is a deck on piers, strung
+railroad and sidewalk the map marks as a bridge is a deck on piers, strung
 between its abutments and held clear of the water, roads and lower decks
-beneath it. High road bridges get arches, railways over water a truss, and a
-short table of named crossings (the Duluth lift bridge, the Blatnik, St Paul's
+beneath it. High road bridges get arches, railroads over water a truss, and a
+short table of named crossings (the Duluth lift bridge, the Blatnik, St. Paul's
 High Bridge and a few more) supplies what the map cannot. You can fly under a
 deck; hitting one, or a pier, ends the flight.
 
@@ -179,7 +202,8 @@ any copy.
   windows, terrain mesh and shaders, trees (sixteen species models grown at
   start-up, drawn as meshes close in and as baked impostors beyond), airfields
   (layout data, grading, pavement, buildings and lights), cities (streamed
-  buildings, roads and bridges), sky and atmospheric scattering
+  buildings, roads and bridges, and the traffic on the roads), the climate of
+  the continent, sky and atmospheric scattering
 - `tools/` the scripts that bake the airfields and towns from OpenStreetMap
 - `src/weather/` weather simulation, volumetric clouds (ray-marched at half
   resolution, accumulated over time and composited against full-resolution
@@ -193,7 +217,7 @@ any copy.
   instruments, first-person head camera
 - `src/core/` input, sound (recordings in `public/audio/`, mixed and pitched
   in `audio.js`), shared uniforms
-- `src/ui/` chart, styles
+- `src/ui/` the map (continent, window, pin), the drop-down lists, styles
 - `src/main.js` boot, game loop, flight logic
 
 Apart from the elevation, imagery and building tiles, the baked airfields and
@@ -209,7 +233,7 @@ exactly the rpm the flight model gives. From outside you hear a Cessna 172 and
 an idling four-cylinder single recorded on an airfield. Rain and hail were
 recorded inside cars, the thunder is five different storms, and the wheels are
 the same Cessna landing on grass. The stall horn, the buffet of a stalled wing
-and the swell of gusts are synthesised, and so is a stand-in for any file that
+and the swell of gusts are synthesized, and so is a stand-in for any file that
 fails to load.
 
 All the recordings are public domain (CC0) from Freesound;
@@ -220,8 +244,12 @@ table at the top of `src/core/audio.js`.
 
 ## Playing
 
-Pick an airfield, a weather system, a time of day and whether to start on the
-runway or already in the air over the field, then press Fly. `W`/`S` pitch, `A`/`D` roll, `Q`/`E` rudder, `R`/`F` faster and
+Pick an airfield (the list is grouped by state and province; type a name, a
+city, a state or a code to search it), a weather system, a time of day and
+whether to start on the runway or already in the air over the field, then
+press Fly. Or press Map, click anywhere on the continent to drop a pin, and
+press Fly from pin to start in the air over that spot; the same works from the
+map in flight (`M`), where the pin also shows as a bearing and distance. `W`/`S` pitch, `A`/`D` roll, `Q`/`E` rudder, `R`/`F` faster and
 slower; flaps, brakes and fuel look after themselves. `C` switches between the
 chase view and the cockpit (drag to look around, wheel to zoom). `G` hands the
 aircraft to the autopilot, and `T` speeds time up: ×2, ×4, ×8, ×16, ×32, ×64,
