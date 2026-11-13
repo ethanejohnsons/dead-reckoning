@@ -525,6 +525,7 @@ ${BUILDING_COVER_GLSL}
 // dense: 0 a lone tree .. 1 inside closed forest.
 float treeKept(vec3 base, float d, float rank, float flags, vec4 ground, out vec3 pic, out float dense) {
   if (buildingCover(base.xz) > 0.5) { pic = vec3(-1.0); dense = 0.0; return 0.0; }       // a building stands here (world/cities.js)
+  if (waterCover(base.xz) > 0.5) { pic = vec3(-1.0); dense = 0.0; return 0.0; }          // or the map has water here
   float ruleDense = ground.w;
   float solitary = mod(flags, 2.0), rule = mod(floor(flags * 0.5), 2.0);
   vec4 im = treePicture(base.xz, d);

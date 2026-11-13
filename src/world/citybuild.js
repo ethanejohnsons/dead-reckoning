@@ -117,6 +117,53 @@ const ROAD_CLASS = Object.keys(ROAD);            // a road's class as a number, 
 // ------------------------------------------------------------------ the tile
 
 /**
+ * The tile's water as the map has it: lakes, the sea and the rivers wide enough to be drawn as areas, and the
+ * lines of the smaller rivers and canals as ribbons. Triangles on the plane: { pos: [x, z, ...] in meters from
+ * the tile's corner, idx }, or null where there is none. Dry lake beds (seasonal water) and pools are left out.
+ * The terrain is told of it by a mask drawn from above (world/cities.js), so that water the elevation data
+ * cannot show (a river that flows is not level; whole-meter data has no lakes at all) still looks like water.
+ */
+function waterMesh(layers, size) {
+  const pos = [], idx = [];
+  const A = layers.water;
+  if (A) {
+    const k = size / A.extent;
+    for (const f of A.features) {
+      if (f.type !== 3 || f.props.class === 'swimming_pool' || f.props.intermittent) continue;
+      const polys = []; let cur = null;
+      for (const g of f.geom) { if (g.length < 6) continue; if (ringArea2(g) > 0) { cur = { ring: g, holes: [] }; polys.push(cur); } else if (cur) cur.holes.push(g); }
+      for (const p of polys) {
+        let n = p.ring.length; for (const h of p.holes) n += h.length;
+        const data = new Float32Array(n), holeIdx = []; let at = 0;
+        for (let i = 0; i < p.ring.length; i++) data[at++] = p.ring[i] * k;
+        for (const h of p.holes) { holeIdx.push(at / 2); for (let i = 0; i < h.length; i++) data[at++] = h[i] * k; }
+        const t = earcut(data, holeIdx, 2), base = pos.length / 2;
+        for (let i = 0; i < n; i++) pos.push(data[i]);
+        for (let i = 0; i < t.length; i++) idx.push(base + t[i]);
+      }
+    }
+  }
+  const W = layers.waterway;
+  if (W) {
+    const k = size / W.extent;
+    for (const f of W.features) {
+      if (f.type !== 2 || f.props.intermittent || f.props.brunnel === 'tunnel') continue;
+      const hw = f.props.class === 'river' ? 7 : f.props.class === 'canal' ? 5 : 0;        // (streams and ditches are narrower than the mask can draw)
+      if (!hw) continue;
+      for (const g of f.geom) for (let i = 2; i < g.length; i += 2) {
+        const ax = g[i - 2] * k, az = g[i - 1] * k, bx = g[i] * k, bz = g[i + 1] * k, l = Math.hypot(bx - ax, bz - az);
+        if (l < 0.05) continue;
+        // a segment of the line as a strip, run a half-width past both ends so the bends close
+        const ux = (bx - ax) / l, uz = (bz - az) / l, nx = -uz * hw, nz = ux * hw, ex = ux * hw, ez = uz * hw, base = pos.length / 2;
+        pos.push(ax - ex + nx, az - ez + nz, ax - ex - nx, az - ez - nz, bx + ex - nx, bz + ez - nz, bx + ex + nx, bz + ez + nz);
+        idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+      }
+    }
+  }
+  return idx.length ? { pos: Float32Array.from(pos), idx: Uint32Array.from(idx) } : null;
+}
+
+/**
  * Read the buildings of a tile. buf: the tile's bytes; size: meters across the tile; tx, ty: its indices
  * (only to make each building's random numbers its own).
  */
@@ -124,6 +171,7 @@ export function parseTile(buf, size, tx, ty) {
   const layers = decodeTile(buf, { building: true, transportation: true, water: true, waterway: true });
   const L = layers.building, blds = [], roads = [];
   const br = parseBridges(layers, size);            // the tile's bridges, and what passes under them (world/bridgebuild.js)
+  const water = waterMesh(layers, size);
   const T = layers.transportation;
   if (T) for (const f of T.features) {
     const w = ROAD[f.props.class];
@@ -133,7 +181,7 @@ export function parseTile(buf, size, tx, ty) {
     const cls = ROAD_CLASS.indexOf(f.props.class), one = +f.props.oneway === -1 ? -1 : +f.props.oneway === 1 || cls === 0 || f.props.ramp ? 1 : 0;
     for (const g of f.geom) { if (g.length < 4) continue; const p = new Float32Array(g.length); for (let i = 0; i < g.length; i++) p[i] = g[i] * k; roads.push({ p, hw: f.props.ramp ? w[0] * 0.75 : w[0], rank: w[1], cls, one, ramp: f.props.ramp ? 1 : 0 }); }
   }
-  if (!L) return { blds, roads, size, tall: 0, br };
+  if (!L) return { blds, roads, size, tall: 0, br, water };
   const ext = L.extent, k = size / ext, lo = -0.0155 * ext, hi = ext * 1.0155;
   for (const f of L.features) {
     if (f.type !== 3 || f.props.hide_3d) continue;
@@ -170,7 +218,7 @@ export function parseTile(buf, size, tx, ty) {
   }
   classify(blds, size, tx, ty);
   let tall = 0; for (const b of blds) if (b.top >= TALL) tall++;
-  return { blds, roads, size, tall, br };
+  return { blds, roads, size, tall, br, water };
 }
 
 /** Decide each building's height where the map gives none, what kind of building it is, and its colors. */

@@ -85,7 +85,8 @@ const tier = () => (S.settings.quality === 'auto' ? auto.tier : S.settings.quali
 const v1 = new THREE.Vector3(), v2 = new THREE.Vector3(), q1 = new THREE.Quaternion(), e1 = new THREE.Euler(0, 0, 0, 'YXZ');
 
 function surfaceAt(x, z) {
-  return airfieldSurface(x, z) || (isWater(x, z) ? 'water' : 'grass');      // runways, taxiways and aprons first
+  // runways, taxiways and aprons first; then water, as the elevation data has it or (close to the ground, where it matters) as the map draws it
+  return airfieldSurface(x, z) || (isWater(x, z) || (ac && ac.agl < 80 && cities?.waterAt(x, z)) ? 'water' : 'grass');
 }
 
 // ------------------------------------------------------------------ boot

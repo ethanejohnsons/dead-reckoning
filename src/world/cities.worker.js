@@ -60,7 +60,7 @@ function getTile(job) {
     if (buf) wire = +r.headers.get('content-length') || Math.round(buf.length * 0.6);         // bytes on the wire (the tiles come gzipped)
     const t1 = performance.now();
     const tile = buf && buf.length ? parseTile(buf, job.size, job.x, job.y) : { blds: [], roads: [], size: job.size, tall: 0, br: { ways: [], under: [], water: [], size: job.size } };
-    bridges.delete(id); bridges.set(id, { br: tile.br, tall: tile.tall, total: tile.blds.length });
+    bridges.delete(id); bridges.set(id, { br: tile.br, tall: tile.tall, total: tile.blds.length, water: tile.water || null });
     if (bridges.size > KEEP_BRIDGES) bridges.delete(bridges.keys().next().value);
     return { tile, bytes: wire, fetch: t1 - t0, parse: performance.now() - t1 };
   })();
@@ -75,7 +75,7 @@ async function bridgeTile(z, x, y, size) {
   const b = bridges.get(`${z}/${x}/${y}`);
   if (b) return { ...b, bytes: 0, fetch: 0, parse: 0 };
   const r = await getTile({ z, x, y, size });
-  return { br: r.tile.br, tall: r.tile.tall, total: r.tile.blds.length, bytes: r.bytes, fetch: r.fetch, parse: r.parse || 0 };
+  return { br: r.tile.br, tall: r.tile.tall, total: r.tile.blds.length, water: r.tile.water || null, bytes: r.bytes, fetch: r.fetch, parse: r.parse || 0 };
 }
 
 async function planBridges(job) {
@@ -95,7 +95,9 @@ async function planBridges(job) {
     await Promise.all(plan.need.map(([dx, dy]) => bridgeTile(job.z, job.x + dx, job.y + dy, job.size).then((r) => { tiles.set(dx + ',' + dy, r.br); if (r.bytes) { extra++; extraBytes += r.bytes; } }, () => { tiles.set(dx + ',' + dy, null); whole = false; })));
   }
   if (plan && !plan.need.length && whole) { made.delete(tid); made.set(tid, plan); if (made.size > KEEP_MADE) made.delete(made.keys().next().value); }
-  const info = { tall: base.tall, total: base.total, bridges: base.br.ways.length, bytes: bytes + extraBytes, fetched: (base.bytes ? 1 : 0) + extra, extra, extraBytes, ms: { fetch: base.fetch, parse: base.parse, build: ms } };
+  // (the tile's water goes with the far level's answer: copies, since the tile's own stay here for the next asking)
+  const wm = job.level === 'bf' && base.water ? { pos: base.water.pos.slice(), idx: base.water.idx.slice() } : null;
+  const info = { tall: base.tall, total: base.total, bridges: base.br.ways.length, water: base.water ? base.water.idx.length / 3 : 0, waterMesh: wm, bytes: bytes + extraBytes, fetched: (base.bytes ? 1 : 0) + extra, extra, extraBytes, ms: { fetch: base.fetch, parse: base.parse, build: ms } };
   if (!plan || plan.need.length || !plan.mine) { self.postMessage({ type: 'built', id: job.id, key: job.key, level: job.level, bridge: true, chunks: [], coll: null, shade: null, lamps: new Float32Array(0), count: 0, ...info }); return; }
   plan.urban = base.total >= 120;
   plans.set(job.id, plan);
@@ -145,7 +147,7 @@ self.onmessage = async (e) => {
     const transfer = [out.lights.buffer, out.foot.box.buffer, out.foot.q.buffer, out.foot.start.buffer, out.foot.pts.buffer];
     if (out.roads) transfer.push(out.roads.pos.buffer, out.roads.ar.buffer, out.roads.idx.buffer, out.roads.paths.p.buffer, out.roads.paths.m.buffer);
     for (const c of out.chunks) transfer.push(c.pos.buffer, c.nrm.buffer, c.uv.buffer, c.col.buffer, c.k.buffer, c.idx.buffer, c.ranges.buffer);
-    self.postMessage({ type: 'built', id: job.id, key: job.key, level: job.level, quad: job.quad, ...out, tall: tile.tall, total: tile.blds.length, bridges: tile.br.ways.length, bytes, ms: { fetch: tf, parse: parse || 0, build: performance.now() - t0 } }, transfer);
+    self.postMessage({ type: 'built', id: job.id, key: job.key, level: job.level, quad: job.quad, ...out, tall: tile.tall, total: tile.blds.length, bridges: tile.br.ways.length, water: tile.water ? tile.water.idx.length / 3 : 0, bytes, ms: { fetch: tf, parse: parse || 0, build: performance.now() - t0 } }, transfer);
   } catch (err) {
     self.postMessage({ type: 'failed', id: job.id, key: job.key, level: job.level, quad: job.quad, error: String(err?.message || err) });
   }

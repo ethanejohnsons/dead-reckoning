@@ -14,7 +14,7 @@ import { townsIn, urbanDensity } from './towns.js';
 import { mulberry32 } from '../core/noise.js';
 import { ENV } from '../core/env.js';
 import { Trees } from './trees.js';
-import { BUILDING_COVER_UNIFORMS } from './cities.js';
+import { BUILDING_COVER_UNIFORMS, WATER_COVER_UNIFORMS, WATER_COVER_GLSL } from './cities.js';
 import { GROUND_LIGHT_GLSL, GROUND_LIGHT_UNIFORMS } from './groundlight.js';
 import { ATMO_GLSL, ATMO_UNIFORMS } from './atmosphere.js';
 import { IMAGERY_GLSL, IMAGERY_UNIFORMS } from './imagery.js';
@@ -111,6 +111,7 @@ uniform float uLandHalf;
 varying vec3 vWorld; varying vec2 vUv, vUvP; centroid varying float vDist, vLayer, vLayerP, vMorph;   // centroid: see the note above VERT
 ${LIGHT_GLSL}
 ${REGION_GLSL}
+${WATER_COVER_GLSL}
 
 // How far a color of the picture is hard, bare ground: gray and not dark (roads, roofs, gravel, rock). 0..1.
 float hardGround(vec3 c) { float mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b)); return (1.0 - smoothstep(0.1, 0.3, (mx - mn) / max(mx, 0.004))) * smoothstep(0.03, 0.08, mx); }
@@ -121,6 +122,8 @@ void main() {
   vec2 nxz = ch.rg * 2.0 - 1.0;
   vec3 N = vec3(nxz.x, sqrt(max(1.0 - dot(nxz, nxz), 0.01)), nxz.y);
   float water = smoothstep(0.35, 0.65, ch.a);
+  // and what the map draws as water round the camera (world/cities.js): rivers, and lakes the elevation data cannot tell
+  water = max(water, waterCover(vWorld.xz));
   float h = vWorld.y, slope = 1.0 - N.y;
   vec4 reg = texture2D(tRegion, vWorld.xz / (2.0 * uWxHalf) + 0.5);
   // Blue is how built-up the land is, or (negative) how far out on big open water this is.
@@ -349,7 +352,7 @@ void main() {
 }`;
 
 const SHARED = ['uSunDir', 'uSunCol', 'uAmbSky', 'uAmbGround', 'uCloudDrift', 'uWxHalf', 'uTime', 'uTAnom', 'uWind', 'uSea', 'uWet', 'uSnow', 'uGroundT',
-  'tRegion', 'tWxA', 'tWxB', 'tDetail', ...ATMO_UNIFORMS, ...IMAGERY_UNIFORMS, ...GROUND_LIGHT_UNIFORMS, ...REGION_UNIFORMS, ...BUILDING_COVER_UNIFORMS];
+  'tRegion', 'tWxA', 'tWxB', 'tDetail', ...ATMO_UNIFORMS, ...IMAGERY_UNIFORMS, ...GROUND_LIGHT_UNIFORMS, ...REGION_UNIFORMS, ...WATER_COVER_UNIFORMS, ...BUILDING_COVER_UNIFORMS];
 const sharedUniforms = () => Object.fromEntries(SHARED.map((k) => [k, ENV[k]]));
 
 /** Tiling noise: r, g = two fractal value-noise fields; b, a = the slope of the first (a detail normal). */
@@ -484,7 +487,7 @@ export class Terrain {
       uniforms: { ...sharedUniforms(), tChunks: { value: this.atlas }, tFields: { value: makeFieldsTexture() }, uLandHalf: { value: LAND_HALF } },
       vertexShader: VERT, fragmentShader: FRAG,
     });
-    this.trees = new Trees(this.group, LIGHT_GLSL_TREES + REGION_GLSL, sharedUniforms, defines);
+    this.trees = new Trees(this.group, LIGHT_GLSL_TREES + REGION_GLSL + WATER_COVER_GLSL, sharedUniforms, defines);
     this.index = makeIndex(); this.uv = makeUv(); this.uvParent = [0, 1, 2, 3].map((q) => makeUvParent(q & 1, q >> 1));
     this.queue = []; this.shown = []; this.chunkCount = 0;
     this.done = []; this.flying = 0; this.nudge = null;       // builds come back from the workers; in flight; who to tell

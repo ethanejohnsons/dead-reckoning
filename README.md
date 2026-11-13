@@ -90,7 +90,12 @@ and nothing on the flattest farmland. Where the fine data is stored in whole
 meters instead (Hawaii, and much of the world outside the United States), every
 gentle slope is a staircase of level terraces; such tiles are recognized, and in
 them only the sea is water. Free-flowing rivers are not leveled in
-the survey and show only in the satellite picture. Open water answers the
+the survey; they, and the lakes of country whose data is in whole meters, come
+from the map instead: within about 8 km of the aircraft the `water` and
+`waterway` layers of the building tiles (lakes, the sea, rivers) are drawn from
+above into a mask (`waterCover` in `src/world/cities.js`), and the terrain
+shades whatever it covers as water, reflections and all; the flight model
+takes it for water too (`Cities.waterAt`). Open water answers the
 weather: in a gale or under a storm the big lakes run long seas with white
 horses breaking on them, and small lakes take a share of it.
 

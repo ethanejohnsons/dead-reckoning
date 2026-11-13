@@ -66,6 +66,20 @@ const GRAVE = 90;                          // frames a dropped mesh waits before
 const hold = (k, v) => ENV[k] || (ENV[k] = { value: v });
 hold('tBldCover', null); hold('uBldCover', new THREE.Vector4(0, 0, 1 / (COVER_N * COVER_M), 0));
 export const BUILDING_COVER_UNIFORMS = ['tBldCover', 'uBldCover'];
+// ---- where the map has water, for the terrain: a second top-down map, wider and coarser (lakes, sea, rivers)
+const WATER_N = 2048, WATER_M = 8;         // texels across, meters a texel: 16 km, the reach of the far bridges and a little more
+hold('tWaterCover', null); hold('uWaterCover', new THREE.Vector4(0, 0, 1 / (WATER_N * WATER_M), 0));
+export const WATER_COVER_UNIFORMS = ['tWaterCover', 'uWaterCover'];
+/** GLSL: waterCover(worldXZ) is 1 on water the map draws (soft at its banks, fading out at the edge of the map round the camera), 0 elsewhere. */
+export const WATER_COVER_GLSL = /* glsl */`
+uniform sampler2D tWaterCover;
+uniform vec4 uWaterCover;        // center x, center z, 1 / width (1/m), 1 when the map holds anything
+float waterCover(vec2 xz) {
+  vec2 q = (xz - uWaterCover.xy) * uWaterCover.z;
+  float m = max(abs(q.x), abs(q.y));
+  if (uWaterCover.w < 0.5 || m > 0.495) return 0.0;
+  return smoothstep(0.3, 0.7, textureLod(tWaterCover, vec2(0.5 + q.x, 0.5 - q.y), 0.0).r) * (1.0 - smoothstep(0.4, 0.49, m));
+}`;
 /** GLSL: buildingCover(worldXZ) is 1 on a building's footprint (and a couple of meters around it), 0 elsewhere or beyond the map. */
 export const BUILDING_COVER_GLSL = /* glsl */`
 uniform sampler2D tBldCover;
@@ -632,6 +646,11 @@ export class Cities {
       }`, { tRaw: { value: this.coverRaw.texture } });
     this.quad = new FullscreenQuad();
     this.coverAt = [1e12, 1e12]; this.coverDirty = false; this.coverT = 0; this.coverHas = false;
+    // the water map (see WATER_COVER_GLSL): the tiles' water meshes drawn white from above, when the camera has moved on or a tile has come or gone
+    this.waterRT = new THREE.WebGLRenderTarget(WATER_N, WATER_N, { format: THREE.RedFormat, type: THREE.UnsignedByteType, depthBuffer: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
+    this.waterMat = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, depthTest: false, depthWrite: false });
+    this.waterMid = [1e12, 1e12]; this.waterDirty = false; this.waterT = 0;
+    ENV.tWaterCover.value = this.waterRT.texture;
     ENV.tBldCover.value = this.coverRT.texture;
 
     this.tiles = new Map();            // key -> tile
@@ -742,6 +761,7 @@ export class Cities {
     if (L.lamps) { this.group.remove(L.lamps); L.lamps.geometry.dispose(); }
     if (L.road) { this.group.remove(L.road); L.road.geometry.dispose(); }
     if (L.cars) { this.traffic.remove(L.cars); L.cars = null; }
+    if (L.water) { L.water.geometry.dispose(); L.water = null; this.waterDirty = true; }
     if (L.shade) { this.group.remove(L.shade); L.shade.geometry.dispose(); }
     if (bridge && L.state === 'ready') this.stats.bridge.count -= L.count || 0;
     if (name === 'near' || bridge) this.coverDirty = true;
@@ -818,8 +838,9 @@ export class Cities {
     this.fails = 0; this.warned = false;
     const s = this.stats;
     if (m.bytes) { s.bytes += m.bytes; s.fetched += m.fetched || 1; s.fetchMs += m.ms.fetch; s.parseMs += m.ms.parse; }
-    if (m.total !== undefined) this.learn(t, m.tall, m.total, m.bridges);
+    if (m.total !== undefined) this.learn(t, m.tall, m.total, m.bridges, m.water);
     if (m.type === 'bplan' || m.bridge) {
+      if (m.waterMesh) L.waterData = m.waterMesh;
       const b = s.bridge;
       if (m.extra) { b.extraTiles += m.extra; b.extraBytes += m.extraBytes; }
       if (m.type === 'bplan') {
@@ -839,8 +860,8 @@ export class Cities {
   }
 
   /** A tile has shown what it holds: where there are towers, look at its neighbors too. */
-  learn(t, tall, total, bridges = 0) {
-    this.info.set(t.key, { tall, total, bridges });
+  learn(t, tall, total, bridges = 0, water = 0) {
+    this.info.set(t.key, { tall, total, bridges, water });
     const e = this.sky.get(t.key);
     if (tall >= 1 && !e) this.sky.set(t.key, { tx: t.tx, ty: t.ty, depth: 4 });
     const depth = e ? e.depth : 4;
@@ -927,6 +948,15 @@ export class Cities {
         this.group.add(L.road);
         if (d.paths) L.cars = this.traffic.add(d.paths, t.x0, t.z0, Math.round(t.x0 * 0.37 + t.z0 * 0.91 + d.bounds[0] * 3 + d.bounds[2] * 7));
       }
+      if (L.waterData) {
+        // the tile's water, for the water map (never in the scene itself)
+        const d = L.waterData, p3 = new Float32Array((d.pos.length / 2) * 3), g = new THREE.BufferGeometry();
+        for (let i = 0, o = 0; i < d.pos.length; i += 2, o += 3) { p3[o] = d.pos[i]; p3[o + 2] = d.pos[i + 1]; }
+        g.setAttribute('position', new THREE.BufferAttribute(p3, 3)); g.setIndex(new THREE.BufferAttribute(d.idx, 1));
+        const m = L.water = new THREE.Mesh(g, this.waterMat);
+        m.position.set(t.x0, 0, t.z0); m.matrixAutoUpdate = false; m.updateMatrix(); m.updateMatrixWorld(true); m.frustumCulled = false;
+        L.waterData = null; this.waterDirty = true;
+      }
       if (L.shadeData) {
         // the strips of shade on the ground under the decks
         const d = L.shadeData, g = new THREE.BufferGeometry();
@@ -986,7 +1016,7 @@ export class Cities {
       const d = rect(x0, z0, s);
       if (d > RB + 1500) continue;
       const known = this.info.get(this.key(tx, ty));
-      const noBld = d > R1 + 1500 || (known && known.total === 0), noBr = known && !known.bridges;
+      const noBld = d > R1 + 1500 || (known && known.total === 0), noBr = known && !known.bridges && !known.water;      // (a tile's water rides with its far bridges)
       if (noBld && noBr) continue;                              // open country: nothing to draw, nothing to ask again
       const t = this.tile(tx, ty);
       if (!inWorld(t)) continue;
@@ -1117,7 +1147,48 @@ export class Cities {
     ENV.uBldCover.value.set(cx, cz, 1 / W, this.coverHas ? 1 : 0);
   }
 
+  /** Draw the water map round the camera again, if the camera has moved a way or a tile's water has come or gone. */
+  waterCover(cam) {
+    const snap = 512, cx = Math.round(cam.x / snap) * snap, cz = Math.round(cam.z / snap) * snap;
+    if (cx !== this.waterMid[0] || cz !== this.waterMid[1]) this.waterDirty = true;
+    const now = performance.now();
+    if (!this.waterDirty || now < this.waterT) return;
+    this.waterT = now + 500; this.waterDirty = false; this.waterMid = [cx, cz];
+    const W = WATER_N * WATER_M, r = this.renderer, list = [];
+    for (const t of this.tiles.values()) {
+      if (!t.bf?.water || t.x0 > cx + W / 2 || t.x0 + this.size < cx - W / 2 || t.z0 > cz + W / 2 || t.z0 + this.size < cz - W / 2) continue;
+      list.push(t.bf.water);
+    }
+    const c = this.coverCam;
+    c.left = -W / 2; c.right = W / 2; c.top = W / 2; c.bottom = -W / 2; c.near = 1; c.far = 20000; c.updateProjectionMatrix();
+    c.position.set(cx, 12000, cz); c.up.set(0, 0, -1); c.lookAt(cx, 0, cz); c.updateMatrixWorld();
+    const prev = r.getRenderTarget(), alpha = r.getClearAlpha(), auto = r.autoClear, sAuto = r.shadowMap.autoUpdate;
+    r.getClearColor(tmpC); r.setClearColor(0x000000, 0); r.shadowMap.autoUpdate = false;
+    r.autoClear = true;
+    this.coverScene.children = list;
+    const over = this.coverScene.overrideMaterial; this.coverScene.overrideMaterial = this.waterMat;
+    r.setRenderTarget(this.waterRT); r.render(this.coverScene, c);
+    this.coverScene.children = []; this.coverScene.overrideMaterial = over;
+    r.autoClear = auto; r.shadowMap.autoUpdate = sAuto; r.setClearColor(tmpC, alpha); r.setRenderTarget(prev);
+    ENV.uWaterCover.value.set(cx, cz, 1 / W, list.length ? 1 : 0);
+  }
+
   // ---------------------------------------------------------------- questions
+
+  /** Is this point on water the map draws (a river, a lake, the sea)? False where the tile's water has not loaded. */
+  waterAt(x, z) {
+    const t = this.tiles.get(this.key(this.tileX(x), this.tileY(z))), w = t?.bf?.water;
+    if (!w) return false;
+    const p = w.geometry.attributes.position.array, ix = w.geometry.index.array, px = x - t.x0, pz = z - t.z0;
+    for (let i = 0; i < ix.length; i += 3) {
+      const a = ix[i] * 3, b = ix[i + 1] * 3, c = ix[i + 2] * 3;
+      const ax = p[a], az = p[a + 2], bx = p[b], bz = p[b + 2], cx = p[c], cz = p[c + 2];
+      if ((px < ax && px < bx && px < cx) || (px > ax && px > bx && px > cx) || (pz < az && pz < bz && pz < cz) || (pz > az && pz > bz && pz > cz)) continue;
+      const d1 = (px - bx) * (az - bz) - (ax - bx) * (pz - bz), d2 = (px - cx) * (bz - cz) - (bx - cx) * (pz - cz), d3 = (px - ax) * (cz - az) - (cx - ax) * (pz - az);
+      if (!((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0))) return true;
+    }
+    return false;
+  }
 
   /**
    * The building standing at a point of the world, if any: { top, base } heights (m) of its roof (the top of
@@ -1273,6 +1344,7 @@ export class Cities {
     // the traffic: clock = { time: seconds of game time, hour: the time of day }
     if (clock) this.traffic.update(clock.time, cam, this.uRoadFade.value.y, clock.hour, on);
     this.cover(cam);
+    this.waterCover(cam);
     while (this.grave.length && this.frame - this.grave[0][0] > GRAVE) this.grave.shift()[1].dispose();
   }
 }
