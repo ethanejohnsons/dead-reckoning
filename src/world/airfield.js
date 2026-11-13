@@ -317,8 +317,10 @@ void main() {
     paint = max(paint, cov1(halfW - 0.4 - sw, halfW - 0.4, sAbs, fw.x) * cov1(1.0, L - 1.0, rc.y, fw.y));
     // rubber where the wheels arrive, in streaks, heaviest a little past the aiming point; a duller band all the way down
     float reach = clamp(lda / 1600.0, 0.5, 1.0);
-    float zone = exp(-pow((rc.y - dtA - 340.0 * reach) / (250.0 * reach), 2.0)) + exp(-pow((L - rc.y - dtB - 340.0 * reach) / (250.0 * reach), 2.0));
-    float lat = exp(-pow(rc.x / (halfW * 0.42), 2.0));
+    // (squares by multiplication: pow() of a negative base is undefined, and NaN on some GPUs)
+    float za = (rc.y - dtA - 340.0 * reach) / (250.0 * reach), zb = (L - rc.y - dtB - 340.0 * reach) / (250.0 * reach), lx = rc.x / (halfW * 0.42);
+    float zone = exp(-za * za) + exp(-zb * zb);
+    float lat = exp(-lx * lx);
     float tracks = smoothstep(0.3, 0.75, st.a * 0.65 + st2.g * 0.55);
     rubber = clamp(zone * lat * (0.25 + 0.95 * tracks) * traffic * 1.25, 0.0, 0.92);
     rubber = max(rubber, lat * 0.16 * (0.4 + 0.6 * st.g) * (0.4 + 0.6 * traffic));
@@ -448,7 +450,7 @@ void main() {
     float ndv = max(dot(Nw, V), 1e-3);
     // A film over the stones is not a sheet of glass: their tops stand through it and hide one another, so it only
     // comes to a mirror at a much lower angle than standing water does, and never to as good a one.
-    float F = (0.02 + ((1.0 - a) * mix(0.8, 1.0, puddle) - 0.02) * pow(1.0 - ndv, mix(8.0, 5.0, puddle))) * mirror;
+    float F = (0.02 + ((1.0 - a) * mix(0.8, 1.0, puddle) - 0.02) * pow(max(1.0 - ndv, 0.0), mix(8.0, 5.0, puddle))) * mirror;
     vec3 R = reflect(-V, Nw);
     // What lies just under the horizon in the mirror is the far ground, darker than the sky over it.
     float sky = mix(0.45, 1.0, smoothstep(-0.03, 0.06, R.y));

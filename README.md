@@ -1,8 +1,9 @@
 # Dead Reckoning
 
 A browser flight simulator set over the real terrain of North America. Fly a
-four-seat high-wing single from any of more than four hundred real airfields in
-every state of the United States and every province and territory of Canada,
+four-seat high-wing single from any of more than five hundred real airfields in
+every state of the United States, every province and territory of Canada,
+Mexico, Central America and the Caribbean,
 or start in the air over any point you pin on the map, from outside or from the
 cockpit, through volumetric cloud, rain, thunderstorms, hail, snow, fog and
 fronts. There is no edge to the world: keep flying and the country keeps coming.
@@ -83,7 +84,10 @@ Water is found in the data, with no list of lakes (`src/world/water.js`): the
 survey levels every lake, so a patch of pixels at one level, big enough for its
 zoom, is water. That finds the Great Lakes, Minnesota's lakes down to a few
 acres, the reservoirs of the Missouri and the dammed pools of the big rivers,
-and nothing on the flattest farmland. Free-flowing rivers are not leveled in
+and nothing on the flattest farmland. Where the fine data is stored in whole
+meters instead (Hawaii, and much of the world outside the United States), every
+gentle slope is a staircase of level terraces; such tiles are recognized, and in
+them only the sea is water. Free-flowing rivers are not leveled in
 the survey and show only in the satellite picture. Open water answers the
 weather: in a gale or under a storm the big lakes run long seas with white
 horses breaking on them, and small lakes take a share of it.
@@ -115,6 +119,7 @@ index of them all to `src/world/airfield-index.js`:
 ```bash
 node tools/fetch-airfields.mjs            # the fields of the list not baked yet: a batch per Overpass request, with pauses
 node tools/fetch-airfields.mjs --all      # every field again (--offline: from the cached answers)
+node tools/fetch-airfields.mjs --source api   # the same from the main OpenStreetMap API, a field at a time, when no Overpass server answers
 node tools/fetch-towns.mjs                # towns and cities (seventeen requests) -> public/data/towns.json
 ```
 
@@ -244,16 +249,27 @@ table at the top of `src/core/audio.js`.
 
 ## Playing
 
-Pick an airfield (the list is grouped by state and province; type a name, a
+Pick an airfield (the list is grouped by state and province, then Mexico,
+Central America and the Caribbean; type a name, a
 city, a state or a code to search it), a weather system, a time of day and
 whether to start on the runway or already in the air over the field, then
 press Fly. Or press Map, click anywhere on the continent to drop a pin, and
 press Fly from pin to start in the air over that spot; the same works from the
 map in flight (`M`), where the pin also shows as a bearing and distance. `W`/`S` pitch, `A`/`D` roll, `Q`/`E` rudder, `R`/`F` faster and
-slower; flaps, brakes and fuel look after themselves. `C` switches between the
+slower; flaps, brakes and fuel take care of themselves. `C` switches between the
 chase view and the cockpit (drag to look around, wheel to zoom). `G` hands the
 aircraft to the autopilot, and `T` speeds time up: ×2, ×4, ×8, ×16, ×32, ×64,
 then back to normal. `Esc` opens the menu.
+
+Graphics is "Automatic" unless you choose a tier in the menu. The first guess
+comes from the name of the graphics card (`src/render/autoquality.js`); in
+flight the picture's resolution follows the frame rate first
+(`src/render/dynres.js`), and when it has given all it can and frames still
+come late the tier itself steps down (High, Medium, Low), which trims the
+clouds, the post-processing, the shadows and how far the buildings reach. With
+frame rate to spare for a while it steps up again, though not back to a tier
+that has already proved too much in that session. The tier it settles on is
+remembered for the next start.
 
 `V` (or the weather chip at the top left) opens the Weather panel: choose a
 weather system, how long the change takes and the time of day, and read what

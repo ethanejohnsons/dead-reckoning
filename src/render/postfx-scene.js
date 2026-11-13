@@ -26,7 +26,8 @@ float ign(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 // Not a number, infinite, or absurd: a pixel some scene shader broke. Left alone it would bloom,
 // smear through the history and flash; every pass that reads the raw scene checks for it.
-bool broken(vec3 c) { return any(isnan(c)) || any(isinf(c)) || !(c.r + c.g + c.b < 1.0e5 && c.r + c.g + c.b > -1.0); }
+// (on the bits as well: some shader compilers assume there are no such numbers and drop isnan() and isinf())
+bool broken(vec3 c) { return any(equal(floatBitsToUint(c) & uvec3(0x7F800000u), uvec3(0x7F800000u))) || any(isnan(c)) || any(isinf(c)) || !(c.r + c.g + c.b < 1.0e5 && c.r + c.g + c.b > -1.0); }
 `;
 
 export const AO_FRAG = COMMON + /* glsl */`
@@ -130,6 +131,7 @@ vec2 heat(vec2 uv, float z) {
   return off * uHeat;
 }
 
+#define MIRROR_TAPS 8
 // Open water mirrors what stands over it. The surface is level, so the reflected
 // ray is known from the view ray and a rippled normal; walk it across the screen
 // against the depth buffer.
@@ -142,12 +144,17 @@ vec4 mirror(vec3 Prel, float z) {
   vec2 w1 = (texture(tDetail, W1 * wp / 37.0 + uTime * vec2(0.021, 0.013)).ba - 0.5) * W1;
   vec2 w2 = (texture(tDetail, W2 * wp / 11.0 - uTime * vec2(0.034, 0.027)).ba - 0.5) * W2;
   // Only a little of that swell bends the mirror. Most of what wind does to a reflection is
-  // blur it, because the ripples are far smaller than a pixel: a different random facet every
-  // frame, which the temporal filter gathers into the long vertical smear real water shows.
-  float jit = ign(gl_FragCoord.xy + uFrame * 5.588238);
-  vec2 facet = (vec2(ign(gl_FragCoord.yx + uFrame * 3.19 + 11.0), ign(gl_FragCoord.xy * 1.7 + uFrame * 7.31 + 5.0)) - 0.5) * uRough;
-  vec2 slope = (w1 + w2 * 0.6) * (0.2 + wind) * exp(-z / 3500.0) * (1.0 - 0.45 * lakeK) * 0.12 + facet * (0.03 + 0.16 * wind) * (1.0 - 0.4 * lakeK);
-  vec3 wn = normalize(vec3(slope.x, 1.0, slope.y));
+  // blur it, because the ripples are far smaller than a pixel: every pixel holds facets tilted
+  // every way, and shows the long vertical smear of all of them at once. So the ray is walked
+  // once, off the mean surface, and the color is the average of what a spread of facets would
+  // show (MIRROR_TAPS of them, spaced evenly along the line of sight, where a tilt moves the
+  // reflection most). One random facet a pixel each frame, left to the temporal filter to gather,
+  // shimmered wherever that filter let go.
+  float jit = ign(gl_FragCoord.xy + uFrame * 5.588238), jit2 = ign(gl_FragCoord.yx * 1.7 + uFrame * 7.31 + 5.0);
+  vec2 swell = (w1 + w2 * 0.6) * (0.2 + wind) * exp(-z / 3500.0) * (1.0 - 0.45 * lakeK) * 0.12;
+  float spread = uRough * (0.03 + 0.16 * wind) * (1.0 - 0.4 * lakeK);
+  vec2 along = normalize(Vw.xz + vec2(1e-5)), across = vec2(-along.y, along.x);
+  vec3 wn = normalize(vec3(swell.x, 1.0, swell.y));
   vec3 R = reflect(Vw, wn); R.y = abs(R.y) + 0.003; R = normalize(R);
   float fres = 0.02 + 0.98 * pow(1.0 - max(dot(-Vw, wn), 0.0), 5.0);
   if (fres < 0.03) return vec4(0.0);
@@ -172,23 +179,41 @@ vec4 mirror(vec3 Prel, float z) {
     tPrev = t; zPrev = zr;
   }
   float rough = mix(1.0, 0.4, smoothstep(5.0, 16.0, uWind) * (1.0 - 0.6 * lakeK));
+  vec2 huv = vec2(0.0), suv0 = Rv.z < -0.01 ? (Rv.xy / (-Rv.z * uProj.zw)) * 0.5 + 0.5 : vec2(-1.0);
   if (tHit > 0.0) {
     for (int i = 0; i < 4; i++) {
       float m = 0.5 * (tPrev + tHit);
       if (1.0 / mix(k0, k1, m) > zAt(vUv + duv * m)) tHit = m; else tPrev = m;
     }
-    vec2 huv = vUv + duv * tHit;
-    float land = smoothstep(0.3, 0.7, texture(tScene, huv).a);       // water does not mirror water
-    vec3 hit = texture(tHdr, huv).rgb;
-    return broken(hit) ? vec4(0.0) : vec4(hit, fres * edgeFade(huv) * rough * mix(0.25, 1.0, land));
+    huv = vUv + duv * tHit;
+  } else if (suv0.x < 0.0) return vec4(0.0);
+  // What the facets show: where each one's reflected ray leaves the picture, as an offset from the mean ray's.
+  vec3 acc = vec3(0.0);
+  float got = 0.0;
+  for (int i = 0; i < MIRROR_TAPS; i++) {
+    vec2 f = vec2((float(i) + jit2) / float(MIRROR_TAPS) - 0.5, fract(jit + float(i) * 0.618034) - 0.5) * spread;
+    vec2 sl = swell + along * f.x + across * f.y;
+    vec3 Ri = reflect(Vw, normalize(vec3(sl.x, 1.0, sl.y))); Ri.y = abs(Ri.y) + 0.003;
+    vec3 Rvi = uCamRotInv * normalize(Ri);
+    if (Rvi.z > -0.01) continue;
+    vec2 s = (Rvi.xy / (-Rvi.z * uProj.zw)) * 0.5 + 0.5;
+    if (tHit > 0.0) {
+      // (a thing that was struck stands nearer than the sky: its reflection shifts less)
+      vec2 q = huv + (suv0.x < 0.0 ? vec2(0.0) : (s - suv0) * 0.7);
+      vec3 hit = texture(tHdr, q).rgb;
+      if (broken(hit)) continue;
+      float e = edgeFade(q) * mix(0.25, 1.0, smoothstep(0.3, 0.7, texture(tScene, q).a));       // water does not mirror water
+      acc += hit * e; got += e;
+    } else {
+      // Nothing in the way. If the sky the ray ends in is in view, mirror that, clouds and all.
+      if (s.x <= 0.0 || s.x >= 1.0 || s.y <= 0.0 || s.y >= 1.0 || textureLod(tDepth, s, 0.0).r < 0.999999) continue;
+      vec3 hit = texture(tHdr, s).rgb;
+      if (broken(hit)) continue;
+      float e = edgeFade(s) * 0.85;
+      acc += hit * e; got += e;
+    }
   }
-  // Nothing in the way. If the sky the ray ends in is in view, mirror that, clouds and all.
-  if (Rv.z < -0.01) {
-    vec2 suv = (Rv.xy / (-Rv.z * uProj.zw)) * 0.5 + 0.5;
-    if (suv.x > 0.0 && suv.x < 1.0 && suv.y > 0.0 && suv.y < 1.0 && textureLod(tDepth, suv, 0.0).r >= 0.999999)
-    { vec3 hit = texture(tHdr, suv).rgb; return broken(hit) ? vec4(0.0) : vec4(hit, fres * edgeFade(suv) * rough * 0.85); }
-  }
-  return vec4(0.0);
+  return got > 0.0 ? vec4(acc / got, fres * rough * got / float(MIRROR_TAPS)) : vec4(0.0);
 }
 
 void main() {

@@ -27,11 +27,13 @@ const OFFLINE = args.includes('--offline'), SKIP_MISSING = args.includes('--skip
 const ENDPOINT = opt('--endpoint', 'https://overpass-api.de/api/interpreter');
 const USER_AGENT = 'airfield-geometry-fetch/1.0';
 // South, west, north, east of each request: between them the lower forty-eight and the south of Canada (with
-// the north of Mexico and the Bahamas), the North, Alaska with the Aleutians, and Hawaii.
+// the north of Mexico and the Bahamas), the North, Alaska with the Aleutians, Hawaii, and the rest of the continent to Panama.
 const BOXES = [
   [24, -125, 40, -114], [24, -114, 40, -103], [24, -103, 40, -92], [24, -92, 40, -81], [24, -81, 40, -66],
   [40, -141, 56, -125], [40, -125, 56, -114], [40, -114, 56, -103], [40, -103, 56, -92], [40, -92, 56, -81], [40, -81, 56, -70], [40, -70, 56, -52],
   [56, -170, 72, -141], [56, -141, 72, -100], [56, -100, 72, -52], [50, -180, 56, -141], [18.5, -161, 22.5, -154.5],
+  // Mexico below the Tropic, Central America and the Caribbean
+  [14, -118, 24, -106], [14, -106, 24, -97], [14, -97, 24, -86], [14, -86, 24, -73], [10, -73, 24, -59], [7, -93, 14, -77],
 ];
 const MIN_POP = 1500;
 

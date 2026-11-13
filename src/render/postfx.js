@@ -45,7 +45,9 @@ in vec2 vUv;
 out vec4 outColor;
 #if FIRST
   // A NaN or infinite pixel from the scene would otherwise be clamped to a 64.0 flare and bloom across the frame.
-  vec3 s(float x, float y) { vec3 c = texture(tSrc, vUv + vec2(x, y) * uTexel).rgb; return any(isnan(c)) || any(isinf(c)) || !(c.r + c.g + c.b < 1.0e5) ? vec3(0.0) : max(c, 0.0); }
+  // (The test is on the bits as well: some shader compilers assume there are no such numbers and drop isnan() and isinf().)
+  bool unreal(vec3 c) { return any(equal(floatBitsToUint(c) & uvec3(0x7F800000u), uvec3(0x7F800000u))); }
+  vec3 s(float x, float y) { vec3 c = texture(tSrc, vUv + vec2(x, y) * uTexel).rgb; return unreal(c) || any(isnan(c)) || any(isinf(c)) || !(c.r + c.g + c.b < 1.0e5) ? vec3(0.0) : clamp(c, 0.0, 6.0e4); }
 #else
   vec3 s(float x, float y) { return texture(tSrc, vUv + vec2(x, y) * uTexel).rgb; }
 #endif

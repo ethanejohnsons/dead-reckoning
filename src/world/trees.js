@@ -600,11 +600,12 @@ void treeLight(vec3 C, vec3 leaf, float yaw, float dense, float fade, float lod)
   float snowOn = max(smoothstep(-100.0, 250.0, C.y - snowline + min(uTAnom, 0.0) * 150.0), 0.85 * min(uSnow * 2.5, 1.0) * (1.0 - smoothstep(2.0, 7.0, 2.2 - (C.y - snowline) / 150.0 - max(uGroundT, 1.8))));
   vec3 T = atmosphereTransmittance(cameraPosition, C);
   vec3 dir = normalize(C - cameraPosition);
-  vec3 hd = normalize(vec3(dir.x, max(dir.y, 0.0) * 0.4 + 0.035, dir.z));
   float cy = cos(yaw), sy = sin(yaw);
   vLeaf = vec4(leaf, sh);
   vTr = vec4(T, 1.0 - 0.5 * skyOcclusion(C, hReg));
-  vIn = vec4(mix(uHorizon, skyRadiance(hd), 0.3) * (1.0 - T), snowOn);
+  // (the haze in front of the tree is the haze in front of the ground it stands on: the same table, by direction and
+  // distance, so that toward a low sun the trees sink into the glare with the land instead of standing out dark)
+  vIn = vec4(atmosphereInscatter(dir, distance(cameraPosition, C)) * (1.0 - T), snowOn);
   vView = vec4(-(cy * dir.x - sy * dir.z), -dir.y, -(sy * dir.x + cy * dir.z), treeFar(distance(cameraPosition, C)));
   vRot = vec4(cy, sy, fade, lod);
 }`;

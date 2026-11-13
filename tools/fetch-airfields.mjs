@@ -3,7 +3,7 @@
 // (fetched by the game when the field comes into its window of the world) and the index of all of them in
 // src/world/airfield-index.js (the menu, the chart and the search for which fields a window holds).
 //
-//   node tools/fetch-airfields.mjs [--cache DIR] [--offline] [--all] [--only ID,ID] [--endpoint URL] [--skip-buildings]
+//   node tools/fetch-airfields.mjs [--cache DIR] [--offline] [--all] [--only ID,ID] [--endpoint URL] [--skip-buildings] [--source api]
 //
 // Only the fields of the list that are not baked yet are fetched (no entry in the index, or no file): the
 // rest keep their files, and their index entries are carried over with the list's wording. --all fetches
@@ -13,6 +13,11 @@
 // (aeroway features around each, then the buildings inside each airport boundary), with a pause between
 // requests, and the raw answers are kept in a cache directory outside the repository (default: the system
 // temp directory). --offline rebuilds from that cache without touching the network.
+//
+// --source api takes the same map from the main OpenStreetMap API instead, for when no Overpass server
+// answers: each field is looked up by its code (Nominatim) and everything inside its outline is fetched with
+// one small map request, a field at a time with a pause between. Heavier on that server for each field, so
+// it is for a list of fields, not for a bake of everything.
 //
 // The result is a derived database of OpenStreetMap data, © OpenStreetMap contributors, available under
 // the Open Database License (ODbL) 1.0.
@@ -39,6 +44,7 @@ const ALL = flag('--all');
 const SKIP_BUILDINGS = flag('--skip-buildings');      // an interim bake: buildings only where their answer is already cached
 const ENDPOINT = opt('--endpoint', 'https://overpass-api.de/api/interpreter');      // any Overpass API server
 const USER_AGENT = 'airfield-geometry-fetch/1.0';
+const SOURCE = opt('--source', 'overpass');           // 'overpass' or 'api' (the main OpenStreetMap API, with Nominatim to find each field)
 const PAUSE_MS = 10000;
 const BATCH = 14;                 // fields per request
 
@@ -76,6 +82,67 @@ async function overpass(name, query) {
       await sleep(PAUSE_MS * 3 * attempt);
     }
   }
+}
+
+// ---- the same from the main OpenStreetMap API (--source api)
+
+const API_PAUSE_MS = 2500;
+async function getJson(name, url) {
+  const file = join(CACHE, `${name}.json`);
+  if (existsSync(file)) return JSON.parse(await readFile(file, 'utf8'));
+  if (OFFLINE) throw new Error(`--offline, but ${file} is not in the cache`);
+  if (fetched++) await sleep(API_PAUSE_MS);
+  for (let attempt = 1; ; attempt++) {
+    process.stderr.write(`OpenStreetMap: ${name}${attempt > 1 ? ` (attempt ${attempt})` : ''}…\n`);
+    try {
+      const res = await fetch(url, { headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' }, signal: AbortSignal.timeout(180000) });
+      const text = await res.text();
+      if (res.status === 400 || res.status === 413) return { tooBig: true, why: text.slice(0, 120) };       // too many nodes in the box: the caller quarters it
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${text.slice(0, 200).replace(/\s+/g, ' ')}`);
+      const json = JSON.parse(text);          // data only: parsed, never evaluated
+      await mkdir(CACHE, { recursive: true });
+      await writeFile(file, text);
+      return json;
+    } catch (e) {
+      if (attempt >= 5) throw e;
+      process.stderr.write(`  failed (${e.message}); waiting before another try\n`);
+      await sleep(API_PAUSE_MS * 6 * attempt);
+    }
+  }
+}
+/** Where the map has the airport with this code: { lat, lon, box: [south, west, north, east] } of its outline, or null. */
+async function locate(id) {
+  const hits = await getJson(`nominatim-${id}`, `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(id)}&format=jsonv2&limit=8`);
+  const a = Array.isArray(hits) && hits.filter((h) => h.category === 'aeroway' && h.type === 'aerodrome').sort((p, q) => (q.importance || 0) - (p.importance || 0))[0];
+  if (!a) return null;
+  const b = a.boundingbox.map(Number);
+  return { lat: +a.lat, lon: +a.lon, box: [b[0], b[2], b[1], b[3]], name: a.name };
+}
+/** Everything about aviation, and every building, in a box of the map: elements shaped as Overpass gives them with `out geom`. */
+async function mapBox(name, s, w, n, e, depth = 0) {
+  const json = await getJson(name, `https://api.openstreetmap.org/api/0.6/map.json?bbox=${w.toFixed(5)},${s.toFixed(5)},${e.toFixed(5)},${n.toFixed(5)}`);
+  if (json.tooBig) {
+    if (depth >= 3) throw new Error(`${name}: the map will not give this box (${json.why})`);
+    const ms = (s + n) / 2, mw = (w + e) / 2, parts = [];
+    for (const [k, q] of [[s, w, ms, mw], [s, mw, ms, e], [ms, w, n, mw], [ms, mw, n, e]].entries()) parts.push(...await mapBox(`${name}-${k}`, ...q, depth + 1));
+    return parts;
+  }
+  const nodes = new Map(), ways = new Map(), out = [];
+  for (const el of json.elements) if (el.type === 'node') nodes.set(el.id, el); else if (el.type === 'way') ways.set(el.id, el);
+  const geom = (way) => way.nodes.map((id) => nodes.get(id)).filter(Boolean).map((p) => ({ lat: p.lat, lon: p.lon }));
+  const wanted = (tags) => tags && (tags.aeroway || tags.building);
+  for (const el of json.elements) {
+    if (!wanted(el.tags)) continue;
+    if (el.type === 'node') out.push({ type: 'node', id: el.id, lat: el.lat, lon: el.lon, tags: el.tags });
+    else if (el.type === 'way') { const g = geom(el); if (g.length > 1) out.push({ type: 'way', id: el.id, tags: el.tags, geometry: g }); }
+    else if (el.type === 'relation') {
+      const members = el.members.filter((m) => m.type === 'way' && ways.has(m.ref)).map((m) => ({ type: 'way', ref: m.ref, role: m.role, geometry: geom(ways.get(m.ref)) })).filter((m) => m.geometry.length > 1);
+      if (!members.length) continue;
+      const all = members.flatMap((m) => m.geometry);
+      out.push({ type: 'relation', id: el.id, tags: el.tags, members, bounds: { minlat: Math.min(...all.map((p) => p.lat)), maxlat: Math.max(...all.map((p) => p.lat)), minlon: Math.min(...all.map((p) => p.lon)), maxlon: Math.max(...all.map((p) => p.lon)) } });
+    }
+  }
+  return out;
 }
 
 function bbox(lat, lon, km) {
@@ -186,8 +253,24 @@ for (const f of fields) f.size = f.traffic >= 0.8 ? 2 : f.traffic >= 0.4 ? 1 : 0
 const batches = [];
 for (let i = 0; i < fields.length; i += BATCH) batches.push(fields.slice(i, i + BATCH));
 const tag = (kind, batch, query) => `${kind}-${batch[0].id}-${createHash('sha1').update(query).digest('hex').slice(0, 10)}`;
-const aero = { elements: [] };
-for (const batch of batches) {
+const aero = { elements: [] }, apiBuildings = [];
+if (SOURCE === 'api') {
+  // A field at a time: the box of its outline on the map and a few hundred meters around it (or, where the
+  // map does not know the code, a box around the listed position).
+  const seen = new Set();
+  for (const f of fields) {
+    const at = await locate(f.id), M = 0.003;
+    const dLat = (f.radius * 0.6) / 111.2, dLon = dLat / Math.cos(f.lat * D2R);
+    const b = at ? [at.box[0] - M, at.box[1] - M, at.box[2] + M, at.box[3] + M] : [f.lat - dLat, f.lon - dLon, f.lat + dLat, f.lon + dLon];
+    if (!at) process.stderr.write(`  ${f.id}: not found by its code, taking a box around the listed position\n`);
+    for (const el of await mapBox(`map-${f.id}`, ...b)) {
+      const key = el.type + el.id;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      (el.tags.aeroway ? aero.elements : apiBuildings).push(el);
+    }
+  }
+} else for (const batch of batches) {
   const q = `[out:json][timeout:240];\n(\n${batch.map((f) => `  nwr["aeroway"](${bbox(f.lat, f.lon, f.radius)});`).join('\n')}\n);\nout geom;`;
   aero.elements.push(...(await overpass(tag('aeroways', batch, q), q)).elements);
 }
@@ -259,8 +342,8 @@ for (const f of fields) {
 }
 
 // Second round of requests: buildings inside each boundary.
-const bld = { elements: [] };
-for (const batch of batches) {
+const bld = { elements: apiBuildings };
+if (SOURCE !== 'api') for (const batch of batches) {
   const polys = batch.filter((f) => f.boundary).map((f) => {
     const ring = simplifyRing(inflate(f.boundary, 15), f.size === 2 ? 40 : 15);
     // Back to latitude and longitude for the query.
@@ -335,8 +418,8 @@ for (const f of fields) {
     let n0, n1;
     const refs = String(t.ref || t.name || '').split(/[/\-–]/).map((s) => s.trim()).filter((s) => /^\d{1,2}[LRC]?$/.test(s));
     // American designators carry no leading zero (4/22, 9L/27R); Canadian ones do (08/26).
-    const canada = f.country === 'Canada';
-    const pad = canada ? (s) => s.replace(/^(\d)(?!\d)/, '0$1') : (s) => s.replace(/^0+(?=\d)/, '');
+    const zeros = f.country !== 'United States';          // (everywhere else a runway below 10 is written 08, as the ICAO has it)
+    const pad = zeros ? (s) => s.replace(/^(\d)(?!\d)/, '0$1') : (s) => s.replace(/^0+(?=\d)/, '');
     const fromHeading = (h) => pad(String(Math.round(magnetic(h) / 10) % 36 || 36));
     const opposite = (s) => pad(String(((num(s) + 17) % 36) + 1) + ({ L: 'R', R: 'L', C: 'C' }[s.slice(-1)] || ''));
     if (refs.length === 2) {
@@ -505,7 +588,7 @@ for (const f of fields) {
   for (const r of runways) reach = Math.max(reach, dist(r.a, [0, 0]), dist(r.b, [0, 0]));
   for (const b of buildings) for (const q of b.p) reach = Math.max(reach, dist(q, [0, 0]));
   const ll = toLatLonLocal(f, mid[0], mid[1]);
-  index.push({ id: f.id, name: f.name, city: f.city, state: f.state, country: f.country, lat: +ll.lat.toFixed(5), lon: +ll.lon.toFixed(5), numbers: main.n, hdg: Math.round(main.hdg), len: Math.round(main.len),
+  index.push({ id: f.id, name: f.name, city: f.city, state: f.state, country: f.country, group: f.group, lat: +ll.lat.toFixed(5), lon: +ll.lon.toFixed(5), numbers: main.n, hdg: Math.round(main.hdg), len: Math.round(main.len),
     surface: paved(main.s) ? 'paved' : main.s, traffic: f.traffic, big: f.size === 2 ? 1 : 0, reach: Math.round(reach + 400), blurb: f.blurb });
 }
 
@@ -516,8 +599,8 @@ for (const f of fields) {
   // its old one (with the list's name, place and blurb), one that could not be baked is left out.
   const fresh = new Map(index.map((e) => [e.id, e])), merged = [];
   for (const f of AIRFIELD_LIST) {
-    const e = fresh.get(f.id) || (baked.has(f.id) && existsSync(join(OUT_DIR, `${f.id}.json`)) ? { ...baked.get(f.id), name: f.name, city: f.city, state: f.state, country: f.country, traffic: f.traffic, blurb: f.blurb } : null);
-    if (e) merged.push({ id: e.id, name: e.name, city: e.city, state: e.state, country: e.country, lat: e.lat, lon: e.lon, numbers: e.numbers, hdg: e.hdg, len: e.len, surface: e.surface, traffic: e.traffic, big: e.big, reach: e.reach, blurb: e.blurb });
+    const e = fresh.get(f.id) || (baked.has(f.id) && existsSync(join(OUT_DIR, `${f.id}.json`)) ? { ...baked.get(f.id), name: f.name, city: f.city, state: f.state, country: f.country, group: f.group, traffic: f.traffic, blurb: f.blurb } : null);
+    if (e) merged.push({ id: e.id, name: e.name, city: e.city, state: e.state, country: e.country, ...(e.group ? { group: e.group } : {}), lat: e.lat, lon: e.lon, numbers: e.numbers, hdg: e.hdg, len: e.len, surface: e.surface, traffic: e.traffic, big: e.big, reach: e.reach, blurb: e.blurb });
   }
   const header = `// GENERATED by tools/fetch-airfields.mjs from tools/airfield-list.mjs. Do not edit by hand: run the script again.
 //

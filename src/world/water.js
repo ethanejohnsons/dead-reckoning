@@ -21,6 +21,12 @@
 //   at a Great Lake's own level, where that lake is, is never doubted (the only list in here: five levels).
 //   The Great Lakes were leveled a survey quadrangle at a time, to slightly different heights, and the
 //   joins are ramps a hundred meters wide: they are filled in (step 3b).
+//   Where the fine data is not the survey but something stored in whole meters and resampled (Hawaii, and
+//   much of the world beyond the United States), every gentle slope is a staircase of dead-level terraces,
+//   each of them "a patch of pixels at one level": a coastal plain a meter above the sea read as sea, and
+//   the terraces behind it as lakes, so Honolulu stood under water. Such a tile gives itself away: its level
+//   patches sit on exact whole numbers, at more than one height. In one, only the sea is water (what lies
+//   below zero, and level ground at zero); its lakes cannot be told from its terraces and are left as land.
 
 const N = 256, NN = N * N;
 const TOL = 0.011;                      // level means within this of every neighbor (m)
@@ -41,6 +47,11 @@ const DOUBT_MAX = 2000;
 const BANK = 0.3, BANK_SHARE = 0.05;    // a lake's surroundings: this share of the ground about 150 m out from its edge differs from its level by this much (m)
 // The Great Lakes: surface level in the survey (m), south, north, west, east.
 export const GREAT_LAKES = [[183.0, 46.3, 49.1, -92.4, -84.2], [176.3, 41.5, 46.4, -88.2, -79.6], [174.9, 42.2, 43.1, -83.3, -82.3], [173.8, 41.3, 43.0, -83.7, -78.8], [74.6, 43.1, 44.4, -79.9, -75.9]];
+
+// Where the fine data is known to be in whole meters, whatever a single tile shows (a tile with one terrace and
+// the sea has only one level to give itself away by): south, north, west, east. The Hawaiian islands.
+const WHOLE_METERS = [[18.5, 22.6, -161, -154.5]];
+const WHOLE = 0.002;                    // a height is a whole number of meters within this (the tiles are stored to 4 mm)
 
 const stack = new Int32Array(NN), seen = new Uint8Array(NN), owner = new Int32Array(NN);
 
@@ -65,28 +76,42 @@ export function waterMask(z, x, y, h) {
   const lakes = GREAT_LAKES.filter((l) => lat > l[1] - 0.3 && lat < l[2] + 0.3 && lon > l[3] - 0.3 && lon < l[4] + 0.3);
   // 2. Level patches, one at a time: big enough to be a lake, or at sea level.
   seen.fill(0); owner.fill(0);
-  const minArea = MIN_AREA(z), sizes = [0];
+  const minArea = MIN_AREA(z), sizes = [0], patches = [];
   let id = 0;
   for (let start = 0; start < NN; start++) {
     if (!flat[start] || seen[start]) continue;
     id++;
-    let n = 0, top = 0, edge = false, sum = 0;
+    let n = 0, top = 0, edge = false, sum = 0, ints = 0;
     const members = [];
     stack[top++] = start; seen[start] = 1;
     while (top) {
       const k = stack[--top], i = k & 255, j = k >> 8;
       members.push(k); n++; sum += h[k]; owner[k] = id;
+      if (Math.abs(h[k] - Math.round(h[k])) < WHOLE) ints++;
       if (i === 0 || j === 0 || i === N - 1 || j === N - 1) edge = true;
       if (i > 0 && flat[k - 1] && !seen[k - 1]) { seen[k - 1] = 1; stack[top++] = k - 1; }
       if (i < N - 1 && flat[k + 1] && !seen[k + 1]) { seen[k + 1] = 1; stack[top++] = k + 1; }
       if (j > 0 && flat[k - N] && !seen[k - N]) { seen[k - N] = 1; stack[top++] = k - N; }
       if (j < N - 1 && flat[k + N] && !seen[k + N]) { seen[k + N] = 1; stack[top++] = k + N; }
     }
-    const level = sum / n;
     sizes.push(n);
-    if (level > SEA && n < (edge ? minArea / 2 : minArea)) continue;
+    patches.push({ id, members, n, edge, level: sum / n, whole: ints >= 0.6 * n });
+  }
+  // Is this tile whole-meter data (see the traps above)? Its level patches are then on whole numbers, at two heights or more.
+  let wholePx = 0, flatPx = 0;
+  const heights = new Set();
+  for (const p of patches) {
+    if (lakes.some((l) => Math.abs(p.level - l[0]) < 2)) continue;
+    flatPx += p.n;
+    if (p.whole) { wholePx += p.n; if (p.n >= 20) heights.add(Math.round(p.level)); }
+  }
+  // (Only in the fine data: from zoom 10 down every tile is in whole meters, and the patch sizes asked for there allow for it.)
+  const terraced = z >= 11 && ((heights.size >= 2 && wholePx >= 0.7 * flatPx) || WHOLE_METERS.some((b) => lat > b[0] && lat < b[1] && lon > b[2] && lon < b[3]));
+  for (const p of patches) {
+    const { id, members, n, edge, level } = p;
+    if (terraced ? level > 0.5 : level > SEA && n < (edge ? minArea / 2 : minArea)) continue;
     let code = 1;
-    if (z === DOUBT_Z && level > SEA && n < DOUBT_MAX && !lakes.some((l) => Math.abs(level - l[0]) < 2)) {
+    if (!terraced && z === DOUBT_Z && level > SEA && n < DOUBT_MAX && !lakes.some((l) => Math.abs(level - l[0]) < 2)) {
       // Has it banks? Look three pixels (about 150 m) out from its edge, eight ways.
       const D = 3;
       let ring = 0, relief = 0;
@@ -162,14 +187,15 @@ export function waterMask(z, x, y, h) {
   // 4. The sea: everything below zero, and the stray ridges a pixel or two wide and under a meter high that
   // the surveys leave in it (flooded from the sea beside them, a few pixels at most).
   let sea = false;
+  const shore = terraced ? 0.5 : 1.2;                    // (a terrace a meter up is the land's first step, not a ridge in the sea)
   for (let k = 0; k < NN; k++) if (h[k] < 0) { w[k] = 1; sea = true; }
   if (sea) {
     for (let pass = 0; pass < 3; pass++) {
       const add = [];
       for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
         const k = j * N + i;
-        if (w[k] || h[k] > 1.2) continue;
-        const s = (q) => w[q] && h[q] <= 1.2;
+        if (w[k] || h[k] > shore) continue;
+        const s = (q) => w[q] && h[q] <= shore;
         if ((i > 0 && s(k - 1)) || (i < N - 1 && s(k + 1)) || (j > 0 && s(k - N)) || (j < N - 1 && s(k + N))) add.push(k);
       }
       if (!add.length) break;

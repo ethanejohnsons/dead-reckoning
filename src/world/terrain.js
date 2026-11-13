@@ -61,7 +61,7 @@ function along(table, x) {
 // and the Labrador Sea push the line south again.
 const ARCTIC = [[-172, 50], [-164, 55], [-159, 60], [-152, 66.5], [-140, 68.5], [-130, 68.5], [-115, 66], [-100, 61], [-95, 59.5], [-85, 56.5], [-78, 57], [-70, 58], [-62, 56.5], [-55, 53]];
 // The tree line in the interior of the continent, by latitude (m).
-const TREELINE = [[20, 3000], [28, 3900], [35.4, 3900], [39, 3500], [48, 2500], [53, 2150], [60, 1300], [65, 800], [69, 200]];
+const TREELINE = [[15, 4000], [35.4, 3900], [39, 3500], [48, 2500], [53, 2150], [60, 1300], [65, 800], [69, 200]];
 // The latitude at which the prairie gives way to the north woods and the boreal forest, by longitude: from the
 // Twin Cities to northwestern Minnesota, around the north of Winnipeg, then northwest behind Saskatoon and Edmonton.
 const WOODS_EDGE = [[-115, 54.2], [-110, 53.6], [-105, 53.2], [-101, 52], [-98, 51], [-96, 48.6], [-92, 44.4]];
@@ -78,6 +78,7 @@ const crestLon = (lat) => (lat < 49 ? -121.4 : -121.4 - (lat - 49) * 1.35);
 export function treelineAt(lat, lon = -100) {
   const a = Math.abs(lat), crest = crestLon(a);
   let tl = along(TREELINE, a);
+  if (a < 24 && lon < -150) tl = Math.min(tl, 3000);       // (the Hawaiian volcanoes stand in the dry air above the trade-wind clouds)
   tl *= 1 - 0.3 * smoothstep(42, 47, a) * (1 - smoothstep(61.5, 63.5, a)) * smoothstep(crest + 1, crest - 1, lon);
   tl -= 1500 * smoothstep(-85, -75, lon) * smoothstep(36, 44, a);
   return Math.max(-200, Math.min(tl, (along(ARCTIC, lon) - a) * 220));
@@ -97,7 +98,8 @@ const EAST = [[-104, 0.28], [-100, 0.33], [-97, 0.4], [-94, 0.52], [-90, 0.66], 
  * Twin Cities to northwestern Minnesota and on northwest across the prairie provinces. Between the Rockies
  * and the Pacific ranges the basins are sagebrush, and desert in the south; the inland Northwest catches
  * Pacific air; west of the Cascades and the Coast Mountains, from northern California to Alaska, is rain
- * forest; California is dry but for its north coast. The relief adds the rest (see buildWorld).
+ * forest; California is dry but for its north coast. South of the Mexican plateau the tropics are forest
+ * again, through Central America and the Caribbean. The relief adds the rest (see buildWorld).
  */
 export function lowlandMoisture(lat, lon) {
   let m;
@@ -107,6 +109,9 @@ export function lowlandMoisture(lat, lon) {
     // the edge of the north woods
     const edge = along(WOODS_EDGE, lon);
     m = Math.max(m, 0.78 * smoothstep(edge - 0.5, edge + 0.5, lat));
+    // the tropics: south of the Mexican plateau it is forest again, to Panama
+    m = Math.max(m, 0.62 * smoothstep(20.5, 17.5, lat));
+    if (lat < 13.2 && lon > -71.5 && lon < -67.5) m = 0.28;      // Aruba, Bonaire and Curaçao lie in the dry belt off Venezuela
   } else {
     m = 0.26 - 0.11 * smoothstep(38, 33, lat) + 0.03 * smoothstep(44, 48, lat);
     const west = -112 - 1.2 * Math.max(0, lat - 48.5);       // (the divide runs northwest)
@@ -117,6 +122,7 @@ export function lowlandMoisture(lat, lon) {
     m = Math.max(m, (0.3 + 0.42 * smoothstep(37.5, 40.5, lat)) * smoothstep(-121.3, -122.6, lon - 0.9 * Math.max(0, 38 - lat)));
     const crest = crestLon(lat);
     m = Math.max(m, 0.86 * smoothstep(crest + 0.6, crest - 0.6, lon) * smoothstep(40.5, 43.5, lat));
+    m = Math.max(m, 0.6 * smoothstep(23.5, 21.5, lat));          // Mexico's Pacific coast below the Tropic: dry forest and jungle
   }
   // The Hawaiian islands: forest to the trade winds, the relief sorts out the rest.
   if (lat < 24 && lon < -150) m = 0.6;

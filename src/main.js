@@ -31,6 +31,7 @@ import { Chart, bakeChart, loadOverview, fmtPlace } from './ui/chart.js';
 import { perf } from './render/perf.js';
 import { uploads } from './render/budget.js';
 import { DynRes } from './render/dynres.js';
+import { AutoQuality, tierForHardware, TIER_NAMES } from './render/autoquality.js';
 import { FlightPanel, FrameMeter, weatherWords, passRows, fahrenheit, visibilityWords } from './ui/hud.js';
 import { enhanceSelect, syncPickers } from './ui/picker.js';
 
@@ -38,7 +39,7 @@ const $ = (id) => document.getElementById(id);
 const D2R = Math.PI / 180;
 const STEP = 1 / 120;
 const SAVE_KEY = 'dead-reckoning-v3';     // bumped when the defaults changed (high graphics), so old saves do not pin the old ones
-const SAVE_VERSION = 2;
+const SAVE_VERSION = 3;
 const HOURS = [[5.7, 'First light'], [7.5, 'Early morning'], [10, 'Morning'], [13, 'Midday'], [15.5, 'Afternoon'], [17.3, 'Golden hour'], [18.4, 'Dusk'], [22, 'Night']];
 // Yield to the browser so loading text can paint; the timeout keeps boot moving in a background tab.
 const nextFrame = () => new Promise((r) => { requestAnimationFrame(() => r()); setTimeout(r, 60); });
@@ -54,13 +55,14 @@ const S = {
   mode: 'loading', paused: false, timeAccel: 1, view: 'chase', chartOpen: false, time: 0, busy: false, frost: 0, moving: false,
   flight: null, field: null,
   opts: { field: DEFAULT_FIELD, wx: 'fair', hour: 7.5, air: false, plane: 'c172' },
-  settings: { sound: true, invert: false, quality: 'high', imagery: true, exposure: 1, fx: {}, wxOver: 0, resolution: 'auto' },   // wxOver: seconds a weather change takes (0 = at once); resolution: 'auto' (follows the frame rate) or 'fixed'
+  settings: { sound: true, invert: false, quality: 'auto', autoTier: '', imagery: true, exposure: 1, fx: {}, wxOver: 0, resolution: 'auto' },   // wxOver: seconds a weather change takes (0 = at once); resolution: 'auto' (follows the frame rate) or 'fixed'
 };
 try {
   const raw = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null');
   if (raw) {
     Object.assign(S.opts, raw.opts || {}); Object.assign(S.settings, raw.settings || {});
-    if ((raw.v || 1) < SAVE_VERSION) S.opts.hour = 7.5;         // the default time changed to early morning: older saves pick it up once
+    if ((raw.v || 1) < 2) S.opts.hour = 7.5;                    // the default time changed to early morning: older saves pick it up once
+    if ((raw.v || 1) < 3) S.settings.quality = 'auto';          // and so does the automatic graphics quality, when that came
   }
 } catch { /* a corrupt save just starts fresh */ }
 const persist = () => { try { localStorage.setItem(SAVE_KEY, JSON.stringify({ v: SAVE_VERSION, opts: S.opts, settings: S.settings })); } catch { /* storage unavailable */ } };
@@ -76,6 +78,10 @@ const camState = { yaw: 0, pitch: 0, vel: new THREE.Vector3(), prev: new THREE.V
 // Graphics tiers: the most device pixels per CSS pixel each draws at ('ultra' takes whatever the screen has).
 const PIXEL_CAP = { low: 1, med: 1.25, high: 1.25, ultra: 3 };
 const res = new DynRes();                  // dynamic resolution: see onResize and the end of tick
+// Graphics quality: the tier chosen in the menu, or with "Automatic" the one the game has settled on for this
+// machine (render/autoquality.js: a guess from the graphics card at first, then by how the frames come).
+const auto = new AutoQuality();
+const tier = () => (S.settings.quality === 'auto' ? auto.tier : S.settings.quality);
 const v1 = new THREE.Vector3(), v2 = new THREE.Vector3(), q1 = new THREE.Quaternion(), e1 = new THREE.Euler(0, 0, 0, 'YXZ');
 
 function surfaceAt(x, z) {
@@ -128,7 +134,8 @@ async function boot() {
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera(62, 1, 1.2, 320000);
 
-  imagery = new Imagery(renderer, S.settings.quality === 'ultra' ? 'high' : S.settings.quality);
+  auto.start(S.settings.autoTier || tierForHardware(renderer.getContext()));
+  imagery = new Imagery(renderer, tier() === 'ultra' ? 'high' : tier());
   imagery.enabled = S.settings.imagery;
 
   await msg('Stirring the atmosphere…');
@@ -172,7 +179,7 @@ async function boot() {
   // Debug handle: lets tests drive the sim from the console without rendering every step.
   window.DR = { S, ac, weather, precip, setWeather, imagery, terrain, camera, wx, ap, env, tick, input, clouds, sky, dem, AIRPORTS, FIELDS, REGION, toWorld, toLatLon, towns, cities, chart, loadWorld, ENV, skyRadiance, scene, renderer, get model() { return model; }, selectAircraft, groundLight, sunShadows, airfields, fly: (o) => { Object.assign(S.opts, o); return startFlight(); },
     flyAt: (lat, lon) => startFlight({ lat, lon }), followAircraft,
-    perf, uploads, res, applySettings,
+    perf, uploads, res, auto, tier, applySettings,
     sim: (dt) => { S.time += dt; input.update(dt); if (S.mode === 'flying') simulate(dt * S.timeAccel); } };
 
   if (!SITUATIONS[S.opts.wx]) S.opts.wx = 'fair';
@@ -187,14 +194,16 @@ async function boot() {
 // ------------------------------------------------------------------ the window of the world
 
 /** Where the window of the world goes for an airfield of the index: what loadWorld takes. */
-const placeOfField = (f) => ({ lat: f.lat, lon: f.lon, title: `${f.state} · ${f.country || 'United States'}`, near: `${f.city}, ${f.state}` });
+const placeOfField = (f) => ({ lat: f.lat, lon: f.lon, title: regionOf(f), near: `${f.city}, ${f.state}` });
+/** A field's part of the world, for the line above the title screen's choices: "Minnesota · United States", "Jalisco · Mexico", "Jamaica". */
+const regionOf = (f) => (f.state && f.state !== f.country ? `${f.state} · ${f.country || 'United States'}` : f.country || f.state);
 /** And for any point of the earth: named after the nearest airfield of the index if one is at all near, else by its position. */
 function placeOfPoint(lat, lon) {
   const c = Math.cos(lat * D2R);
   let best = null, bd = 250;                                  // km
   for (const f of FIELDS) { const d = Math.hypot(f.lat - lat, (f.lon - lon) * c) * 111.2; if (d < bd) { bd = d; best = f; } }
   const where = fmtPlace(lat, lon, 1);
-  return best ? { lat, lon, title: `${best.state} · ${best.country || 'United States'}`, near: bd < 40 ? `${best.city}, ${best.state}` : `${where}, ${best.state}` } : { lat, lon, title: where, near: where };
+  return best ? { lat, lon, title: regionOf(best), near: bd < 40 ? `${best.city}, ${best.state}` : `${where}, ${best.state}` } : { lat, lon, title: where, near: where };
 }
 
 /**
@@ -282,7 +291,7 @@ async function followAircraft() {
 }
 
 function onResize() {
-  const w = Math.max(innerWidth, 64), h = Math.max(innerHeight, 64), pr = Math.min(devicePixelRatio || 1, PIXEL_CAP[S.settings.quality] ?? 1.25);
+  const w = Math.max(innerWidth, 64), h = Math.max(innerHeight, 64), pr = Math.min(devicePixelRatio || 1, PIXEL_CAP[tier()] ?? 1.25);
   renderer.setPixelRatio(pr);
   renderer.setSize(w, h, false);
   camera.aspect = w / h; camera.updateProjectionMatrix();
@@ -295,15 +304,17 @@ function applySettings() {
   const s = S.settings;
   $('sSound').checked = s.sound; $('sInvert').checked = s.invert; $('sQuality').value = s.quality; $('sImagery').checked = s.imagery;
   if ($('sRes')) $('sRes').value = s.resolution === 'fixed' ? 'fixed' : 'auto';
-  imagery.enabled = s.imagery; imagery.setQuality(s.quality === 'ultra' ? 'high' : s.quality);
+  const q = tier();
+  { const o = $('sQuality').querySelector('option[value="auto"]'), text = s.quality === 'auto' ? `Automatic (${TIER_NAMES[q]})` : 'Automatic'; if (o && o.textContent !== text) { o.textContent = text; syncPickers(); } }
+  imagery.enabled = s.imagery; imagery.setQuality(q === 'ultra' ? 'high' : q);
   sound.setEnabled(s.sound);
-  clouds.setQuality(s.quality);
-  terrain.setQuality(s.quality);
-  sunShadows.setQuality(s.quality);
-  sky.setQuality(s.quality === 'ultra' ? 'high' : s.quality);      // the sky's tables have no step above 'high'
-  cities.setQuality(s.quality);
+  clouds.setQuality(q);
+  terrain.setQuality(q);
+  sunShadows.setQuality(q);
+  sky.setQuality(q === 'ultra' ? 'high' : q);      // the sky's tables have no step above 'high'
+  cities.setQuality(q);
   // the aircraft's own shadow map (three.js's): half the size on 'low'
-  const sh = sky.sun.shadow, shSize = s.quality === 'low' ? 1024 : 2048;
+  const sh = sky.sun.shadow, shSize = q === 'low' ? 1024 : 2048;
   if (sh.mapSize.x !== shSize) { sh.mapSize.set(shSize, shSize); sh.map?.dispose(); sh.map = null; }
   res.enabled = s.resolution !== 'fixed';
   perf.watch = res.enabled;                // one GPU timer a frame for it to steer by
@@ -468,10 +479,11 @@ function bindUI() {
   const opt = (v, t, sel, find = '') => `<option value="${v}"${sel ? ' selected' : ''}${find ? ` data-find="${find.replace(/"/g, '&quot;')}"` : ''}>${t}</option>`;
   const fill = () => {
     for (const p of ['o', 'p']) {
-      // Airfields are grouped by state or province; the search also finds them by city and country.
+      // Airfields are grouped by state or province (beyond the two countries, by region: Mexico, Central America,
+      // the Caribbean); the search also finds them by city, state or island, and country.
       const groups = new Map();
-      for (const a of FIELDS) { const g = a.state || ''; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(a); }
-      $(p + 'Field').innerHTML = [...groups].map(([g, list]) => { const o = list.map((a) => opt(a.id, a.name, a.id === S.opts.field, `${a.city} ${a.country || ''}`)).join(''); return g ? `<optgroup label="${g}">${o}</optgroup>` : o; }).join('');
+      for (const a of FIELDS) { const g = a.group || a.state || ''; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(a); }
+      $(p + 'Field').innerHTML = [...groups].map(([g, list]) => { const o = list.map((a) => opt(a.id, a.name, a.id === S.opts.field, `${a.city} ${a.state} ${a.country || ''}`)).join(''); return g ? `<optgroup label="${g}">${o}</optgroup>` : o; }).join('');
       $(p + 'Plane').innerHTML = AIRCRAFT.map((a) => opt(a.id, a.name, a.id === S.opts.plane)).join('');
       $(p + 'Wx').innerHTML = Object.entries(SITUATIONS).map(([k, v]) => opt(k, v.title, k === S.opts.wx)).join('');
       $(p + 'Hour').innerHTML = HOURS.map(([h, t]) => opt(h, t, h === S.opts.hour)).join('');
@@ -482,7 +494,7 @@ function bindUI() {
   // The flight choices are drop-downs of our own (grouped, searchable when long); the <select>s stay as the values.
   for (const p of ['o', 'p']) {
     enhanceSelect($(p + 'Plane'), { describe: (id) => aircraftById(id).blurb });
-    enhanceSelect($(p + 'Field'), { code: true, placeholder: 'Search by name, city, state or code', hint: (id) => fieldById(id)?.city });
+    enhanceSelect($(p + 'Field'), { code: true, placeholder: 'Search by name, city, state or code', hint: (id) => { const f = fieldById(id); return f?.group ? f.state : f?.city; } });
     for (const k of ['Wx', 'Hour', 'Start']) enhanceSelect($(p + k));
   }
   panel = new FlightPanel();
@@ -983,6 +995,15 @@ function tick(dt, shown = false) {
   // told it lately), else by whether frames come on time. Only in flight (a menu or a loading screen proves nothing),
   // and only on the browser's own frames (a test stepping the game by hand keeps the size it has).
   if (flying && shown && res.update(frameMs, performance.now() - perf.gpuAt < 1500 ? perf.gpu : NaN, scriptMs)) { onResize(); perf.restart(); }      // (the old size's timings say nothing about the new)
+  // Automatic quality: when a smaller picture is not enough (or there is plenty to spare), the tier itself moves.
+  if (flying && shown && S.settings.quality === 'auto') {
+    const was = auto.tier, now = auto.update(frameMs, res);
+    if (now) {
+      const down = ['low', 'med', 'high'].indexOf(now) < ['low', 'med', 'high'].indexOf(was);
+      S.settings.autoTier = now; applySettings(); persist(); perf.restart();
+      toast(down ? `Graphics lowered to ${TIER_NAMES[now]} to hold the frame rate.` : `Graphics raised to ${TIER_NAMES[now]}: there is frame rate to spare.`, 4);
+    }
+  }
 }
 
 boot().catch((e) => { console.error(e); $('splash').classList.add('show'); $('loadMsg').textContent = 'Could not start: ' + e.message; });

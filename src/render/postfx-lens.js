@@ -317,7 +317,7 @@ void main() {
     fl += vec3(1.0, 0.7, 0.4) * (1.0 - smoothstep(0.075, 0.085, length(g2))) * smoothstep(0.02, 0.085, length(g2)) * 0.045;
     fl += vec3(0.6, 1.0, 0.7) * (1.0 - smoothstep(0.0, 0.022, length(g3))) * 0.07;
     fl += vec3(0.8, 0.6, 1.0) * (1.0 - smoothstep(0.1, 0.16, length(g4))) * 0.02;
-    float halo = exp(-pow((r - 0.42) * 16.0, 2.0));
+    float hr = (r - 0.42) * 16.0, halo = exp(-hr * hr);      // (not pow(): a negative base is undefined, and is NaN on Apple's GPUs: a black disk around the sun)
     fl += vec3(1.0 + 0.4 * sin(ang * 2.0), 0.9, 0.8 - 0.3 * sin(ang * 2.0)) * halo * 0.02;
     float sunL = dot(uSunCol, vec3(0.3, 0.5, 0.2));
     col += fl * vSunVis * uFlare * sunL;
