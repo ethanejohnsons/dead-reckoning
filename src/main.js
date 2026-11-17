@@ -172,6 +172,8 @@ async function boot() {
 
   await msg('Printing charts…');
   chart = new Chart(bakeChart(900));
+  let chartDue = false;                              // a map tile came: draw the map again (once a frame at most)
+  chart.tiles.onLoad = () => { if (!chartDue) { chartDue = true; requestAnimationFrame(() => { chartDue = false; drawChart(); }); } };
   loadOverview().then((o) => { chart.over = o; }).catch((e) => console.warn('The map of the continent could not be loaded:', e.message));      // (the map works without it, a window at a time)
   input = new Input(canvas);
   sound = new Sound(); sound.enabled = S.settings.sound;
