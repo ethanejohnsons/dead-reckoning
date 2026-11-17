@@ -9,7 +9,8 @@
 //                  further tiles it needs when a bridge runs on beyond what it was given. The result names the
 //                  points whose ground height it needs (the main thread has the elevation; the worker has not)
 //   buildBridges   that, with the ground heights -> the height of every deck, and the meshes of the part
-//                  that lies in the tile: decks, parapets, piers, abutments, arches, trusses, light poles
+//                  that lies in the tile: decks, parapets, piers, abutments, arches, trusses, light poles, and
+//                  the towers, cables and anchorages of the suspension bridges
 //
 // Heights. The elevation is bare earth: under a bridge it follows the river or the road beneath. A deck is
 // the taut string between its abutments (the ground where the bridge meets the land, read a little way back
@@ -36,10 +37,28 @@ export const LONG = 200;                   // a crossing this long is a landmark
 
 // A few crossings whose form no rule could guess from the map (it does not say what a bridge is made of, nor
 // how high it must stand for ships): latitude, longitude, form, length of the main span (m), height of what
-// stands over the deck (m), height of the deck over the water at the main span (m; 0: as the land has it),
-// the color of the steel (or of the concrete, for an arch that is concrete).
-//   'lift'     a truss span between two towers        'through'  an arch over the deck, the deck hung from it
-//   'arch'     arches under the deck (the rule finds most of these by their height; not on a freeway)
+// stands over the deck (m; for a suspension bridge, its towers), height of the deck's running surface over the
+// water at the main span (m; 0: as the land has it), the color of the steel (or of the concrete, for an arch
+// that is concrete), and for a suspension bridge a few things more.
+//   'lift'        a truss span between two towers        'through'  an arch over the deck, the deck hung from it
+//   'arch'        arches under the deck (the rule finds most of these by their height; not on a freeway)
+//   'suspension'  two towers, two cables over them from anchorage to anchorage, the deck hung from the cables
+//                 on hangers and stiffened by a truss. The point is the middle of the main span (of a pair end to
+//                 end, the anchorage between them), on the line of the deck: it is checked against the map's lines
+//                 for the bridge (OpenFreeMap; the towers of most are also in the map, as buildings: those give way).
+//                 More, in an object at the end:
+//                   side      the side spans, tower to anchorage (m)
+//                   twin      a second bridge end to end, past a central anchorage this long (m)
+//                   deck2     a lower deck this far under the upper (m; the map's layer says which deck is which)
+//                   truss     depth of the stiffening truss (m)
+//                   tower     'deco' stepped legs, struts over the deck and a cross under it; 'braced' crosses
+//                             between the struts too; 'lattice' open steel legs; 'plain', 'concrete' a few struts;
+//                             'stone' masonry with pointed arches
+//                   towerCol  the towers' color, where not the steel's
+//                   cables    'pairs': two each side; 'inner': two more between the roadways
+//                   stays     diagonal stays from the tower tops besides the hangers
+// A crossing takes the nearest landmark within 70 m of it, so two bridges side by side each have their own.
+const IVORY = [0.80, 0.76, 0.62], GRANITE = [0.62, 0.59, 0.52], PALE = [0.58, 0.57, 0.54];
 const LANDMARKS = [
   [46.77895, -92.09283, 'lift', 118, 41, 0, [0.36, 0.38, 0.39]],        // Aerial Lift Bridge, Duluth
   [46.74800, -92.10030, 'through', 180, 36, 40, [0.17, 0.26, 0.22]],    // Blatnik Bridge, Duluth - Superior
@@ -49,7 +68,36 @@ const LANDMARKS = [
   [44.74680, -92.85300, 'through', 166, 30, 0, [0.50, 0.17, 0.09]],     // Hastings
   [45.05660, -92.80200, 'lift', 43, 24, 0, [0.20, 0.27, 0.23]],         // Stillwater
   [44.88870, -93.18000, 'arch', 0, 0, 0, null],           // Mendota
+  // towers 227 m over the water, 67 m of clearance under the truss; International Orange
+  [37.81975, -122.47864, 'suspension', 1280, 152, 75, [0.75, 0.24, 0.12], { side: 343, tower: 'deco', truss: 7.6 }],                                  // Golden Gate
+  [37.79819, -122.37786, 'suspension', 704, 80, 78, [0.46, 0.48, 0.49], { side: 354, twin: 51, deck2: 9, tower: 'braced', truss: 9 }],               // Bay Bridge, the western spans
+  [45.81533, -84.72809, 'suspension', 1158, 107, 61, [0.17, 0.30, 0.20], { side: 549, tower: 'braced', towerCol: IVORY, truss: 11.6 }],              // Mackinac (ivory towers, the rest green)
+  [40.70569, -73.99634, 'suspension', 486, 40, 44, [0.58, 0.52, 0.42], { side: 286, tower: 'stone', towerCol: GRANITE, cables: 'inner', stays: true, truss: 5 }],     // Brooklyn
+  [40.85167, -73.95265, 'suspension', 1067, 108, 76, [0.50, 0.52, 0.53], { side: 192, deck2: 9, tower: 'lattice', cables: 'pairs', truss: 9 }],     // George Washington
+  [40.60634, -74.04545, 'suspension', 1298, 133, 78, [0.55, 0.57, 0.58], { side: 370, deck2: 7.5, tower: 'plain', cables: 'pairs', truss: 7.3 }],  // Verrazzano-Narrows
+  [47.26878, -122.55088, 'suspension', 853, 90, 65, [0.30, 0.40, 0.34], { side: 335, tower: 'braced', truss: 10 }],                                  // Tacoma Narrows, 1950 ("Narrows Green")
+  [47.26846, -122.55144, 'suspension', 853, 90, 65, [0.42, 0.46, 0.44], { side: 335, tower: 'concrete', towerCol: PALE, truss: 7 }],                 // Tacoma Narrows, 2007 (concrete towers)
 ];
+// The towers of a suspension bridge, by style: the tops of the struts over the deck (as parts of the towers' height
+// over it), what braces the legs under the deck, crosses between the struts, legs that step in at each strut, open legs.
+const TOWER = {
+  deco: { struts: [0.30, 0.55, 0.78, 1], below: 'x', steps: true },
+  braced: { struts: [0.28, 0.52, 0.76, 1], below: 'x', x: true },
+  lattice: { struts: [0.46, 0.73, 1], below: 'strut', x: true, open: true },
+  plain: { struts: [0.36, 0.68, 1], below: 'strut' },
+  concrete: { struts: [0.5, 1], below: 'strut' },
+  stone: { stone: true },
+};
+/** How far either side of a landmark's point its deck stands at the height the table gives (m). */
+const lmHalf = (m) => (m.twin ? m.twin / 2 + m.side + m.span : m.span / 2);
+/** Where a suspension bridge's towers and anchorages stand, from the landmark's point along its line (m). */
+function supportsOf(m) {
+  const S = m.span, sd = m.side;
+  if (!m.twin) return [[-(S / 2 + sd), 'anchor'], [-S / 2, 'tower'], [S / 2, 'tower'], [S / 2 + sd, 'anchor']];
+  const t1 = m.twin / 2 + sd, t2 = t1 + S;
+  return [[-(t2 + sd), 'anchor'], [-t2, 'tower'], [-t1, 'tower'], [0, 'center'], [t1, 'tower'], [t2, 'tower'], [t2 + sd, 'anchor']];
+}
+const tileXY = (lat, lon, z, tx, ty, size) => [((lon + 180) / 360 * 2 ** z - tx) * size, ((1 - Math.asinh(Math.tan(lat * Math.PI / 180)) / Math.PI) / 2 * 2 ** z - ty) * size];
 
 export const S_ROAD = 0, S_CONC = 1, S_SOFFIT = 2, S_STEEL = 3, S_RAIL = 4, S_WALK = 5, S_FASCIA = 6;
 
@@ -157,6 +205,44 @@ export function parseBridges(layers, size) {
     }
   }
   return out;
+}
+
+/**
+ * Where the towers and anchorages of the table's suspension bridges stand near a tile, in its meters [x, z, ...]:
+ * along the bridge's line as the tile's own bridge lines run (br: parseBridges(); tx, ty: the tile at zoom 14).
+ * The map has some of them as buildings; the bridge builds its own, so those buildings give way (see byTower).
+ */
+export function towerSites(br, tx, ty, size) {
+  const out = [];
+  for (const [lat, lon, form, span, , , , more] of LANDMARKS) {
+    if (form !== 'suspension') continue;
+    const rel = supportsOf({ span, side: 0, ...more }), reach = -rel[0][0] + 60, [px, pz] = tileXY(lat, lon, 14, tx, ty, size);
+    if (px < -reach || pz < -reach || px > size + reach || pz > size + reach) continue;
+    // the bridge's line: a straight bridge line of this tile that runs through the landmark's point
+    for (const w of br.ways) {
+      const p = w.p, n = p.length, ex = p[n - 2] - p[0], ez = p[n - 1] - p[1], l = Math.hypot(ex, ez);
+      if (l < 40 || w.kind === KIND_PATH) continue;
+      const ux = ex / l, uz = ez / l;
+      if (Math.abs((px - p[0]) * uz - (pz - p[1]) * ux) > 40) continue;
+      for (const [d] of rel) out.push(px + ux * d, pz + uz * d);
+      break;
+    }
+  }
+  return out;
+}
+/** Does a building whose middle is (x, z) stand where a suspension bridge has a tower or an anchorage (sites: towerSites())? */
+export function byTower(sites, br, x, z) {
+  let near = false;
+  for (let i = 0; i < sites.length && !near; i += 2) near = Math.hypot(sites[i] - x, sites[i + 1] - z) < 45;
+  if (!near) return false;
+  for (const w of br.ways) {
+    const p = w.p;
+    for (let i = 2; i < p.length; i += 2) {
+      const ax = p[i - 2], az = p[i - 1], ex = p[i] - ax, ez = p[i + 1] - az, l2 = ex * ex + ez * ez || 1, t = Math.min(1, Math.max(0, ((x - ax) * ex + (z - az) * ez) / l2));
+      if (Math.hypot(ax + ex * t - x, az + ez * t - z) < 25) return true;
+    }
+  }
+  return false;
 }
 
 // ------------------------------------------------------------------ the bridges around a tile, whole
@@ -312,11 +398,14 @@ export function assemble(tiles, size, maxR = 3, origin = null) {
   for (const a of chains) for (const b of chains) {
     if (b.layer >= a.layer || a.box[0] > b.box[2] || a.box[2] < b.box[0] || a.box[1] > b.box[3] || a.box[3] < b.box[1]) continue;
     const p = a.poly, q = b.poly; let sa = 0;
+    // (where one carries on from the other at a lower layer, the two meet at their shared end: that is not a crossing)
+    const shared = [a.nA, a.nB].filter((k) => k === b.nA || k === b.nB).map((k) => planNodes[k]);
     for (let i = 2; i < p.length; i += 2) {
       const la = Math.hypot(p[i] - p[i - 2], p[i + 1] - p[i - 1]); let sb = 0;
       for (let r = 2; r < q.length; r += 2) {
         const lb = Math.hypot(q[r] - q[r - 2], q[r + 1] - q[r - 1]);
-        const m = meet(p[i - 2], p[i - 1], p[i], p[i + 1], q[r - 2], q[r - 1], q[r], q[r + 1]);
+        let m = meet(p[i - 2], p[i - 1], p[i], p[i + 1], q[r - 2], q[r - 1], q[r], q[r + 1]);
+        if (m && shared.length) { const ix = p[i - 2] + (p[i] - p[i - 2]) * m[0], iz = p[i - 1] + (p[i + 1] - p[i - 1]) * m[0]; if (shared.some((nd) => Math.hypot(nd.x - ix, nd.z - iz) < 1.5)) m = null; }
         if (m) { a.cross.push({ s: sa + m[0] * la, t: 0, hw: b.hw, over: cross.length }); b.cross.push({ s: sb + m[1] * lb, t: 0, hw: 0, under: cross.length }); cross.push({ hi: a.id, lo: b.id, iHi: -1, iLo: -1, kind: b.kind }); }
         sb += lb;
       }
@@ -400,15 +489,21 @@ export function assemble(tiles, size, maxR = 3, origin = null) {
     }
   }
   // the few crossings that are known by name: which chains are theirs, and where along them the main span stands
-  if (origin) for (const [lat, lon, form, span, tall, clear, col] of LANDMARKS) {
-    const nT = 2 ** origin.z, lx = ((lon + 180) / 360 * nT - origin.x) * size, lz = ((1 - Math.asinh(Math.tan(lat * Math.PI / 180)) / Math.PI) / 2 * nT - origin.y) * size;
-    if (Math.abs(lx) > (maxR + 2) * size || Math.abs(lz) > (maxR + 2) * size) continue;
-    for (const c of chains) {
-      if (lx < c.box[0] - 70 || lx > c.box[2] + 70 || lz < c.box[1] - 70 || lz > c.box[3] + 70) continue;
-      let best = 70, bi = -1;
-      for (let i = 0; i < c.n; i++) { const d = Math.hypot(c.X[i] - lx, c.Z[i] - lz); if (d < best) { best = d; bi = i; } }
-      if (bi >= 0) c.lm = { s: c.S[bi], form, span, tall, clear, col };
-    }
+  if (origin) {
+    LANDMARKS.forEach(([lat, lon, form, span, tall, clear, col, more], id) => {
+      const [lx, lz] = tileXY(lat, lon, origin.z, origin.x, origin.y, size);
+      if (Math.abs(lx) > (maxR + 2) * size || Math.abs(lz) > (maxR + 2) * size) return;
+      for (const c of chains) {
+        if (lx < c.box[0] - 70 || lx > c.box[2] + 70 || lz < c.box[1] - 70 || lz > c.box[3] + 70) continue;
+        let best = 70, bi = -1;
+        for (let i = 0; i < c.n; i++) { const d = Math.hypot(c.X[i] - lx, c.Z[i] - lz); if (d < best) { best = d; bi = i; } }
+        if (bi >= 0 && !(c.lm && c.lm.d <= best)) c.lm = { id, d: best, s: c.S[bi], form, span, tall, clear, col, side: 0, truss: 6, ...more };
+      }
+    });
+    // the lower deck of a double-deck bridge: the map draws it under the upper one, a layer down
+    const top = new Map();
+    for (const c of chains) if (c.lm && c.lm.deck2 && c.kind === KIND_ROAD) top.set(c.lm.id, Math.max(top.get(c.lm.id) ?? -99, c.layer));
+    for (const c of chains) if (c.lm && c.lm.deck2 && c.layer < top.get(c.lm.id)) c.lm.clear -= c.lm.deck2;
   }
   // total length of each connected structure
   {
@@ -485,7 +580,6 @@ function clearance(c, i) {
   if (u === U_ROAD) return 5.0 + D;
   if (u === U_RAIL) return 6.9 + D;
   if (u === U_PATH) return 3.0 + D;
-  if (c.lm && c.lm.clear && Math.abs(c.S[i] - c.lm.s) < c.lm.span / 2) return c.lm.clear;
   // a river a ship can use is wide, and a bridge over it stands high (the map does not say how high: this much is common)
   // (a railroad cannot climb to it: its bridges over such rivers are low, with a span that lifts or swings)
   if (u === U_RIVER) return Math.max(Math.min(5, 1.5 + c.L / 40), c.kind === KIND_ROAD ? Math.min(16, 5 + (c.wet - 100) / 25) : 0);
@@ -501,6 +595,13 @@ export function solveHeights(plan, H) {
     const n = c.n; c.g = new Float32Array(n); c.h = new Float32Array(n); c.ob = new Float32Array(n);
     c.wet = 0; for (let i = 1; i < n; i++) if ((c.under[i] === U_WATER || c.under[i] === U_RIVER) && (c.under[i - 1] === U_WATER || c.under[i - 1] === U_RIVER)) c.wet += c.S[i] - c.S[i - 1];      // meters of it over open water
     for (let i = 0; i < n; i++) { c.g[i] = H[c.pt0 + i]; c.ob[i] = c.g[i] + clearance(c, i); }
+    // A crossing known by name holds its main span at the height the table gives over the water: over the lowest
+    // ground under the span (a tower's footing, or the bank at a tower that stands ashore, is not the water).
+    if (c.lm && c.lm.clear) {
+      const half = lmHalf(c.lm); let base = Infinity;
+      for (let i = 0; i < n; i++) if (Math.abs(c.S[i] - c.lm.s) < half) base = Math.min(base, c.g[i]);
+      for (let i = 0; i < n; i++) if (Math.abs(c.S[i] - c.lm.s) < half) c.ob[i] = Math.max(c.g[i] + 3, base + c.lm.clear);
+    }
     // (where a bridge runs into a tunnel the survey shows the hillside over the tunnel's mouth, not the road: no guide to the deck there)
     if (nodes[c.nA].mouth) for (let i = 0; i < n && c.S[i] < 45; i++) c.ob[i] = -1e6;
     if (nodes[c.nB].mouth) for (let i = n - 1; i >= 0 && c.L - c.S[i] < 45; i--) c.ob[i] = -1e6;
@@ -617,6 +718,32 @@ function bar(o, x0, y0, z0, x1, y1, z1, w) {
   }
 }
 
+/** A round tube of radius r through a run of points [x, y, z] (a cable), `sides` faces around. */
+function tube(o, pts, r, sides) {
+  const n = pts.length;
+  o.need(n * sides, (n - 1) * sides * 6);
+  const base = o.n;
+  let run = 0;
+  for (let i = 0; i < n; i++) {
+    const a = pts[Math.max(0, i - 1)], b = pts[Math.min(n - 1, i + 1)], p = pts[i];
+    let tx = b[0] - a[0], ty = b[1] - a[1], tz = b[2] - a[2]; const l = Math.hypot(tx, ty, tz) || 1; tx /= l; ty /= l; tz /= l;
+    // across it: one axis level, the other square to that and to the line
+    let ux = -tz, uz = tx; const ul = Math.hypot(ux, uz) || 1; ux /= ul; uz /= ul;
+    const vx = ty * uz, vy = tz * ux - tx * uz, vz = -ty * ux;
+    if (i) run += Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1], p[2] - pts[i - 1][2]);
+    for (let k = 0; k < sides; k++) {
+      const th = (k / sides) * 2 * Math.PI, cs = Math.cos(th), sn = Math.sin(th), nx = ux * cs + vx * sn, ny = vy * sn, nz = uz * cs + vz * sn;
+      o.v(p[0] + nx * r, p[1] + ny * r, p[2] + nz * r, nx, ny, nz, k * r, run);
+    }
+  }
+  const N = o.nrm;
+  for (let i = 0; i < n - 1; i++) for (let k = 0; k < sides; k++) {
+    const a = base + i * sides + k, b = base + i * sides + ((k + 1) % sides), c = a + sides, d = b + sides;
+    const nx = N[a * 4] + N[b * 4], ny = N[a * 4 + 1] + N[b * 4 + 1], nz = N[a * 4 + 2] + N[b * 4 + 2];
+    triN(o, a, b, c, nx, ny, nz); triN(o, b, d, c, nx, ny, nz);
+  }
+}
+
 function hash2(x, z) { let h = (Math.round(x * 3) * 0x9e3779b1) ^ (Math.round(z * 3) * 0x85ebca6b); h ^= h >>> 15; h = Math.imul(h, 0x2c1b3c6d); h ^= h >>> 12; return (h >>> 0) / 4294967296; }
 const CONCRETE = [0.50, 0.49, 0.46], ASPHALT = [0.115, 0.115, 0.12], BALLAST = [0.27, 0.25, 0.23], WALK = [0.42, 0.41, 0.38];
 const STEEL = [[0.13, 0.19, 0.16], [0.17, 0.11, 0.085], [0.30, 0.32, 0.34], [0.11, 0.11, 0.115], [0.20, 0.27, 0.33], [0.33, 0.20, 0.13]];
@@ -639,8 +766,9 @@ function layout(c, hGroup = 0) {
   c.hMax = hMax; hMax = Math.max(hMax, hGroup);
   // the form: a deck arch for a high road bridge, a through truss for a railroad over water, a girder otherwise
   c.form = c.kind === KIND_ROAD && c.rank < 3 && c.rank >= 1 && hMax >= 17 && c.L >= 110 ? 'arch' : c.kind === KIND_RAIL && wet && c.L >= 55 ? 'truss' : c.kind === KIND_PATH && c.hw >= 3 && hMax >= 9 && c.L >= 150 ? 'arch' : 'girder';
-  c.main = null;
+  c.main = null; c.sup = null;
   if (c.lm && c.lm.form === 'arch' && hMax >= 12) c.form = 'arch';
+  if (c.lm && c.lm.form === 'suspension') c.form = 'girder';
   let span = c.kind === KIND_PATH ? Math.min(36, 20 + 0.6 * hMean) : Math.min(52, Math.max(22, 20 + 1.0 * hMean));
   if (c.form === 'arch') span = c.kind === KIND_PATH ? Math.min(40, Math.max(26, 2.2 * hMax)) : Math.min(88, Math.max(48, 2.3 * hMax));
   if (c.form === 'truss') span = 62;
@@ -648,7 +776,18 @@ function layout(c, hGroup = 0) {
   // what must be kept clear on the ground: roads and tracks beneath
   const keep = [];
   for (let i = 0; i < n; i++) if (c.under[i] === U_ROAD || c.under[i] === U_RAIL || c.under[i] === U_PATH) keep.push([c.S[i], c.uhw[i] + (c.under[i] === U_RAIL ? 2.2 : 1.6)]);
-  if (c.lm && c.lm.span) {
+  if (c.lm && c.lm.form === 'suspension') {
+    // Hung from cables between its anchorages: piers only on the approaches beyond them. The towers and
+    // anchorages are placed from the landmark's point; a deck that does not reach both towers (a ramp, a
+    // promenade over part of the span) carries nothing of the structure, but stands on no piers there either.
+    const rel = supportsOf(c.lm), base = c.lm.s;
+    const list = rel.map(([d, t]) => ({ s: Math.min(c.L, Math.max(0, base + d)), t }));
+    const whole = rel.every(([d, t]) => t === 'anchor' || (base + d > 2 && base + d < c.L - 2));
+    c.sup = { list, whole };
+    const a0 = list[0].s, a1 = list[list.length - 1].s, nA = Math.round(a0 / span), nB = Math.round((c.L - a1) / span);
+    for (let k = 1; k < nA; k++) piers.push((k / nA) * a0);
+    for (let k = 1; k < nB; k++) piers.push(a1 + (k / nB) * (c.L - a1));
+  } else if (c.lm && c.lm.span) {
     // a main span of known length, the rest of the crossing in ordinary spans either side of it
     const half = Math.min(c.lm.span, c.L - 8) / 2, mid = Math.min(c.L - half - 4, Math.max(half + 4, c.lm.s)), s0 = mid - half, s1 = mid + half;
     c.form = 'girder'; c.main = [s0, s1];
@@ -783,6 +922,40 @@ export function buildBridges(plan, H, detail, o, urban = true) {
       if (c.mate === m) { m.extL = Math.min(m.extL, -c.mateOff - c.hw); m.extR = Math.max(m.extR, -c.mateOff + c.hw); }       // (what a truss around both must span)
     }
   }
+  // A suspension bridge is carried by one of its decks (a roadway of the upper deck: the same one in every tile, since
+  // each that builds a part of it has all the decks that reach both towers); the cables stand wide enough to take in
+  // every deck, and the legs of the towers clear the roadways.
+  for (const c of chains) c.sus = null;
+  {
+    const groups = new Map();
+    for (const c of chains) if (c.sup && c.sup.whole) { if (!groups.has(c.lm.id)) groups.set(c.lm.id, []); groups.get(c.lm.id).push(c); }
+    for (const g of groups.values()) {
+      g.sort((a, b) => (b.kind === KIND_ROAD) - (a.kind === KIND_ROAD) || b.layer - a.layer || (prio(a, b) ? -1 : prio(b, a) ? 1 : 0));
+      const c = g[0], m = c.lm;
+      if (c.kind !== KIND_ROAD) continue;
+      const M = at(c, m.s), rx = -M[3], rz = M[2], decks = [];
+      for (const b of g) {
+        // where this deck lies across the carrying deck's line, at the landmark's point
+        let best = Infinity, off = 0;
+        for (let i = 0; i < b.n - 1; i++) {
+          const ax = b.X[i], az = b.Z[i], ex = b.X[i + 1] - ax, ez = b.Z[i + 1] - az, l2 = ex * ex + ez * ez || 1;
+          const t = Math.min(1, Math.max(0, ((M[0] - ax) * ex + (M[1] - az) * ez) / l2)), px = ax + ex * t - M[0], pz = az + ez * t - M[1], d = Math.hypot(px, pz);
+          if (d < best) { best = d; off = px * rx + pz * rz; }
+        }
+        if (best < 60) decks.push([off, b.hw, b.kind]);
+      }
+      let eL = Infinity, eR = -Infinity;
+      for (const [off, hw] of decks) { eL = Math.min(eL, off - hw); eR = Math.max(eR, off + hw); }
+      const mid = (eL + eR) / 2, H = m.clear + m.tall, a0 = 0.020 * H, b0 = 0.034 * H, aDeck = a0 * (1 - 0.38 * m.clear / H);
+      const roads = decks.filter((d) => d[2] === KIND_ROAD).map(([off, hw]) => [off - mid, hw]);
+      let rHalf = 0; for (const [off, hw] of roads) rHalf = Math.max(rHalf, Math.abs(off) + hw);
+      const hwC = m.tower === 'stone' ? (eR - eL) / 2 + 0.5 : Math.max((eR - eL) / 2 + 0.4, rHalf + aDeck + 0.3);
+      // the cables, across from the middle line; between the roadways, where they part enough to leave room
+      let inner = Infinity; for (const [off, hw] of roads) inner = Math.min(inner, Math.abs(off) - hw);
+      const cab = m.cables === 'pairs' ? [-hwC - 0.75, -hwC + 0.75, hwC - 0.75, hwC + 0.75] : m.cables === 'inner' && inner > 1.5 && inner < Infinity ? [-hwC, -(inner - 0.3), inner - 0.3, hwC] : [-hwC, hwC];
+      c.sus = { mid, hwC, a0, b0, H, roads, cab, ext: [eL - mid, eR - mid], hs: Math.min(18, Math.max(8, m.span / 84)), r: Math.max(0.3, m.span / 2800) };
+    }
+  }
   const isLit = (c) => c.kind === KIND_ROAD && c.rank >= 1 && c.total >= 50 && (urban || c.total >= 400);
   /** The deck through a row of stations: surface, parapets, outer faces, underside. solid: an embankment instead, walled down to the ground. */
   const deck = (c, st, solid) => {
@@ -826,6 +999,181 @@ export function buildBridges(plan, H, detail, o, urban = true) {
     }
   };
   const inTile = (x, z) => x >= 0 && x < size && z >= 0 && z < size;
+  const B = (a, b, w) => bar(o, a[0], a[1], a[2], b[0], b[1], b[2], w);
+  /**
+   * A suspension bridge, carried by chain c (see c.sus): each tower and anchorage is built by the tile it stands in,
+   * the cables, hangers and stiffening truss of a span by the tile that holds the span's middle, and the parts the
+   * flight model must know about go with them. Far away: square cables, a truss of solid sides, no hangers.
+   */
+  const suspended = (c) => {
+    const m = c.lm, U = c.sus, sty = TOWER[m.tower] || TOWER.plain, steel = m.col || c.steel, tcol = m.towerCol || steel;
+    const D = DEPTH[c.kind], depth = Math.max(m.truss, (m.deck2 || 0) + 2.5), r = U.r, H = U.H;
+    // the structure's frame at s along the chain: its middle line, the axes across and along, the deck and the ground
+    const P = (s) => { const q = at(c, s); return { s, x: q[0] - q[3] * U.mid, z: q[1] + q[2] * U.mid, rx: -q[3], rz: q[2], tx: q[2], tz: q[3], h: q[4], g: q[5] }; };
+    const X = (Q, u, y, v = 0) => [Q.x + Q.rx * u + Q.tx * v, y, Q.z + Q.rz * u + Q.tz * v];
+    const sp = c.sup.list.map((p) => ({ ...p, q: P(p.s) }));
+    const yCab = (p) => (p.t === 'tower' ? p.q.h + m.tall - 0.6 : p.t === 'center' ? p.q.h + 0.3 * m.tall : p.q.h + 3.5);
+    // the spans between, each cable a parabola: down to just over the deck in the middle of a main span; a side span
+    // sags as much less as the square of its length is (the same pull along the cable)
+    const spans = [];
+    for (let k = 0; k < sp.length - 1; k++) {
+      const A = sp[k], Bp = sp[k + 1], sa = A.s + (A.t === 'center' ? m.twin * 0.35 : 0), sb = Bp.s - (Bp.t === 'center' ? m.twin * 0.35 : 0);
+      if (sb - sa > 10) spans.push({ sa, sb, A, B: Bp, main: A.t === 'tower' && Bp.t === 'tower', ya: yCab(A), yb: yCab(Bp) });
+    }
+    const main = spans.find((q) => q.main);
+    if (!main) return;
+    const low = (q) => P((q.sa + q.sb) / 2).h + 2.2 + r, sag0 = (main.ya + main.yb) / 2 - low(main);
+    for (const q of spans) q.sag = q.main ? (q.ya + q.yb) / 2 - low(q) : sag0 * ((q.sb - q.sa) / m.span) ** 2;
+    const cableY = (q, t) => q.ya + (q.yb - q.ya) * t - 4 * q.sag * t * (1 - t);
+
+    // ---- a tower
+    const tower = (Q) => {
+      const g = Q.g, yT = Q.h + m.tall, yF = g + Math.max(5, 0.055 * H), yU = Q.h - depth - 0.6;
+      const aAt = (y) => U.a0 * (1 - 0.38 * (y - g) / H), bAt = (y) => U.b0 * (1 - 0.38 * (y - g) / H);
+      // the footing, out of the water
+      const fw = sty.stone ? U.hwC + 7 : U.hwC + U.a0 + 2.5, fb = sty.stone ? 0.105 * H + 1.5 : U.b0 + 3;
+      set(S_CONC, sty.stone ? tcol : c.conc, c.seed, 170);
+      block(o, Q.x, Q.z, Q.rx, Q.rz, fw, fb, g - 4, yF, 1.04, 1);
+      piersC.push(Q.x, Q.z, Q.rx, Q.rz, fw, fb, yF);
+      if (yT > yMax) yMax = yT;
+      if (sty.stone) {
+        // masonry: solid under the deck, a pointed arch over each roadway, a cornice
+        const W = U.hwC + 6.5, b = 0.105 * H, yA = Q.h + 0.72 * m.tall, ySp = Q.h + 0.5 * m.tall;
+        set(S_CONC, tcol, c.seed, 210);
+        block(o, Q.x, Q.z, Q.rx, Q.rz, W, b, yF, yU, 1.03, 0);
+        const holes = U.roads.map(([off, hw]) => [off - hw - 0.7, off + hw + 0.7]).sort((p, q) => p[0] - q[0]), walls = [];
+        let u = -W;
+        for (const [h0, h1] of holes) { if (h0 > u + 0.5) walls.push([u, h0]); u = Math.max(u, h1); }
+        if (W > u + 0.5) walls.push([u, W]);
+        for (const [u0, u1] of walls) { const p = X(Q, (u0 + u1) / 2, 0); block(o, p[0], p[2], Q.rx, Q.rz, (u1 - u0) / 2, b, yU, yA, 1, 0); piersC.push(p[0], p[2], Q.rx, Q.rz, (u1 - u0) / 2, b, yT); }
+        for (const [u0, u1] of holes) {
+          // the stone between the arch and the course over it: its two faces, and the arch's underside
+          const w = u1 - u0, rise = yA - ySp, R = (w * w / 4 + rise * rise) / w, cu = u0 + R, th = Math.atan2(rise, (u0 + u1) / 2 - cu), K = far ? 3 : 6, pts = [];
+          for (let k = 0; k <= K; k++) { const a = Math.PI + (th - Math.PI) * k / K; pts.push([cu + R * Math.cos(a), ySp + R * Math.sin(a), -Math.cos(a), -Math.sin(a)]); }
+          for (let k = K - 1; k >= 0; k--) { const [pu, py, nu, ny] = pts[k]; pts.push([u0 + u1 - pu, py, -nu, ny]); }
+          for (const sv of [-1, 1]) ribbon(o, pts.length, (k) => { const [pu, py] = pts[k], a = X(Q, pu, py, sv * b), e = X(Q, pu, yA, sv * b); o.v(a[0], a[1], a[2], sv * Q.tx, 0, sv * Q.tz, pu, py - yA); o.v(e[0], e[1], e[2], sv * Q.tx, 0, sv * Q.tz, pu, 0); return [sv * Q.tx, 0, sv * Q.tz]; });
+          ribbon(o, pts.length, (k) => { const [pu, py, nu, ny] = pts[k], a = X(Q, pu, py, b), e = X(Q, pu, py, -b), nx = Q.rx * nu, nz = Q.rz * nu; o.v(a[0], a[1], a[2], nx, ny, nz, pu, b); o.v(e[0], e[1], e[2], nx, ny, nz, pu, -b); return [nx, ny, nz]; });
+        }
+        block(o, Q.x, Q.z, Q.rx, Q.rz, W, b * 0.97, yA, yT - 3.5, 1, 0);
+        block(o, Q.x, Q.z, Q.rx, Q.rz, W * 1.025, b * 1.02, yT - 3.5, yT, 1, 1);
+        const e0 = X(Q, -W, 0), e1 = X(Q, W, 0);
+        segs.push(e0[0], e0[2], yT, e1[0], e1[2], yT, b, yT - yA, 0);
+        return;
+      }
+      set(S_STEEL, tcol, c.seed, 255);
+      const levels = sty.struts.map((f) => Q.h + f * m.tall), dep = (k) => (k === levels.length - 1 ? 0.05 : 0.032) * H;
+      // the legs: stepping in at each strut, open steelwork, or a straight taper
+      for (const sd of [-1, 1]) {
+        const L0 = X(Q, sd * U.hwC, 0), lx = L0[0], lz = L0[2];
+        if (sty.open && !far) {
+          const n = Math.max(3, Math.round((yT - yF) / (2.4 * U.b0))), w = 0.0045 * H + 0.25;
+          const k4 = (y, su, sv) => [lx + Q.rx * su * aAt(y) + Q.tx * sv * bAt(y), y, lz + Q.rz * su * aAt(y) + Q.tz * sv * bAt(y)];
+          const faces = [[[1, 1], [1, -1]], [[1, -1], [-1, -1]], [[-1, -1], [-1, 1]], [[-1, 1], [1, 1]]];
+          for (const [p] of faces) B(k4(yF, ...p), k4(yT, ...p), w * 1.8);
+          for (let k = 0; k < n; k++) {
+            const ya = yF + (yT - yF) * k / n, yb = yF + (yT - yF) * (k + 1) / n;
+            for (const [p, q] of faces) { B(k4(ya, ...p), k4(yb, ...q), w); B(k4(ya, ...q), k4(yb, ...p), w); }
+          }
+          block(o, lx, lz, Q.rx, Q.rz, aAt(yT), bAt(yT), yT - 1.5, yT, 1, 1);
+        } else if (sty.steps && !far) {
+          const ys = [yF, ...levels];
+          for (let k = 0; k < ys.length - 1; k++) {
+            const st = k < ys.length - 2 ? 1.05 : 1;
+            block(o, lx, lz, Q.rx, Q.rz, aAt(ys[k + 1]) * st, bAt(ys[k + 1]) * st, ys[k], ys[k + 1], aAt(ys[k]) / (aAt(ys[k + 1]) * st), k === ys.length - 2 ? 1 : 0);
+          }
+        } else block(o, lx, lz, Q.rx, Q.rz, aAt(yT), bAt(yT), yF, yT, aAt(yF) / aAt(yT), 1);
+        piersC.push(lx, lz, Q.rx, Q.rz, aAt(yF), bAt(yF), yT);
+      }
+      // the struts between the legs over the deck, one under it, and the crosses
+      const strut = (y, d) => {
+        block(o, Q.x, Q.z, Q.rx, Q.rz, U.hwC - aAt(y) * 0.5, bAt(y) * 0.72, y - d, y, 1, 3);
+        const e0 = X(Q, -U.hwC, 0), e1 = X(Q, U.hwC, 0);
+        segs.push(e0[0], e0[2], y, e1[0], e1[2], y, bAt(y) * 0.72, d, 0);
+      };
+      const cross = (y0, y1, w) => { const u0 = U.hwC - aAt(y0) * 0.9, u1 = U.hwC - aAt(y1) * 0.9; for (const sd of [-1, 1]) B(X(Q, -sd * u0, y0), X(Q, sd * u1, y1), w); };
+      levels.forEach((y, k) => strut(y, dep(k)));
+      if (sty.x) for (let k = 0; k < levels.length - 1; k++) cross(levels[k], levels[k + 1] - dep(k + 1), 0.007 * H + 0.3);
+      const yS = yU - 0.03 * H;
+      if (yS > yF + 4) {
+        strut(yU, 0.03 * H);
+        if (sty.below === 'x' && yS - yF > 12) cross(yF + 1, yS, 0.011 * H);
+      }
+    };
+
+    // ---- an anchorage, where the cables come down: under the deck, and a block either side of it for the cables
+    // (between two spans end to end, a beam over the roadway joins the two)
+    const anchor = (Q, center, yC) => {
+      const aL = center ? m.twin / 2 : 0.012 * m.span + 10, half = U.hwC + 3, yD = Q.h - (center ? depth : D) - 0.2;
+      set(S_CONC, sty.stone ? tcol : c.conc, c.seed, 170);
+      if (yD - Q.g > 1) { block(o, Q.x, Q.z, Q.rx, Q.rz, half, aL, Q.g - 3, yD, 1.02, 0); piersC.push(Q.x, Q.z, Q.rx, Q.rz, half, aL, yD); }
+      const pa = center ? 3.2 : 1.8, pb = center ? aL * 0.8 : 3.5;
+      for (const sd of [-1, 1]) {
+        const p = X(Q, sd * U.hwC, 0);
+        block(o, p[0], p[2], Q.rx, Q.rz, pa, pb, Math.min(yD, Q.h - depth), yC + 1.5, 1, 1);
+        piersC.push(p[0], p[2], Q.rx, Q.rz, pa, pb, yC + 1.5);
+      }
+      if (center) { block(o, Q.x, Q.z, Q.rx, Q.rz, U.hwC, 2.5, yC - 3.5, yC + 1.5, 1, 3); const e0 = X(Q, -U.hwC, 0), e1 = X(Q, U.hwC, 0); segs.push(e0[0], e0[2], yC + 1.5, e1[0], e1[2], yC + 1.5, 2.5, 5, 0); }
+    };
+
+    // ---- a span: cables, hangers (and stays), the stiffening truss under the deck, the floor out to it
+    const span = (q) => {
+      const len = q.sb - q.sa, nH = Math.max(2, Math.round(len / U.hs)), nC = q.main ? (far ? 16 : 40) : (far ? 6 : 14);
+      set(S_STEEL, steel, c.seed, 255);
+      const cs = [];
+      for (let k = 0; k <= nC; k++) { const t = k / nC; cs.push([P(q.sa + len * t), cableY(q, t)]); }
+      for (const d of U.cab) {
+        const pts = cs.map(([f, y]) => [f.x + f.rx * d, y, f.z + f.rz * d]);
+        if (far) for (let k = 0; k < nC; k++) B(pts[k], pts[k + 1], 3.2 * r);
+        else tube(o, pts, r, 6);
+        for (let k = 0; k < nC; k++) { const a = pts[k], b = pts[k + 1]; segs.push(a[0], a[2], a[1] + r, b[0], b[2], b[1] + r, r + 0.4, 2 * r + 0.4, 0); }
+      }
+      for (const [, y] of cs) if (y > yMax) yMax = y;
+      const fs = []; for (let k = 0; k <= nH; k++) fs.push(P(q.sa + len * k / nH));
+      if (!far) for (let k = 1; k < nH; k++) {
+        const f = fs[k], yc = cableY(q, k / nH) - r * 0.8;
+        for (const d of U.cab) { const yd = Math.abs(d) < U.hwC - 1 ? f.h : f.h - 0.35; if (yc - yd > 0.6) B([f.x + f.rx * d, yd, f.z + f.rz * d], [f.x + f.rx * d, yc, f.z + f.rz * d], 0.22); }
+      }
+      if (m.stays) {
+        // stays fanning from the tops of the towers down to the deck
+        const step = far ? 4 : 2, reach = q.main ? 0.36 : 0.62;
+        for (const [p, e] of [[q.A, 0], [q.B, 1]]) {
+          if (p.t !== 'tower') continue;
+          const yt = p.q.h + m.tall - 2.5;
+          for (let k = step; k < nH && k / nH < reach; k += step) { const f = fs[e ? nH - k : k]; for (const d of U.cab) B(X(p.q, d, yt), [f.x + f.rx * d, f.h - 0.3, f.z + f.rz * d], far ? 0.35 : 0.16); }
+        }
+      }
+      // the stiffening truss: posts, chords and diagonals each side, struts across under the floor; far off, two solid sides
+      if (far) {
+        const nF = Math.max(2, Math.round(len / 60)), gs = []; for (let k = 0; k <= nF; k++) gs.push(P(q.sa + len * k / nF));
+        for (const sd of [-1, 1]) ribbon(o, nF + 1, (k) => { const f = gs[k], x = f.x + f.rx * sd * U.hwC, z = f.z + f.rz * sd * U.hwC; o.v(x, f.h - 0.35, z, sd * f.rx, 0, sd * f.rz, f.s, 0); o.v(x, f.h - depth, z, sd * f.rx, 0, sd * f.rz, f.s, 0.35 - depth); return [sd * f.rx, 0, sd * f.rz]; });
+        set(S_SOFFIT, c.conc, c.seed, 60);
+        ribbon(o, nF + 1, (k) => { const f = gs[k], a = X(f, -U.hwC, f.h - depth), b = X(f, U.hwC, f.h - depth); o.v(a[0], a[1], a[2], 0, -1, 0, -U.hwC, f.s); o.v(b[0], b[1], b[2], 0, -1, 0, U.hwC, f.s); return [0, -1, 0]; });
+      } else {
+        const T = (f, sd, lo) => X(f, sd * U.hwC, lo ? f.h - depth : f.h - 0.35);
+        for (const sd of [-1, 1]) for (let k = 0; k <= nH; k++) {
+          B(T(fs[k], sd, 1), T(fs[k], sd, 0), 0.4);
+          if (k === nH) continue;
+          B(T(fs[k], sd, 0), T(fs[k + 1], sd, 0), 0.6); B(T(fs[k], sd, 1), T(fs[k + 1], sd, 1), 0.6);
+          B(T(fs[k], sd, k & 1), T(fs[k + 1], sd, (k & 1) ^ 1), 0.34);
+        }
+        for (let k = 0; k <= nH; k += 2) B(T(fs[k], -1, 1), T(fs[k], 1, 1), 0.34);
+        set(S_SOFFIT, c.conc, c.seed, 60);
+        ribbon(o, nH + 1, (k) => { const f = fs[k], y = f.h - D - 0.6, a = X(f, -U.hwC, y), b = X(f, U.hwC, y); o.v(a[0], a[1], a[2], 0, -1, 0, -U.hwC, f.s); o.v(b[0], b[1], b[2], 0, -1, 0, U.hwC, f.s); return [0, -1, 0]; });
+      }
+      // the floor between the outermost deck and the truss
+      set(S_STEEL, steel, c.seed, 255);
+      for (const [e0, e1] of [[U.ext[1], U.hwC], [-U.hwC, U.ext[0]]]) {
+        if (e1 - e0 < 0.3) continue;
+        ribbon(o, nH + 1, (k) => { const f = fs[k], a = X(f, e0, f.h - 0.3), b = X(f, e1, f.h - 0.3); o.v(a[0], a[1], a[2], 0, 1, 0, e0, f.s); o.v(b[0], b[1], b[2], 0, 1, 0, e1, f.s); return [0, 1, 0]; });
+      }
+      // for the flight model: the truss under the deck, the width of it
+      const nS = Math.max(1, Math.round(len / 50));
+      for (let k = 0; k < nS; k++) { const a = P(q.sa + len * k / nS), b = P(q.sa + len * (k + 1) / nS); segs.push(a.x, a.z, a.h - 0.35, b.x, b.z, b.h - 0.35, U.hwC + 0.5, depth - 0.35, 1.5); }
+    };
+
+    for (const p of sp) if (inTile(p.q.x, p.q.z)) { if (p.t === 'tower') tower(p.q); else anchor(p.q, p.t === 'center', yCab(p)); }
+    for (const q of spans) { const M = P((q.sa + q.sb) / 2); if (inTile(M.x, M.z)) span(q); }
+  };
   for (let pass = 0; pass < 2; pass++) {
     o.quadrant(pass);
     for (const c of chains) {
@@ -985,6 +1333,7 @@ export function buildBridges(plan, H, detail, o, urban = true) {
           segs.push(ax, az, A[4], bx, bz, B[4], hw + 2.5, DEPTH[c.kind], tall + 1); if (Math.max(A[4], B[4]) + tall + 1 > yMax) yMax = Math.max(A[4], B[4]) + tall + 1;
         }
       }
+      if (c.sus) suspended(c);
       // ---- lamps along a road bridge
       if (isLit(c)) {
         const gap = 42, cnt = Math.floor((c.L - 10) / gap) + 1, s1 = (c.L - (cnt - 1) * gap) / 2;

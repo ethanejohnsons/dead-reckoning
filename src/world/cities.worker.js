@@ -18,7 +18,7 @@
 //       { type: 'built', id, chunks, coll, shade, lamps, count, bridge: true, ms }
 //       { type: 'failed', id, key, level, quad, error }
 
-import { parseTile, parseOverture, buildLevel, Out } from './citybuild.js';
+import { parseTile, parseOverture, clearOfTowers, buildLevel, Out } from './citybuild.js';
 import { assemble, buildBridges } from './bridgebuild.js';
 import { archive } from './overture.js';
 
@@ -162,7 +162,7 @@ self.onmessage = async (e) => {
   if (job.type !== 'build') return;
   try {
     const [got, ov] = await Promise.all([getTile(job), overtureBuildings(job)]);
-    const tile = ov.blds ? { ...got.tile, blds: ov.blds, tall: ov.tall } : got.tile;
+    const tile = ov.blds ? { ...got.tile, blds: clearOfTowers(ov.blds, got.tile.br, job.x, job.y, job.size), tall: ov.tall } : got.tile;     // (the bridges come from the first tile)
     const bytes = got.bytes + (ov.bytes || 0), tf = Math.max(got.fetch, ov.fetch || 0), parse = (got.parse || 0) + (ov.parse || 0);
     const t0 = performance.now();
     let skip = null;

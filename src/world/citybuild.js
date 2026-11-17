@@ -22,7 +22,7 @@
 
 import earcut from 'three/src/extras/lib/earcut.js';
 import { decodeTile, ringArea2 } from './mvt.js';
-import { parseBridges } from './bridgebuild.js';
+import { parseBridges, towerSites, byTower } from './bridgebuild.js';
 
 export const TALL = 35, MID_AREA = 350, MID_H = 12;
 const CHUNK = 60000;
@@ -184,9 +184,23 @@ export function parseTile(buf, size, tx, ty) {
     for (const g of f.geom) { if (g.length < 4) continue; const p = new Float32Array(g.length); for (let i = 0; i < g.length; i++) p[i] = g[i] * k; roads.push({ p, hw: f.props.ramp ? w[0] * 0.75 : w[0], rank: w[1], cls, one, ramp: f.props.ramp ? 1 : 0 }); }
   }
   if (L) addBuildings(L, size, blds);
+  clearOfTowers(blds, br, tx, ty, size);
   classify(blds, size, tx, ty);
   let tall = 0; for (const b of blds) if (b.top >= TALL) tall++;
   return { blds, roads, size, tall, br, water };
+}
+
+/**
+ * Leave out (in place) the buildings that stand on a suspension bridge's towers or anchorages: the map has some there,
+ * and the bridge builds its own towers (world/bridgebuild.js). br: the tile's bridges, from parseTile. Returns blds.
+ */
+export function clearOfTowers(blds, br, tx, ty, size) {
+  const sites = towerSites(br, tx, ty, size);
+  if (!sites.length) return blds;
+  let n = 0;
+  for (const b of blds) if (!byTower(sites, br, b.cx, b.cz)) blds[n++] = b;
+  blds.length = n;
+  return blds;
 }
 
 /**

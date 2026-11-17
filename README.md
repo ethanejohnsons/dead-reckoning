@@ -223,8 +223,13 @@ railroad and sidewalk the map marks as a bridge is a deck on piers, strung
 between its abutments and held clear of the water, roads and lower decks
 beneath it. High road bridges get arches, railroads over water a truss, and a
 short table of named crossings (the Duluth lift bridge, the Blatnik, St. Paul's
-Robert Street bridge and a few more) supplies what the map cannot. You can fly under a
-deck; hitting one, or a pier, ends the flight.
+Robert Street bridge and a few more) supplies what the map cannot. The great
+suspension bridges are in that table too, with their real spans, tower heights,
+deck clearances and colors: the Golden Gate, the western Bay Bridge, Mackinac,
+Brooklyn, the George Washington, the Verrazzano-Narrows and both Tacoma Narrows
+spans. Each gets its towers, main cables, hangers and stiffening truss, and a
+lighter version of all of them from far away. You can fly under a deck;
+hitting one, a pier, a tower or a cable ends the flight.
 
 The tiles are © [OpenMapTiles](https://www.openmaptiles.org), with data
 © OpenStreetMap contributors under the ODbL. Overture's buildings are under the
