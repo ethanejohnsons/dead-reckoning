@@ -112,8 +112,8 @@ export class FlightPanel {
       // Near the stall: within a few degrees of the angle where the wing lets go, or flying barely faster than
       // the speed at which it would in level flight. (The stalling angle, 15.5 degrees clean and 13 with full
       // flap, and the flaps' lift are the flight model's own numbers, repeated here.)
-      const aStall = 15.5 - 2.5 * ac.flap, clMax = SPEC.CL0 + 0.7 * ac.flap + (SPEC.CLa * aStall) / R2D;
-      const vStall = Math.sqrt((2 * SPEC.mass * G) / (RHO0 * SPEC.S * clMax));
+      const sp = ac.spec || SPEC, aStall = sp.aStall - 2.5 * ac.flap, clMax = sp.CL0 + 0.7 * ac.flap + (sp.CLa * aStall) / R2D;
+      const vStall = Math.sqrt((2 * sp.mass * G) / (RHO0 * sp.S * clMax));
       const spd = !air ? '' : ac.stall > 0.45 ? 'alert' : ac.stall > 0.03 || aStall - ac.alpha * R2D < 2.5 || ac.ias < vStall * 1.06 ? 'caution' : '';
       // Sinking fast near the ground: seconds to the ground at this rate.
       const sink = -ac.vel.y, tti = sink > 0.5 ? ac.agl / sink : 1e9;
