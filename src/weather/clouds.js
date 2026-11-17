@@ -69,6 +69,7 @@ struct Site {
   vec2 warp; float aged, meso, rough, vary;    // bend of the sampling domain (m), how old this patch of cloud is, clustering at a few km, how knobbly, slow swell in amount
   float lo, hi, alo, ahi;                      // altitudes between which there can be cloud, and a second such band above (an anvil), if alo < ahi
   float fog, ftop;                             // how far inside a fog bank this is (0: outside), and the bank's top (m)
+  float fresh;                                 // how much of the layer's cover here is still forming (Weather.M, FORM_TIME): 0 grown .. 1 just come
 };
 Site getSite(vec3 p) {
   vec2 uv = p.xz / (2.0 * uWxHalf) + 0.5;
@@ -79,7 +80,7 @@ Site getSite(vec3 p) {
   const vec4 c = vec4(CELL_R1 + 0.1, CELL_R1 + 0.1, 0.0, 0.064);      // (no storm cells anywhere: the compiler drops all they would do)
   #endif
   Site s;
-  s.cov = a.r; s.conv = a.g; s.precip = a.b; s.base = b.r * TEX_ALT; s.top = b.g * TEX_ALT;
+  s.cov = a.r; s.conv = a.g; s.precip = a.b; s.base = b.r * TEX_ALT; s.top = b.g * TEX_ALT; s.fresh = b.a;
   // Fog banks are drawn from their own outlines (see fogDensity), not from the weather map: the map can only say
   // "layer cloud with its base at sea level" two kilometers to the texel, which climbs the hillsides and stops at
   // valley mouths. Inside a bank and for a few kilometers around it the map's layer is that stand-in, and is dropped.
@@ -142,6 +143,7 @@ Site mixSite(Site a, Site b, float k) {
   s.rho = mix(a.rho, b.rho, k); s.rhoA = mix(a.rhoA, b.rhoA, k); s.ph = mix(a.ph, b.ph, k);
   s.cwb = mix(a.cwb, b.cwb, k); s.ctop = mix(a.ctop, b.ctop, k); s.cw = mix(a.cw, b.cw, k);
   s.fog = mix(a.fog, b.fog, k); s.ftop = a.fog > 0.0 ? (b.fog > 0.0 ? mix(a.ftop, b.ftop, k) : a.ftop) : b.ftop;
+  s.fresh = mix(a.fresh, b.fresh, k);
   return s;
 }
 
@@ -247,6 +249,10 @@ float layerDensity(vec3 p, Site s, float fp, int tier) {
   // How far the lobes are wisps instead of billows.
   float tw = mix(mix(0.7 - 0.45 * topz, 0.06 + 0.8 * soft * (1.0 - 0.8 * s.cw) + 0.45 * (1.0 - smoothstep(0.0, 160.0, hm)), cve), 1.0, max(anv * (1.0 - und), scud));
   tw = clamp(mix(tw, 0.0, und), 0.0, 1.0);
+  // Cloud that is still forming (not a storm cell: those grow up by their own stages) starts as wisps, a soft and thin
+  // haze of them, and fills out into its finished shape: it does not appear whole where the sky was clear.
+  float form = s.fresh * (1.0 - s.cw);
+  tw = mix(tw, 1.0, 0.75 * form);
   float topw = mix(0.35, 1.0, max(smoothstep(0.0, 250.0, hm), cve)) * (1.0 - 0.55 * deep * (1.0 - s.cw) * smoothstep(0.7, 0.9, hh)) * (1.0 - 0.5 * anv);
   float eL = mix(${LOBE_AMP[0]}, ${LOBE_AMP[1]}, cve) * topw * mix(0.6, 1.35, s.rough) * (1.0 + 0.35 * tw) * (1.0 - 0.1 * s.cw) * (1.0 - 0.7 * und), eF = ${FINE_AMP} * eL;
   // What a lobe octave takes away, 0..1, from its value v. A billow is a round head: what it takes away
@@ -269,7 +275,7 @@ float layerDensity(vec3 p, Site s, float fp, int tier) {
   float crisp = cve * smoothstep(0.0, 160.0, hm) * (1.0 - anv) * (1.0 - 0.6 * tw);
   float young = (1.0 - soft) * mix(0.75 + 0.25 * smoothstep(0.15, 0.7, hh), 1.0, s.cw);
   float edge = mix(mix(0.14, 0.03, smoothstep(0.45, 0.85, hh) * (1.0 - anv)), mix(0.08, 0.009, young), crisp);   // (the top of a layer is sharp too, under its inversion)
-  edge = max(edge * (1.0 + 0.6 * lod), gPix * 0.0028);
+  edge = max(edge * (1.0 + 0.6 * lod) * (1.0 + 6.0 * form), gPix * 0.0028);
   // The lobes matter only within their reach of the surface.
   bool skin = y < eL + eF + edge;
   float cutL = cutAvg, cutF = cutAvg;
@@ -298,7 +304,7 @@ float layerDensity(vec3 p, Site s, float fp, int tier) {
   gCrease = clamp((eL * cutL + eF * cutF) / max(eL + eF, 0.001), 0.0, 1.0); gAnvil = anv; gH = hh;
   float x = min(y / edge, 1.0);
   x *= 0.3 + 0.7 * x;                                          // (thin at first: the outermost of the fringe is haze, not wall)
-  return x * SIGMA * mix(0.75, 1.35, cve) * mix(1.0, 0.8 + 0.45 * hh, cve) * (1.0 - 0.7 * anv);
+  return x * SIGMA * mix(0.75, 1.35, cve) * mix(1.0, 0.8 + 0.45 * hh, cve) * (1.0 - 0.7 * anv) * (1.0 - 0.7 * form);
 }
 
 // Fog: a bank standing on the ground and the water, as deep as its top allows, so valleys and lakes fill and

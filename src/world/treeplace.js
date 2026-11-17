@@ -7,6 +7,7 @@
 //   P     { CELL, PATCH, GRID, FAR_SIZE, FAR_POOL }: the layout constants of trees.js
 //   env   { m: [m00, m10, m01, m11]   moisture at the patch's four corners (terrain.moisture)
 //           tl                        the tree line at the patch's middle (terrain.treeline), m
+//           sea                       how far the region's woods are a wet coast's (terrain.oceanWoods)
 //           towny                     does a town touch the patch (towns.townsIn)
 //           urban }                   the towns' built-up density under it (see urbanAt in patchbuild.js)
 
@@ -103,7 +104,11 @@ function propose(P, x0, z0, H, W, GN, step, flats, share, env) {
     else if (r3 < wet || h > tl - 1760) {
       // woods: spruce, fir and pine on the mountains and through the north woods, with aspen and birch among them;
       // oak, maple and ash in the Midwest; everything smaller toward the tree line
-      const conif = clamp(smoothstep(tl - 1760, tl - 1160, h) + 0.45 * smoothstep(0.7, 0.86, m), 0, 1), high = smoothstep(tl - 320, tl - 60, h);
+      // (The conifers' band begins 1760 m under the tree line in the high West; where the tree line is low it is a
+      // share of it, so New England's hills are maple, beech and birch up to about 700 m and spruce and fir above,
+      // unless the tree line is lower still, in the boreal north, where the spruce come down to the lowlands.)
+      const cDrop = Math.min(1760, 0.5 * tl + 900 * smoothstep(1300, 900, tl)), cBand = Math.min(600, 0.25 * tl);
+      const conif = clamp(smoothstep(tl - cDrop, tl - cDrop + cBand, h) + 0.45 * (env.sea ?? 1) * smoothstep(0.7, 0.86, m), 0, 1), high = smoothstep(tl - 320, tl - 60, h);
       if (r4 < conif * 0.85) vi = r2 < 0.38 ? 11 : r2 < 0.62 ? 7 : r2 < 0.8 ? 8 : 9;
       else if (r4 > 0.93 - 0.3 * high || grown < 0.2) vi = conif > 0.5 ? 12 : 5;
       else vi = r2 < 0.3 ? 0 : r2 < 0.55 ? 1 : r2 < 0.75 ? 14 : r2 < 0.92 ? 15 : 2;

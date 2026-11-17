@@ -201,6 +201,51 @@ export function waterMask(z, x, y, h) {
       if (!add.length) break;
       for (const k of add) w[k] = 1;
     }
+    // 4b. Along some coasts (Maine's) the sea is not leveled at all: it is a smooth sheet wandering a meter either
+    // side of zero, interpolated between soundings, with level patches here and there. The ramps between them, left
+    // as land, drew the patches' outlines across open water as lines of surf. Such a ramp is glassy: it bends by a
+    // few centimeters a pixel at most, where the land round Frenchman Bay bends by tens of centimeters. So the sea
+    // floods on, as far as it likes, over ground as low as the shore rule allows that is that smooth.
+    if (!terraced) {
+      // (The test is per pixel, and the fill spreads only where most pixels pass: on the Chesapeake's marshes, as low and
+      // nearly as smooth, a fifth to a third of them pass at this bend, not enough to carry it; on Maine's sea, three quarters.)
+      const bend = 0.015;
+      // (the bend across three pixels, moved inward at the tile's edge)
+      const smooth = (k, i, j) => {
+        const a = k + (i === 0 ? 1 : i === N - 1 ? -1 : 0), b = k + (j === 0 ? N : j === N - 1 ? -N : 0);
+        return Math.abs(h[a - 1] + h[a + 1] - 2 * h[a]) < bend && Math.abs(h[b - N] + h[b + N] - 2 * h[b]) < bend;
+      };
+      let top = 0;
+      for (let k = 0; k < NN; k++) if (w[k] === 1 && h[k] <= shore) stack[top++] = k;
+      while (top) {
+        const k = stack[--top], i = k & 255, j = k >> 8;
+        const go = (q, qi, qj) => { if (!w[q] && h[q] <= shore && smooth(q, qi, qj)) { w[q] = 1; stack[top++] = q; } };
+        if (i > 0) go(k - 1, i - 1, j);
+        if (i < N - 1) go(k + 1, i + 1, j);
+        if (j > 0) go(k - N, i, j - 1);
+        if (j < N - 1) go(k + N, i, j + 1);
+      }
+      // and what is left between the patches, where the sheet steps by a few centimeters: low ground in small
+      // pieces with sea all round (nothing higher than the shore rule touches them, and they stop short of the tile's edge)
+      seen.fill(0);
+      const piece = [];
+      for (let k0 = 0; k0 < NN; k0++) {
+        if (w[k0] || seen[k0] || h[k0] > shore) continue;
+        piece.length = 0; seen[k0] = 1; top = 0; stack[top++] = k0;
+        let open = false;
+        while (top) {
+          const k = stack[--top], i = k & 255, j = k >> 8;
+          piece.push(k);
+          if (i === 0 || i === N - 1 || j === 0 || j === N - 1) open = true;
+          for (const q of [i > 0 ? k - 1 : -1, i < N - 1 ? k + 1 : -1, j > 0 ? k - N : -1, j < N - 1 ? k + N : -1]) {
+            if (q < 0 || w[q] || seen[q]) continue;
+            if (h[q] > shore) { open = true; continue; }
+            seen[q] = 1; stack[top++] = q;
+          }
+        }
+        if (!open && piece.length <= 64) for (const k of piece) w[k] = 1;
+      }
+    }
   }
   return w;
 }

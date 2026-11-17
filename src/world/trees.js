@@ -31,7 +31,7 @@ import { mulberry32, smoothstep, clamp } from '../core/noise.js';
 import { ENV } from '../core/env.js';
 import * as dem from './dem.js';
 import { LAND_HALF, WORLD_HALF, metersPerPixel } from './geo.js';
-import { flatWeight, flatsIn, applyFlats, treeline, moisture } from './terrain.js';
+import { flatWeight, flatsIn, applyFlats, treeline, oceanWoods, moisture } from './terrain.js';
 import { townsIn, urbanDensity } from './towns.js';
 import { SKY_SH_GLSL } from './atmosphere.js';
 import { BUILDING_COVER_GLSL } from './cities.js';
@@ -354,16 +354,17 @@ const ring = (B, H, n, y0, y1, d0, d1, rx, ry) => Array.from({ length: n }, (_, 
 });
 
 // leaf and bark colors are linear albedo; tint is how far the foliage follows the color of the picture under it;
-// dense is how fast light dies inside the crown's masses (per meter).
+// dense is how fast light dies inside the crown's masses (per meter); fall and fall2, on the trees that lose their
+// leaves, the two colors they turn (each tree takes one, see treeLeaf).
 const SPECIES = [
   // 0-2 broadleaved forest trees (oak, maple, ash): tiers of fine foliage, very dark; the third is the tall, high-crowned forest form
-  { leaf: [0.068, 0.112, 0.036], bark: [0.085, 0.075, 0.06], tint: 0.6,
+  { leaf: [0.068, 0.112, 0.036], bark: [0.085, 0.075, 0.06], tint: 0.6, fall: [0.34, 0.11, 0.03], fall2: [0.42, 0.19, 0.04],
     make: () => lobed(11, { dense: 0.28, H: 21, trunkR: 0.34, trunkTop: 0.72, cr: 0.095, per: 11, twigs: 0.2, leaf: { cards: 5, flat: 0.3, tile: 0 },
       lobes: (B, H) => [[B.r(-1, 1), H * 0.77, B.r(-1, 1), H * 0.2, H * 0.17, H * 0.2], ...ring(B, H, 5, 0.45, 0.66, 0.14, 0.21, 0.18, 0.15)] }) },
-  { leaf: [0.063, 0.106, 0.037], bark: [0.085, 0.075, 0.06], tint: 0.6,
+  { leaf: [0.063, 0.106, 0.037], bark: [0.085, 0.075, 0.06], tint: 0.6, fall: [0.42, 0.08, 0.03], fall2: [0.52, 0.23, 0.03],
     make: () => lobed(12, { dense: 0.28, H: 18, trunkR: 0.3, trunkTop: 0.7, cr: 0.1, per: 11, twigs: 0.2, leaf: { cards: 5, flat: 0.3, tile: 0 },
       lobes: (B, H) => [[H * 0.07, H * 0.79, -H * 0.03, H * 0.2, H * 0.16, H * 0.2], [-H * 0.12, H * 0.68, H * 0.08, H * 0.18, H * 0.15, H * 0.18], ...ring(B, H, 4, 0.42, 0.6, 0.18, 0.25, 0.19, 0.155)] }) },
-  { leaf: [0.070, 0.110, 0.034], bark: [0.09, 0.08, 0.065], tint: 0.6,
+  { leaf: [0.070, 0.110, 0.034], bark: [0.09, 0.08, 0.065], tint: 0.6, fall: [0.46, 0.31, 0.04], fall2: [0.30, 0.09, 0.06],
     make: () => lobed(13, { dense: 0.28, H: 25, trunkR: 0.36, trunkTop: 0.8, cr: 0.078, per: 11, twigs: 0.25, leaf: { cards: 5, flat: 0.3, tile: 0 },
       lobes: (B, H) => [[B.r(-1, 1), H * 0.83, B.r(-1, 1), H * 0.16, H * 0.13, H * 0.16], ...ring(B, H, 4, 0.6, 0.76, 0.1, 0.16, 0.14, 0.12)] }) },
   // 3-4 tall forest conifers: one with hanging foliage (hemlock, cedar) and a narrow one, both standing above the canopy
@@ -374,7 +375,7 @@ const SPECIES = [
     make: () => lobed(22, { dense: 0.24, H: 28, trunkR: 0.36, trunkTop: 0.93, cr: 0.058, per: 8, twigs: 0.5, leaf: { cards: 4, flat: 0.3, tile: 0 },
       lobes: (B, H) => Array.from({ length: 8 }, (_, i) => { const t = i / 7, a = i * 2.4, d = H * (0.13 - 0.1 * t); return [Math.cos(a) * d, H * (0.46 + 0.5 * t), Math.sin(a) * d, H * (0.1 - 0.035 * t), H * 0.07, H * (0.1 - 0.035 * t)]; }) }) },
   // 5 small broadleaved understory tree, 6 brush (juniper and sagebrush country): gray-green, rounded, many stems
-  { leaf: [0.076, 0.132, 0.041], bark: [0.08, 0.07, 0.055], tint: 0.6,
+  { leaf: [0.076, 0.132, 0.041], bark: [0.08, 0.07, 0.055], tint: 0.6, fall: [0.40, 0.09, 0.03], fall2: [0.46, 0.17, 0.03],
     make: () => lobed(31, { dense: 0.37, H: 8.5, trunkR: 0.16, trunkTop: 0.55, cr: 0.16, per: 8, twigs: 0.1, leaf: { cards: 4, flat: 0.2, tile: 1 },
       lobes: (B, H) => [[0, H * 0.72, 0, H * 0.3, H * 0.24, H * 0.3], ...ring(B, H, 4, 0.42, 0.58, 0.22, 0.3, 0.27, 0.2)] }) },
   { leaf: [0.080, 0.108, 0.052], bark: [0.11, 0.095, 0.08], tint: 0.4,
@@ -396,16 +397,16 @@ const SPECIES = [
   { leaf: [0.038, 0.078, 0.054], bark: [0.075, 0.06, 0.05], tint: 0.25,
     make: () => whorled(61, { dense: 0.37, H: 31, trunkR: 0.34, base: 0.16, spread: 0.2, pow: 0.72, step: 0.05, per: 5, rise: -0.22, width: 0.4, gaps: 0.08 }) },
   // 12 Lombardy poplar (it also stands in for aspen and birch), 13 willow, 14-15 broad field and town trees (ash, cottonwood)
-  { leaf: [0.110, 0.175, 0.052], bark: [0.16, 0.15, 0.13], tint: 0.35,
+  { leaf: [0.110, 0.175, 0.052], bark: [0.16, 0.15, 0.13], tint: 0.35, fall: [0.48, 0.36, 0.05], fall2: [0.46, 0.29, 0.04],
     make: () => lobed(71, { dense: 0.28, H: 27, trunkR: 0.3, trunkTop: 0.95, cr: 0.045, per: 9, twigs: 0, leaf: { cards: 3, upright: 0.85, tall: 1.7, tile: 1 },
       lobes: (B, H) => Array.from({ length: 7 }, (_, i) => { const t = i / 6, w = 0.058 * Math.pow(Math.sin(Math.PI * (0.12 + 0.82 * Math.pow(t, 0.8))), 0.6) + 0.01; return [B.r(-0.3, 0.3), H * (0.17 + 0.76 * t), B.r(-0.3, 0.3), H * w, H * 0.085, H * w]; }) }) },
-  { leaf: [0.136, 0.195, 0.080], bark: [0.12, 0.11, 0.095], tint: 0.35,
+  { leaf: [0.136, 0.195, 0.080], bark: [0.12, 0.11, 0.095], tint: 0.35, fall: [0.28, 0.26, 0.05], fall2: [0.30, 0.23, 0.04],
     make: () => lobed(81, { dense: 0.26, H: 13, trunkR: 0.34, trunkTop: 0.4, cr: 0.12, per: 8, twigs: 0.3, leaf: { cards: 2, flat: 0.5, tile: 0, hang: 2, hangLen: 2.3 },
       lobes: (B, H) => [[0, H * 0.78, 0, H * 0.3, H * 0.19, H * 0.3], ...ring(B, H, 5, 0.58, 0.7, 0.26, 0.34, 0.27, 0.18)] }) },
-  { leaf: [0.086, 0.150, 0.043], bark: [0.095, 0.085, 0.07], tint: 0.4,
+  { leaf: [0.086, 0.150, 0.043], bark: [0.095, 0.085, 0.07], tint: 0.4, fall: [0.42, 0.32, 0.05], fall2: [0.40, 0.24, 0.04],
     make: () => lobed(91, { dense: 0.30, H: 16, trunkR: 0.4, trunkTop: 0.55, cr: 0.11, per: 12, twigs: 0.15, leaf: { cards: 4, tile: 1 },
       lobes: (B, H) => [[0, H * 0.76, 0, H * 0.27, H * 0.2, H * 0.27], ...ring(B, H, 5, 0.46, 0.64, 0.2, 0.28, 0.24, 0.19)] }) },
-  { leaf: [0.078, 0.140, 0.046], bark: [0.095, 0.085, 0.07], tint: 0.4,
+  { leaf: [0.078, 0.140, 0.046], bark: [0.095, 0.085, 0.07], tint: 0.4, fall: [0.44, 0.31, 0.05], fall2: [0.48, 0.22, 0.04],
     make: () => lobed(92, { dense: 0.30, H: 12.5, trunkR: 0.34, trunkTop: 0.5, cr: 0.13, per: 11, twigs: 0.15, leaf: { cards: 4, tile: 1 },
       lobes: (B, H) => [[H * 0.05, H * 0.74, 0, H * 0.3, H * 0.21, H * 0.3], ...ring(B, H, 4, 0.44, 0.6, 0.24, 0.32, 0.28, 0.21)] }) },
 ];
@@ -426,7 +427,7 @@ function buildVariants() {
     return {
       geo, tris: B.I.length / 3, height: top,
       rc: rc * FIT, hc, R: Math.hypot(rc, hc) * 1.02,
-      leaf: sp.leaf, bark: sp.bark, tint: sp.tint,
+      leaf: sp.leaf, bark: sp.bark, tint: sp.tint, fall: sp.fall, fall2: sp.fall2 || sp.fall,
     };
   });
 }
@@ -470,6 +471,8 @@ const TREE_VERT_FN = /* glsl */`
 uniform float uLandHalf, uNow;
 uniform vec4 uVar[NV];       // atlas frame half-width, center height, bounding radius, share of color taken from the picture
 uniform vec3 uLeaf[NV];
+uniform vec4 uFall[NV];      // the color a broadleaf turns in the fall, and 1 if it loses its leaves (0: evergreen)
+uniform vec3 uFall2[NV];     // the other color it may turn
 uniform vec4 uLod;           // share of candidates in use, thinning starts (m), thinning length (m), trees end (m)
 uniform vec4 uNear;          // real meshes give way to cards between x and y (m); z: the shade on the ground ends (m)
 uniform vec2 uGround;        // the terrain darkens the ground under trees out to x (m), fading by y (m)
@@ -571,7 +574,8 @@ int treeModel(float code, vec3 base, float dense, float flags) {
 // as far as uGround says), the trees stop being darker than the picture's own forest: 0 close, 1 far.
 float treeFar(float d) { return smoothstep(uGround.x, uGround.y, d); }
 
-vec3 treeLeaf(int vi, float tintRnd, vec3 pic, float d) {
+float gBare = 0.0;            // how far treeLeaf found the tree's leaves down (for treeLight)
+vec3 treeLeaf(int vi, float tintRnd, vec3 pic, float d, vec3 C) {
   vec3 leaf = uLeaf[vi] * (0.78 + 0.44 * tintRnd);
   if (pic.r >= 0.0) {
     // Take the hue of the picture, but keep the brightness inside what foliage can be. Far away the trees
@@ -581,24 +585,34 @@ vec3 treeLeaf(int vi, float tintRnd, vec3 pic, float d) {
     float lit = treeFar(d);
     leaf = mix(leaf, pic / lum * clamp(lum * 3.4, want * mix(0.95, 0.9, far), want * mix(mix(1.55, 1.8, far), 3.2, lit)), mix(mix(uVar[vi].w, 0.85, far), 0.95, lit) * leafy);
   }
+  // The season (seasonAt): the light green of new leaves; the fall color, each tree in its own time and one of its
+  // kind's two colors; then the leaves coming down, which leaves the twigs (treeShade's caller thins the crown).
+  vec4 se = seasonAt(C);
+  float dec = uFall[vi].a, own = fract(tintRnd * 7.13);
+  leaf = mix(leaf, leaf * vec3(1.12, 1.3, 0.72), se.z * dec);
+  vec3 fc = mix(uFall[vi].rgb, uFall2[vi], smoothstep(0.25, 0.85, tintRnd)) * (0.9 + 0.2 * own);   // (the kind's two colors and every shade between)
+  leaf = mix(leaf, fc, clamp(se.y * 1.5 - 0.5 * own, 0.0, 1.0) * dec);
+  gBare = clamp((1.0 - se.x) * 1.3 - 0.3 * fract(tintRnd * 5.31), 0.0, 1.0) * dec;
+  leaf = mix(leaf, vec3(0.10, 0.085, 0.07), 0.85 * gBare);
   return leaf;
 }`;
 
 // Everything about one tree that the pixel shader needs, worked out once per tree.
 const TREE_LIGHT_VERT = /* glsl */`
 flat varying vec4 vLeaf, vTr, vIn, vView, vRot;
-flat varying vec2 vWood;
+flat varying vec3 vWood;
 void treeLight(vec3 C, vec3 leaf, float yaw, float dense, float fade, float lod) {
   float hReg = regionHeight(C.xz);
   // Neighbors shade this tree only if they stand between it and the sun: look that way in the picture.
   float sunward = woodsAt(C.xz + normalize(uSunDir.xz + vec2(1e-4)) * 16.0, dense);
-  vWood = vec2(dense, sunward < 0.0 ? dense * 0.7 : dense * sunward);
+  vWood = vec3(dense, sunward < 0.0 ? dense * 0.7 : dense * sunward, gBare);
   float sh = terrainShadow(C, hReg) * (1.0 - 0.9 * cloudShadow(C));
   // Snow on the crowns: the standing snow of the high country (its line climbs on a warm day, but cold air alone does
   // not bring it down), and what the weather has laid (uSnow) on ground as cold as where that was measured
   // (uGroundT; the terrain's rule: see the snow in world/chunks.js).
   float snowline = snowLine(C.xz, 0.0);
   float snowOn = max(smoothstep(-100.0, 250.0, C.y - snowline + min(uTAnom, 0.0) * 150.0), 0.85 * min(uSnow * 2.5, 1.0) * (1.0 - smoothstep(2.0, 7.0, 2.2 - (C.y - snowline) / 150.0 - max(uGroundT, 1.8))));
+  snowOn *= 1.0 - 0.6 * gBare;              // (a bare crown holds little of it)
   vec3 T = atmosphereTransmittance(cameraPosition, C);
   vec3 dir = normalize(C - cameraPosition);
   float cy = cos(yaw), sy = sin(yaw);
@@ -621,7 +635,8 @@ uniform vec3 uSunDir, uSunCol, uAmbSky, uAmbGround;
 uniform vec3 uBark[NV];
 uniform vec4 uHand;
 flat varying vec4 vLeaf, vTr, vIn, vView, vRot;
-flat varying vec2 vWood;         // x: how closed the forest is here, y: how much of it stands toward the sun
+flat varying vec3 vWood;         // x: how closed the forest is here, y: how much of it stands toward the sun, z: how bare its crown is (gBare)
+float leafHash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
 float ign(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
 // A different screen-door every frame, which the temporal filter turns into a smooth dissolve.
 float dissolve() { return ign(gl_FragCoord.xy + uHand.w * 5.588238); }
@@ -714,7 +729,7 @@ void main() {
   vec3 wp = C + right * (corner.x * halfW * mw) + up * (corner.y * halfH * mh) + back * (lean * (corner.y * 0.5 + 0.5));
   float lod = clamp(log2(uAtlas.z * pix / (2.0 * halfH)), 0.0, uAtlas.w);
   // a tree of a few pixels is one of a crowd: its own tint goes
-  treeLight(C, treeLeaf(vi, mix(aB.w / 255.0, 0.5, smoothstep(3.5, 5.5, lod)), pic, d), yaw, dense, fade / (mw * mh), lod);
+  treeLight(C, treeLeaf(vi, mix(aB.w / 255.0, 0.5, smoothstep(3.5, 5.5, lod)), pic, d, C), yaw, dense, fade / (mw * mh), lod);
   vUv = corner * 0.5 + 0.5;
   vDf = vec4(cos(elR), sin(elR), ab, eb);
   vFrame = vec4(a0, r0, float(vi), sz.y);
@@ -779,6 +794,12 @@ void main() {
   // height of this pixel in the tree, from where it lies on the card and how deep
   float y = vDim.z + vDf.x * ((cuv.y * 2.0 - 1.0) * vDim.x) + vDf.y * ((B.a * q * 2.0 - 1.0) * vDim.y);
   float hRel = mix(clamp(y / (2.0 * vDim.z), 0.0, 1.0), 0.7, smoothstep(4.5, 6.5, lod));
+  // A bare crown: most of its leaf is gone, the twigs and limbs stay (in steady spots of the card, so it holds still).
+  float leafPart = 1.0 - clamp(A.g * q, 0.0, 1.0);
+  if (vWood.z > 0.01 && leafPart > 0.5) {
+    if (lod < 3.0 && leafHash(floor(cuv * 44.0) + vMix.x * 17.0) < 0.82 * vWood.z) discard;
+    alpha *= 1.0 - 0.6 * vWood.z * smoothstep(2.0, 4.0, lod);
+  }
   vec3 col = treeShade(A.r * q * 1.6, clamp(A.g * q, 0.0, 1.0), A.b * q, N, hRel, int(mdl + 0.5), rot);
   gl_FragColor = vec4(col, alpha);
 }`;
@@ -813,7 +834,7 @@ void main() {
   vec3 pt = position * vec3(girth, 1.0, girth) * s;
   vec3 wp = base + vec3(cy * pt.x + sy * pt.z, pt.y, -sy * pt.x + cy * pt.z);
   vec3 C = base + vec3(0.0, uVar[vi].y * s, 0.0);
-  treeLight(C, treeLeaf(vi, iB.w / 255.0, pic, d), yaw, dense, 1.0, 0.0);
+  treeLight(C, treeLeaf(vi, iB.w / 255.0, pic, d, C), yaw, dense, 1.0, 0.0);
   vP = position; vN = normal; vVtx = aVtx; vUv = uv; vHc = uVar[vi].y; vVi = vi; vShow = card;
   gl_Position = projectionMatrix * viewMatrix * vec4(wp, 1.0);
 }`;
@@ -830,6 +851,7 @@ void main() {
   float alpha = clamp((cov - 0.5) / clamp(fwidth(cov), 0.02, 0.5) + 0.5, 0.0, 1.0);
   if (alpha < 0.06) discard;
   float k = 1.0 / max(t.a, 0.004);
+  if (vWood.z > 0.01 && bark < 0.5 && leafHash(floor(vP.xz * 3.0 + vP.y * 2.7) + vec2(vHc)) < 0.85 * vWood.z) discard;   // a bare crown (as above)
   vec3 col = treeShade(mix(t.r * k, 0.77, bark) * vVtx.y * 1.28, max(bark, clamp(t.g * k, 0.0, 1.0)), vVtx.x, normalize(vN), clamp(vP.y / (2.0 * vHc), 0.0, 1.0), vVi, vRot.xy);
   gl_FragColor = vec4(col, alpha);
 }`;
@@ -947,6 +969,8 @@ export class Trees {
       uLandHalf: { value: LAND_HALF }, uNow: { value: 0 },
       uVar: { value: V.map((v) => new THREE.Vector4(v.rc, v.hc, v.R, v.tint)) },
       uLeaf: { value: V.map((v) => new THREE.Vector3(...v.leaf)) },
+      uFall: { value: V.map((v) => (v.fall ? new THREE.Vector4(...v.fall, 1) : new THREE.Vector4(0, 0, 0, 0))) },
+      uFall2: { value: V.map((v) => new THREE.Vector3(...(v.fall2 || [0, 0, 0]))) },
       uBark: { value: V.map((v) => new THREE.Vector3(...v.bark)) },
       uLod: { value: new THREE.Vector4(1, 700, 850, 13000) },
       uNear: { value: new THREE.Vector4(115, 170, 2600, 0) },
@@ -1152,7 +1176,7 @@ export class Trees {
     for (let k = 0; k < 4; k++) {
       const bx = x0 + (k & 1) * PATCH, bz = z0 + (k >> 1) * PATCH, towny = townsIn(bx, bz, bx + PATCH, bz + PATCH);
       town = town || towny;
-      q.push({ m: [moisture(bx, bz), moisture(bx + PATCH, bz), moisture(bx, bz + PATCH), moisture(bx + PATCH, bz + PATCH)], tl: treeline(bz + PATCH / 2), towny, urban: null });
+      q.push({ m: [moisture(bx, bz), moisture(bx + PATCH, bz), moisture(bx, bz + PATCH), moisture(bx + PATCH, bz + PATCH)], tl: treeline(bz + PATCH / 2), sea: oceanWoods(), towny, urban: null });
     }
     const urban = !town ? null : this.urbanCrop ? this.urbanCrop(x0, z0, x0 + S, z0 + S) : null;
     for (const e of q) e.urban = urban || { fn: urbanDensity };

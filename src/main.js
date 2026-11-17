@@ -7,7 +7,7 @@ import { Sound } from './core/audio.js';
 import { clamp, noise1, smoothstep } from './core/noise.js';
 import * as dem from './world/dem.js';
 import { REGION, RECENTER_AT, setRegion, toWorld, toLatLon } from './world/geo.js';
-import { groundHeight, isWater, buildWorld, BN } from './world/terrain.js';
+import { groundHeight, isWater, buildWorld, BN, setSeason, season, SEASONS, SEASON_LIST } from './world/terrain.js';
 import { loadAirports, clearAirports, inWindow, AIRPORTS, FIELDS, fieldById, DEFAULT_FIELD, airportById, nearestAirport, airfieldSurface } from './world/airports.js';
 import { OSM_ATTRIBUTION } from './world/airfield-index.js';
 import { Terrain, setUrbanGrid } from './world/chunks.js';
@@ -54,7 +54,7 @@ const SEA_STATE = { storms: 0.85, scattered: 0.55, hail: 0.8, coldfront: 0.7, ga
 const S = {
   mode: 'loading', paused: false, timeAccel: 1, view: 'chase', chartOpen: false, time: 0, busy: false, frost: 0, moving: false,
   flight: null, field: null,
-  opts: { field: DEFAULT_FIELD, wx: 'fair', hour: 7.5, air: false, plane: 'c172' },
+  opts: { field: DEFAULT_FIELD, wx: 'fair', hour: 7.5, air: false, plane: 'c172', season: 'summer' },
   settings: { sound: true, invert: false, quality: 'auto', autoTier: '', imagery: true, exposure: 1, fx: {}, wxOver: 0, resolution: 'auto' },   // wxOver: seconds a weather change takes (0 = at once); resolution: 'auto' (follows the frame rate) or 'fixed'
 };
 try {
@@ -126,6 +126,8 @@ async function boot() {
   $('splash').classList.add('loading');
   $('credit').innerHTML = `${dem.ATTRIBUTION}<br>${IMAGERY_ATTRIBUTION}<br>${OSM_ATTRIBUTION}<br>${TOWNS_ATTRIBUTION}<br>${CITY_ATTRIBUTION}<br>${STARS_CREDIT}`;
   if (!fieldById(S.opts.field)) S.opts.field = DEFAULT_FIELD;
+  if (SEASONS[S.opts.season] === undefined) S.opts.season = 'summer';
+  setSeason(seasonNow = S.opts.season);              // before the world is built: its climate is the season's
   await loadTowns();
   await loadWorld(placeOfField(fieldById(S.opts.field)));
 
@@ -145,6 +147,7 @@ async function boot() {
   terrain = new Terrain(scene);
   await terrain.init();
   sky = new Sky(scene, renderer);
+  sky.day = season();                                // the sun's path for the season
   // three.js's own shadow map covers only a small box around the aircraft: it is what the aircraft's own
   // materials read (a strut's shadow on the wing). What the sun throws on the ground is SunShadows' business.
   const sh = sky.sun.shadow;
@@ -226,6 +229,7 @@ async function loadWorld(place) {
   const urban = placeTowns();
   setUrbanGrid(urban);                               // the terrain's workers build town patches from it
   buildWorld(base, urban);
+  if (sky) sky.day = season();                       // (spring and fall fall on the place's own dates)
   await msg('Surveying airfields…', 0.66);
   await loadAirports((p) => { $('loadMsg').textContent = `Surveying airfields… ${Math.round(p * 100)}%`; loadBar(0.66 + 0.2 * p); });
   if (terrain) {
@@ -477,6 +481,16 @@ function respawn(reason) {
   syncModel(); updateCamera(0.016);
 }
 
+/** Put the world in the season the player chose: the climate maps, the weather's temperatures and the sun's path. */
+let seasonNow = null;
+function applySeason() {
+  if (S.opts.season === seasonNow) return;
+  seasonNow = S.opts.season;
+  setSeason(seasonNow);
+  if (sky) sky.day = season();
+  if (weather) { weather.readTerrain(); weather.bakeAll(); }
+}
+
 function bindUI() {
   const click = (id, fn) => $(id).addEventListener('click', fn);
   const opt = (v, t, sel, find = '') => `<option value="${v}"${sel ? ' selected' : ''}${find ? ` data-find="${find.replace(/"/g, '&quot;')}"` : ''}>${t}</option>`;
@@ -490,6 +504,7 @@ function bindUI() {
       $(p + 'Plane').innerHTML = AIRCRAFT.map((a) => opt(a.id, a.name, a.id === S.opts.plane)).join('');
       $(p + 'Wx').innerHTML = Object.entries(SITUATIONS).map(([k, v]) => opt(k, v.title, k === S.opts.wx)).join('');
       $(p + 'Hour').innerHTML = HOURS.map(([h, t]) => opt(h, t, h === S.opts.hour)).join('');
+      $(p + 'Season').innerHTML = SEASON_LIST.map(([k, t]) => opt(k, t, k === S.opts.season)).join('');
       $(p + 'Start').value = S.opts.air ? 'air' : 'ground';
     }
   };
@@ -498,12 +513,12 @@ function bindUI() {
   for (const p of ['o', 'p']) {
     enhanceSelect($(p + 'Plane'), { describe: (id) => aircraftById(id).blurb });
     enhanceSelect($(p + 'Field'), { code: true, placeholder: 'Search by name, city, state or code', hint: (id) => { const f = fieldById(id); return f?.group ? f.state : f?.city; } });
-    for (const k of ['Wx', 'Hour', 'Start']) enhanceSelect($(p + k));
+    for (const k of ['Wx', 'Hour', 'Season', 'Start']) enhanceSelect($(p + k));
   }
   panel = new FlightPanel();
-  const read = (p) => { S.opts.field = $(p + 'Field').value; S.opts.wx = $(p + 'Wx').value; S.opts.hour = +$(p + 'Hour').value; S.opts.air = $(p + 'Start').value === 'air'; S.opts.plane = $(p + 'Plane').value; };
+  const read = (p) => { S.opts.field = $(p + 'Field').value; S.opts.wx = $(p + 'Wx').value; S.opts.hour = +$(p + 'Hour').value; S.opts.season = $(p + 'Season').value; applySeason(); S.opts.air = $(p + 'Start').value === 'air'; S.opts.plane = $(p + 'Plane').value; };
   $('oStart').addEventListener('change', () => read('o'));
-  for (const id of ['oField', 'oWx', 'oHour', 'oPlane']) $(id).addEventListener('change', () => { read('o'); enterSplash(); });
+  for (const id of ['oField', 'oWx', 'oHour', 'oSeason', 'oPlane']) $(id).addEventListener('change', () => { read('o'); enterSplash(); });
   click('btnFly', () => { read('o'); startFlight(); });
   click('pResume', () => togglePause(false));
   click('pApply', () => { read('p'); S.paused = false; startFlight(); });

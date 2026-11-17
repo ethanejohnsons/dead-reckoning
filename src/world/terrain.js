@@ -16,7 +16,91 @@ export const MN = 256;              // climate grid (about 2 km per cell)
 
 // base: coarse height; water: 0..255 coverage; moist, tsea, snow: the climate grids; low: the level of the
 // valley floors and plains around each point (m).
-export const world = { base: null, water: null, moist: null, tsea: null, snow: null, low: null };
+export const world = { base: null, water: null, moist: null, tsea: null, snow: null, low: null, args: null };
+
+// ---------------------------------------------------------------- seasons
+//
+// The world's "ordinary day" (seaTempAt) is a mild flying day. A season moves it: by latitude, the mean of the
+// daily highs over the year and how far they swing either side of it (deg C, lowlands of the interior), coldest
+// about 22 January and warmest about 23 July. The Pacific coast swings less. The temperature then decides the
+// rest: the snow line (so a northern winter lies white), and what the leaves are doing, in the shaders (SEASON_GLSL):
+// they come out as the days warm through the teens, turn as the highs fall through the low twenties and are down by
+// about 8 C, so the fall starts in Canada and the mountains and moves south, and the tropics hardly change at all.
+const SEASON_MEAN = [[10, 31], [20, 29], [25, 28], [30, 25], [35, 22], [40, 17], [45, 12.5], [50, 9], [55, 5], [60, 2], [65, -2], [70, -6]];
+const SEASON_SWING = [[10, 1], [20, 3], [25, 4.5], [30, 8], [35, 11], [40, 14], [45, 16], [50, 17], [55, 17], [60, 17.5], [70, 16]];
+//
+// The player picks a time of the season, not a date: early, mid (peak in the fall) or late. Summer and winter are
+// dates. Spring and fall are where the leaves are at the place the world is built round: the day the lowland there
+// reaches the temperature of that stage (on the way up for spring, on the way down for fall), so "peak fall" is
+// peak color in Vermont on 1 October and in Virginia three weeks later. Where it never gets that cold (the
+// tropics) the date stands.
+export const SEASON_LIST = [
+  ['spring-early', 'Early spring'], ['spring', 'Spring'], ['spring-late', 'Late spring'],
+  ['summer-early', 'Early summer'], ['summer', 'Summer'], ['summer-late', 'Late summer'],
+  ['fall-early', 'Early fall'], ['fall', 'Peak fall'], ['fall-late', 'Late fall'],
+  ['winter-early', 'Early winter'], ['winter', 'Winter'], ['winter-late', 'Late winter'],
+];
+export const SEASONS = {
+  'spring-early': 91, spring: 121, 'spring-late': 152, 'summer-early': 166, summer: 196, 'summer-late': 232,
+  'fall-early': 268, fall: 288, 'fall-late': 309, 'winter-early': 340, winter: 15, 'winter-late': 60,
+};
+// the lowland temperature (deg C) of each stage, and whether it comes on the way up (1) or down (-1): see SEASON_GLSL
+const SEASON_STAGE = { 'spring-early': [1, 14], spring: [1, 17], 'spring-late': [1, 21.5], 'fall-early': [-1, 19], fall: [-1, 15], 'fall-late': [-1, 9] };
+const COLDEST = 22;
+let seasonKey = 'summer', seasonDay = SEASONS.summer;
+/** The day of the year the world's climate is for. */
+export const season = () => seasonDay;
+/** The day of a time of the season (SEASON_LIST) at a place; tlow: what the lowland there adds to the sea-level temperature. */
+function seasonDayAt(key, lat, lon, tlow = 0) {
+  const s = lat < 0 ? 182 : 0, fixed = SEASONS[key] ?? SEASONS.summer, stage = SEASON_STAGE[key];
+  if (!stage) return (fixed + s) % 365;
+  const [dir, want] = stage, base = seaTempAt(lat) + tlow;
+  let best = fixed, err = 1e9;
+  for (let d = dir > 0 ? COLDEST : COLDEST + 183; d <= (dir > 0 ? COLDEST + 183 : COLDEST + 365); d++) {
+    const e = Math.abs(base + seasonShift(lat, lon, d + s) - want);
+    if (e < err) { err = e; best = d; }
+  }
+  return ((err < 1.5 ? best : fixed) + s) % 365;
+}
+/** How much warmer than its ordinary day a place is on a day of the year (deg C). */
+export function seasonShift(lat, lon, day = seasonDay) {
+  const a = Math.abs(lat), pacific = lon < -116 && a > 30 ? smoothstep(-117, -122.5, lon) : 0;
+  const ph = (2 * Math.PI * (day - COLDEST)) / 365.2422 + (lat < 0 ? Math.PI : 0);
+  return along(SEASON_MEAN, a) + 2 * pacific - seaTempAt(lat) - along(SEASON_SWING, a) * (1 - 0.55 * pacific) * Math.cos(ph);
+}
+/** Set the time of the season (a key of SEASONS), and rebuild the maps that depend on it (when there is a world yet). */
+export function setSeason(key) {
+  seasonKey = SEASONS[key] !== undefined ? key : 'summer';
+  if (world.args) buildWorld(...world.args);
+  else setSeasonDay(SEASONS[seasonKey]);
+}
+function setSeasonDay(day) {
+  seasonDay = ((day % 365) + 365) % 365;
+  // Rising (spring) or falling (fall): the shaders read the leaves differently on the way up and the way down.
+  // (Clamped hard: midsummer counts as spring, midwinter as fall.)
+  ENV.uSeason.value.set(0.5 + 0.5 * clamp(3 * Math.sin((2 * Math.PI * (seasonDay - COLDEST)) / 365.2422) * (REGION_LAT() < 0 ? -1 : 1), -1, 1), seasonDay, 0, 0);
+}
+const REGION_LAT = () => toLatLon(0, 0).lat;
+ENV.uSeason = { value: new THREE.Vector4(1, seasonDay, 0, 0) };
+ENV.tSeason = { value: null };
+/**
+ * GLSL (after REGION_GLSL): seasonAt(p) for a point of the world, xyzw: leaves out (0 bare .. 1 full), turned (the
+ * fall color, of what is still out), fresh (the light green of new leaves), dormant (grass gone to straw).
+ */
+export const SEASON_GLSL = /* glsl */`
+uniform sampler2D tSeason;
+uniform vec4 uSeason;           // x: 1 while the days warm (spring), 0 while they cool (fall), in between at the turn
+vec4 seasonAt(vec3 p) {
+  float T = texture2D(tSeason, p.xz / (2.0 * uWxHalf) + 0.5).r - 0.0065 * max(p.y, 0.0), up = smoothstep(0.35, 0.65, uSeason.x);
+  float leaf = mix(smoothstep(6.0, 11.0, T), smoothstep(12.0, 19.0, T), up);
+  float turned = (1.0 - up) * (1.0 - smoothstep(15.0, 22.0, T));
+  float fresh = up * smoothstep(12.0, 18.0, T) * (1.0 - smoothstep(21.0, 27.0, T));
+  float dormant = 1.0 - smoothstep(5.0, 13.0, T);
+  return vec4(leaf, turned, fresh, dormant);
+}
+// How much warmer than an ordinary day the season makes this place (deg C; negative in winter).
+float seasonShift(vec2 xz) { return texture2D(tSeason, xz / (2.0 * uWxHalf) + 0.5).g; }`;
+export const SEASON_UNIFORMS = ['tSeason', 'uSeason'];
 
 // What the surface shaders need to know about the place: x: the tree line at the window's center (m),
 // y: how much higher it is at the southern edge of the chart (m), z: +1 when the midday sun stands in the
@@ -89,6 +173,8 @@ export function treelineAt(lat, lon = -100) {
 }
 /** The same by world z. Mirrors treeLine() in the shaders. */
 export const treeline = (z) => ENV.uRegion.value.x + ENV.uRegion.value.y * (z / LAND_HALF);
+/** How far the region's woods are a wet coast's, conifers down to the sea (0..1: see buildWorld). */
+export const oceanWoods = () => ENV.uRegion.value.w;
 
 // How wet the lowlands are from the Rockies to the Atlantic, by longitude: short-grass plains under the
 // mountains, mixed and tall-grass prairie through the Dakotas, Nebraska and Kansas, forest from the Mississippi east.
@@ -154,8 +240,9 @@ function minFilter(g, n, r) {
  * (moisture, temperature, snow level) and the texture the shaders read.
  */
 export function buildWorld(base, urban) {
+  world.args = [base, urban];
   world.base = base.height; world.water = base.water;
-  const H = WORLD_HALF, terr = new Float32Array(MN * MN), moist = new Float32Array(MN * MN), tsea = new Float32Array(MN * MN), snow = new Float32Array(MN * MN), open = new Float32Array(MN * MN);
+  const H = WORLD_HALF, terr = new Float32Array(MN * MN), moist = new Float32Array(MN * MN), tsea = new Float32Array(MN * MN), cold = new Float32Array(MN * MN), snow = new Float32Array(MN * MN), open = new Float32Array(MN * MN);
   const q = (BN / MN) | 0;
   for (let j = 0; j < MN; j++) for (let i = 0; i < MN; i++) {
     const x = (i / (MN - 1)) * 2 * H - H, z = (j / (MN - 1)) * 2 * H - H, k = j * MN + i;
@@ -168,7 +255,12 @@ export function buildWorld(base, urban) {
   const low = boxBlur(minFilter(terr, MN, 6), MN, 5, 2);
   boxBlur(open, MN, 2);                                    // 1 only well out on big water
   const c0 = toLatLon(0, 0), tl0 = treelineAt(c0.lat, c0.lon), tl1 = treelineAt(toLatLon(0, LAND_HALF).lat, c0.lon);
-  ENV.uRegion.value.set(tl0, tl1 - tl0, hemisphere(), 0);
+  // The day of the season, for the ground at the middle of the window (as the leaves there read it: see tsea below).
+  { const kc = (MN >> 1) * MN + (MN >> 1); setSeasonDay(seasonDayAt(seasonKey, c0.lat, c0.lon, 0.0065 * (Math.min(low[kc], 2000) - terr[kc]))); }
+  // w: how far the region's climate is an ocean's (the wet coasts of the Northwest and Alaska), where conifers hold
+  // the lowlands too. (Not the moisture itself, which the ranges raise everywhere: the hills of New England are wet
+  // but their woods are maple, beech and birch.)
+  ENV.uRegion.value.set(tl0, tl1 - tl0, hemisphere(), smoothstep(0.77, 0.85, lowlandMoisture(c0.lat, c0.lon)));
   for (let j = 0; j < MN; j++) for (let i = 0; i < MN; i++) {
     const x = (i / (MN - 1)) * 2 * H - H, z = (j / (MN - 1)) * 2 * H - H, k = j * MN + i, ll = toLatLon(x, z);
     // Ranges are wetter than the country they stand in: forest begins a few hundred meters above the valley floor.
@@ -176,12 +268,14 @@ export function buildWorld(base, urban) {
     // The plains and plateaux are as warm as the lowlands (the ground heats the air wherever it lies), up to
     // a point; only what stands above them is colder. So an ordinary day at an airfield's door is as warm as its
     // latitude makes the lowlands: about 15 C in Minnesota or Colorado, 27 C in the tropics, a few degrees on the Arctic coast.
-    tsea[k] = seaTempAt(ll.lat) + 0.0065 * Math.min(low[k], 2000);
+    const shift = cold[k] = seasonShift(ll.lat, ll.lon);
+    tsea[k] = seaTempAt(ll.lat) + shift + 0.0065 * Math.min(low[k], 2000);
     // Snow lies where the air is under about 2 C, and never lower than 650 m above the tree line on an ordinary day.
     // (In the tropics the snow line stands higher than the cold alone would put it, near 4,800 m: the volcanoes of Mexico
     // carry snow, Mauna Kea on an ordinary day does not.)
     const tropic = smoothstep(30, 20, Math.abs(ll.lat));
-    snow[k] = Math.min((tsea[k] - 2.2) / 0.0065 + 900 * tropic, Math.max(treelineAt(ll.lat, ll.lon), 0) + 650 + 1200 * tropic);
+    // (A cold season brings the floor of that down with it.)
+    snow[k] = Math.min((tsea[k] - 2.2) / 0.0065 + 900 * tropic, Math.max(treelineAt(ll.lat, ll.lon), 0) + 650 + 1200 * tropic + Math.min(shift, 0) / 0.0065);
   }
   boxBlur(moist, MN, 1, 2);                                // biome edges are not razor sharp
   world.moist = moist; world.tsea = tsea; world.snow = snow; world.low = low;
@@ -195,6 +289,13 @@ export function buildWorld(base, urban) {
     data[k * 4 + 2] = toHalf(wet ? -clamp((bilinear(open, MN, x, z) - 0.3) / 0.3, 0, 1) : urban ? urban[k] : 0);
     data[k * 4 + 3] = toHalf(bilinear(snow, MN, x, z));
   }
+  // The season's temperature at sea level, for the leaves, and how much colder or warmer than an ordinary day it is (SEASON_GLSL).
+  const sd = new Uint16Array(MN * MN * 2);
+  for (let k = 0; k < MN * MN; k++) { sd[k * 2] = toHalf(tsea[k]); sd[k * 2 + 1] = toHalf(cold[k]); }
+  ENV.tSeason.value?.dispose();
+  const st = new THREE.DataTexture(sd, MN, MN, THREE.RGFormat, THREE.HalfFloatType);
+  st.minFilter = st.magFilter = THREE.LinearFilter; st.needsUpdate = true;
+  ENV.tSeason.value = st;
   ENV.tRegion.value?.dispose();
   const tex = new THREE.DataTexture(data, BN, BN, THREE.RGBAFormat, THREE.HalfFloatType);
   tex.minFilter = tex.magFilter = THREE.LinearFilter; tex.needsUpdate = true;

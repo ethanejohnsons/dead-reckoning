@@ -27,6 +27,11 @@ export const VERTS = V * V + 4 * V;      // with the skirt: a strip of vertices 
 
 const H = new Float32Array(GN * GN), W = new Uint8Array(GN * GN);
 
+// Ground below sea level that the sea does not reach, where water under zero is not to be raised to it: south,
+// north, west, east. Death Valley; the Salton Sea and the Imperial and Mexicali valleys; New Orleans behind its
+// levees; Lake Enriquillo in the Dominican Republic.
+const BELOW_SEA = [[35.6, 36.9, -117.4, -116.4], [32.0, 33.7, -116.3, -114.9], [29.8, 30.15, -90.3, -89.85], [18.3, 18.65, -72.0, -71.3]];
+
 /** Work in the region a job was made for. (On the main thread this changes nothing.) */
 export function inRegion(region) {
   if (REGION.lat0 !== region[0] || REGION.lon0 !== region[1]) setRegion(region[0], region[1]);
@@ -60,6 +65,15 @@ export function buildPatch(job) {
   if (zoom <= 10) {
     // Coarse data: the sea floor is negative. Level it.
     for (let k = 0; k < GN * GN; k++) if (H[k] < 0) { H[k] = 0; W[k] = 255; }
+  } else {
+    // Some fine data has the sea floor in it too (Hawaii's survey goes out over the reef). The water is drawn on the
+    // ground, so there it lay a few meters down on the bottom and ran up the beach as a sheet over the sand, stepped
+    // wherever the depths changed. The sea's surface is at zero: water below it is put there. Not in the basins
+    // that really are below the sea, where what lies under zero is dry land or a lake at its own level.
+    const ll = toLatLon(x0 + size / 2, z0 + size / 2);
+    if (!BELOW_SEA.some((b) => ll.lat > b[0] && ll.lat < b[1] && ll.lon > b[2] && ll.lon < b[3])) {
+      for (let k = 0; k < GN * GN; k++) if (W[k] && H[k] < 0) H[k] = 0;
+    }
   }
   // The Great Lakes. The survey levels each of its quadrangles on its own (up to 4 m apart on Superior) and the
   // coarse tiles use another datum (4 m lower), so far out the water showed straight steps along the seams, gone
@@ -121,7 +135,7 @@ export function buildPatch(job) {
   let trees = null;
   if (job.trees && hi > 2) {
     const t = job.trees;
-    trees = placeFine(t.P, x0, z0, H, W, GN, step, flats, { m: t.m, tl: t.tl, towny: t.towny, urban: job.urban });
+    trees = placeFine(t.P, x0, z0, H, W, GN, step, flats, { m: t.m, tl: t.tl, sea: t.sea, towny: t.towny, urban: job.urban });
   }
   return { tex, pos, morph, lay, lo, hi, trees };
 }

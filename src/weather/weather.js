@@ -15,6 +15,9 @@ import { makeCloudNoise, sampleNoise } from './cloudnoise.js';
 export const WX_N = 256;
 export const TEX_ALT = 12800;
 export const CLOUD_SIGMA = 0.03;       // extinction of dense cloud, 1/m (visibility of about 130 m inside)
+// Seconds new cover takes to grow into full cloud: until then it is drawn as it forms, thin wisps that thicken and
+// fill out, instead of finished cloud appearing where there was clear sky (the fourth channel of the B map).
+export const FORM_TIME = 20;
 // The ladder of scales cloud shapes are built from (renderer and density() agree on all of it).
 // The base volume's tile: its four octaves are 3.2 km, 1.6 km, 800 m and 400 m across.
 export const NOISE_SCALE = 12700;
@@ -152,6 +155,9 @@ export class Weather {
     this.A = new Uint8Array(N * N * 4); this.B = new Uint8Array(N * N * 4);
     this.A2 = new Uint8Array(N * N * 4); this.B2 = new Uint8Array(N * N * 4);
     this.row = 0; this.dirty = false;
+    // How much of each texel's cover has been there long enough to be grown cloud (see FORM_TIME), and when each row
+    // was last baked. What is more than that is cloud still forming: the renderer draws it thin and wispy.
+    this.M = new Float32Array(N * N); this.rowT = new Float64Array(N); this.mature = true;
     this.col = { cov: 0, base: 0, top: 0, conv: 0, precip: 0, cirrus: 0, front: 0, cell: 0, fog: 0, cold: 0, warm: 0, cu: 0, cuBase: 1200, line: 0, lineD: 0, band: 0, rainEnd: 0 };
     this.setup('fair', null, 12);
   }
@@ -190,6 +196,12 @@ export class Weather {
     for (const c of this.cells) move(c.area);
     if (this.trans) for (const b of this.trans.born) { move(b.c); move(b.c.area); }
     const a = this.at; a.x += dx; a.z += dz; a.rx += dx; a.rz += dz;
+    // (the cloud still forming goes with it, to the nearest texel)
+    const N = WX_N, step = (2 * WORLD_HALF) / N, di = Math.round(dx / step), dj = Math.round(dz / step), M = this.M.slice();
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+      const si = i - di, sj = j - dj;
+      this.M[j * N + i] = si >= 0 && si < N && sj >= 0 && sj < N ? M[sj * N + si] : 1;
+    }
     this.org.x += dx; this.org.z += dz;
     this.drift.x -= dx; this.drift.z -= dz;             // the noise is read at position + drift
   }
@@ -214,7 +226,7 @@ export class Weather {
     const r = route || ROUTE0, a = this.at;
     a.x = a.rx = r.ax; a.z = a.rz = r.az;
     { const dx = r.bx - r.ax, dz = r.bz - r.az, dl = Math.hypot(dx, dz) || 1; a.hx = dx / dl; a.hz = dz / dl; }
-    this.bakeAll();
+    this.mature = true; this.bakeAll(); this.mature = false;   // (set up at once: all of it grown already)
     // The ground starts as this weather would have left it: soaked under rain, white under snow.
     const g = this.grid(this.terr, r.ax, r.az), o = this._gs || (this._gs = {});
     this._quiet = true; this.sample(r.ax, g + 2, r.az, g, o); this._quiet = false;
@@ -922,9 +934,14 @@ export class Weather {
     const N = WX_N, H = WORLD_HALF, c = this.col;
     for (let r = 0; r < n && this.row < N; r++, this.row++) {
       const j = this.row, z = ((j + 0.5) / N) * 2 * H - H;
+      const grow = this.mature ? 1 : 1 - Math.exp(-Math.max(this.time - this.rowT[j], 0) / FORM_TIME);
+      this.rowT[j] = this.time;
       for (let i = 0; i < N; i++) {
-        const x = ((i + 0.5) / N) * 2 * H - H, o = (j * N + i) * 4;
+        const x = ((i + 0.5) / N) * 2 * H - H, o = (j * N + i) * 4, k = j * N + i;
         this.column(x, z, c);
+        // Cover that has just come is forming; it grows into cloud over FORM_TIME. Cover that goes, goes at once.
+        const m = this.M[k] = c.cov <= this.M[k] ? c.cov : this.M[k] + (c.cov - this.M[k]) * grow;
+        this.B2[o + 3] = c.cov > 0.002 ? clamp((c.cov - m) / Math.max(c.cov, 0.15), 0, 1) * 255 : 0;
         this.A2[o] = c.cov * 255; this.A2[o + 1] = c.conv * 255; this.A2[o + 2] = c.precip * 255; this.A2[o + 3] = c.cirrus * 255;
         this.B2[o] = clamp(c.base / TEX_ALT, 0, 1) * 255; this.B2[o + 1] = clamp(c.top / TEX_ALT, 0, 1) * 255;
         this.B2[o + 2] = clamp(c.rainEnd / TEX_ALT, 0, 1) * 255;             // height at which the rain ends (the ground, unless it is virga)
@@ -1002,6 +1019,7 @@ export class Weather {
     o.precip = A[k + 2] * w00 + A[k + 6] * w10 + A[k2 + 2] * w01 + A[k2 + 6] * w11;
     o.base = (B[k] * w00 + B[k + 4] * w10 + B[k2] * w01 + B[k2 + 4] * w11) * TEX_ALT;
     o.top = (B[k + 1] * w00 + B[k + 5] * w10 + B[k2 + 1] * w01 + B[k2 + 5] * w11) * TEX_ALT;
+    o.fresh = B[k + 3] * w00 + B[k + 7] * w10 + B[k2 + 3] * w01 + B[k2 + 7] * w11;
     return o;
   }
   /** cellAt() as the renderer reads it: from the map bakeCells() last filled, once there is one. */
@@ -1161,6 +1179,8 @@ export class Weather {
     const soft = smoothstep(0.55, 0.9, aged);
     let tw = lerp(lerp(0.7 - 0.45 * topz, 0.06 + 0.8 * soft * (1 - 0.8 * cw) + 0.45 * (1 - smoothstep(0, 160, hm)), cve), 1, Math.max(anv * (1 - und), scud));
     tw = clamp(lerp(tw, 0, und), 0, 1);
+    const form = c.fresh * (1 - cw);                              // cloud still forming: wisps, soft and thin (see FORM_TIME)
+    tw = lerp(tw, 1, 0.75 * form);
     const topw = lerp(0.35, 1, Math.max(smoothstep(0, 250, hm), cve)) * (1 - 0.55 * deep * (1 - cw) * smoothstep(0.7, 0.9, hh)) * (1 - 0.5 * anv);
     const eL = lerp(LOBE_AMP[0], LOBE_AMP[1], cve) * topw * lerp(0.6, 1.35, rough) * (1 + 0.35 * tw) * (1 - 0.1 * cw) * (1 - 0.7 * und), eF = FINE_AMP * eL;
     // What a lobe octave cuts away: a billow as a round dome does (0.61 on average), a wisp all but its shreds (0.70).
@@ -1170,7 +1190,7 @@ export class Weather {
     // Density climbs from the surface inward: crisply on the crown of a young turret, through a ragged fringe on its flanks and where the cloud is old, gently where it is layered or anvil.
     const crisp = cve * smoothstep(0, 160, hm) * (1 - anv) * (1 - 0.6 * tw);
     const young = (1 - soft) * lerp(0.75 + 0.25 * smoothstep(0.15, 0.7, hh), 1, cw);
-    const edge = lerp(lerp(0.14, 0.03, smoothstep(0.45, 0.85, hh) * (1 - anv)), lerp(0.08, 0.009, young), crisp);   // (the top of a layer is sharp too, under its inversion)
+    const edge = lerp(lerp(0.14, 0.03, smoothstep(0.45, 0.85, hh) * (1 - anv)), lerp(0.08, 0.009, young), crisp) * (1 + 6 * form);   // (the top of a layer is sharp too, under its inversion)
     let cut = cutAvg;
     if (d < eL + eF + edge) {
       const bx = qx + (n2 - 0.5) * LOBE_WARP, by = y + (n1 - 0.5) * 0.4 * LOBE_WARP, bz = qz - (n3 - 0.5) * LOBE_WARP, R = LOBE_ROT;
@@ -1184,7 +1204,7 @@ export class Weather {
     d -= eL * cut + eF * cutAvg;
     if (d <= 0) return 0;
     const xe = Math.min(d / edge, 1);
-    return xe * (0.3 + 0.7 * xe) * CLOUD_SIGMA * lerp(0.75, 1.35, cve) * lerp(1, 0.8 + 0.45 * hh, cve) * (1 - 0.7 * anv);
+    return xe * (0.3 + 0.7 * xe) * CLOUD_SIGMA * lerp(0.75, 1.35, cve) * lerp(1, 0.8 + 0.45 * hh, cve) * (1 - 0.7 * anv) * (1 - 0.7 * form);
   }
 
   /**
