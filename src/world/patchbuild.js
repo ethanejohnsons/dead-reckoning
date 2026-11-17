@@ -7,7 +7,7 @@
 //   job  { x0, z0, size, zoom         the patch, and the elevation zoom it is sampled at
 //          region: [lat0, lon0]       where the window of the world is (geo.REGION)
 //          layer, quarter             its layer of the data texture; which quarter of its parent it is
-//          win                        the elevation under it with a margin (dem.window: see demwindow.js)
+//          win                        the elevation under it with a margin (dem.cut: see demwindow.js)
 //          flats                      airfields whose graded ground touches it (terrain.flatsIn)
 //          towny, doubt, urban        a town touches it: the water codes at zoom DOUBT_Z under it, and the
 //                                     towns' density there (demwindow.urbanAt)

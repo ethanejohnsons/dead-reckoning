@@ -1,6 +1,6 @@
 // Reading elevation away from the tile cache. The cache lives on the main thread (world/dem.js), where the
 // flight physics needs it at once; a worker that builds a terrain patch is sent a "window" instead: the
-// texels of one zoom level under the patch, copied out of the tiles (dem.window), a few tens of kilobytes.
+// texels of one zoom level under the patch, copied out of the tiles (dem.cut), a few tens of kilobytes.
 // The functions here read a window exactly as dem.js reads the tiles themselves: the same arithmetic in the
 // same order, down to the special case along a tile's edge, so a patch comes out the same to the last bit
 // whichever thread built it. The same goes for the crop of the towns' density grid a job carries.

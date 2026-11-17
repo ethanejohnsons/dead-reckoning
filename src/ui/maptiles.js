@@ -5,7 +5,8 @@
 import { worldX, worldZ, metersPerPixel } from '../world/geo.js';
 
 export const MAP_ATTRIBUTION = '© OpenMapTiles © OpenStreetMap contributors';
-const MAXZ = 14, SIZE = 512, KEEP = 110, PARALLEL = 6, RETRY = 15000;
+// KEEP: tiles held, at 1 MB each (512 x 512 RGBA): a full-screen map shows about 40 at a time
+const MAXZ = 14, SIZE = 512, KEEP = 64, PARALLEL = 6, RETRY = 15000;
 
 export class MapTiles {
   constructor() {

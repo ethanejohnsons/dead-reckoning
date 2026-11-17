@@ -107,7 +107,15 @@ seven nested windows of tiles around the aircraft, about 10 m a pixel at the
 finest, with shadows lifted and close-up detail added in the shader. Close to
 the aircraft it is sharpened by aerial photography from the USGS National Map
 (USDA NAIP orthoimagery, public domain), about a meter a pixel. Trees
-stand where the picture shows woods. Until a tile arrives, and with imagery
+stand where the picture shows woods, except where the land cover says the
+ground is open: from space a summer's corn is as dark a green as a forest, so a
+map of woods and open country (`src/world/landcover.js`) is drawn around the
+aircraft from [Overture Maps](https://overturemaps.org)' base tiles, whose land
+cover is [ESA WorldCover](https://esa-worldcover.org) (a 10 m classification of
+Sentinel-2 imagery, CC BY 4.0), with OpenStreetMap's woods and farmland on top
+where they are mapped. On cropland, grassland and marsh only belts of trees
+darker than their field (shelter belts, farmstead groves) and the odd lone tree
+stand. Until a tile arrives, and with imagery
 switched off in the menu, the surface falls back to cropland, prairie,
 sagebrush, forest, rock and snow derived from height, slope, latitude and a
 map of how wet the country is (`buildWorld` in `src/world/terrain.js`).
@@ -162,14 +170,24 @@ surface, the street trees and the lights at night.
 
 ## Cities
 
-The buildings are the real ones: footprints and, where the map has them,
-heights from [OpenStreetMap](https://www.openstreetmap.org), streamed around the
-aircraft as vector tiles (zoom 14, the `building` and `transportation` layers of
-the [OpenMapTiles](https://www.openmaptiles.org) schema) from the public
-[OpenFreeMap](https://openfreemap.org) server. No key is needed and nothing is
-bundled; a request carries no cookie and no referrer. A worker fetches, decodes
-and builds each tile (`src/world/cities.worker.js`, `citybuild.js`, `mvt.js`);
-`src/world/cities.js` decides what is wanted and draws it:
+The buildings are the real ones. Footprints and heights come from
+[Overture Maps](https://overturemaps.org)' building tiles: OpenStreetMap's
+buildings where it has them, and elsewhere footprints traced from aerial
+imagery by Microsoft, Google and Esri, most with an estimated height. That
+matters in the country: around many rural lakes and small towns OpenStreetMap
+has the roads and not one house. They are read straight from Overture's public
+PMTiles archives by HTTP range (`src/world/overture.js`, the newest monthly
+release, found by listing the bucket). Roads, bridges and water come from
+[OpenStreetMap](https://www.openstreetmap.org) as vector tiles (zoom 14, the
+`transportation` and water layers of the
+[OpenMapTiles](https://www.openmaptiles.org) schema) from the public
+[OpenFreeMap](https://openfreemap.org) server, whose `building` layer stands in
+if Overture cannot be reached (Overture describes these tiles as meant for
+looking at its data rather than for production use). No key is needed and
+nothing is bundled; a request carries no cookie and no referrer. A worker
+fetches, decodes and builds each tile (`src/world/cities.worker.js`,
+`citybuild.js`, `mvt.js`); `src/world/cities.js` decides what is wanted and
+draws it:
 
 - within 2 km every building, houses with pitched roofs, the roads as
   ribbons on the ground, and the traffic on them (`src/world/traffic.js`):
@@ -205,16 +223,22 @@ railroad and sidewalk the map marks as a bridge is a deck on piers, strung
 between its abutments and held clear of the water, roads and lower decks
 beneath it. High road bridges get arches, railroads over water a truss, and a
 short table of named crossings (the Duluth lift bridge, the Blatnik, St. Paul's
-High Bridge and a few more) supplies what the map cannot. You can fly under a
+Robert Street bridge and a few more) supplies what the map cannot. You can fly under a
 deck; hitting one, or a pier, ends the flight.
 
 The tiles are © [OpenMapTiles](https://www.openmaptiles.org), with data
-© OpenStreetMap contributors under the ODbL. The credit "Buildings:
-OpenFreeMap © OpenMapTiles, data from OpenStreetMap
-(openstreetmap.org/copyright)" is shown on the title screen and must stay with
-any copy.
+© OpenStreetMap contributors under the ODbL. Overture's buildings are under the
+ODbL (OpenStreetMap, Microsoft, Google, Esri) and its land cover under CC BY 4.0
+(ESA WorldCover). The credits "Buildings, roads and bridges: OpenFreeMap ©
+OpenMapTiles, data from OpenStreetMap (openstreetmap.org/copyright)" and
+"Buildings and land cover: Overture Maps Foundation (overturemaps.org), with
+data from OpenStreetMap, Microsoft, Google, Esri and ESA WorldCover (CC BY 4.0)"
+are shown on the title screen and must stay with any copy.
 
 ## Layout
+
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) covers what the game is built with, which threads do what, where the
+data comes from, and has a line on every file. In short:
 
 - `src/world/` the window of the world and its projection, elevation tile cache, water detection, satellite imagery
   windows, terrain mesh and shaders, trees (sixteen species models grown at
@@ -223,6 +247,7 @@ any copy.
   buildings, roads and bridges, and the traffic on the roads), the climate of
   the continent, sky and atmospheric scattering
 - `tools/` the scripts that bake the airfields and towns from OpenStreetMap
+  (Node), and the wall materials, stars and Milky Way (Python)
 - `src/weather/` weather simulation, volumetric clouds (ray-marched at half
   resolution, accumulated over time and composited against full-resolution
   depth), rain/snow/hail/lightning
@@ -230,15 +255,18 @@ any copy.
   reflections, ambient occlusion, temporal anti-aliasing, motion blur, depth
   of field), `postfx-lens.js` is the lens and sensor (distortion, dirt,
   streaks, halation, grain, sharpening), `postfx.js` ties them together with
-  bloom, sun rays, rain and frost on the glass, tone curve and grading
+  bloom, sun rays, rain and frost on the glass, tone curve and grading; and
+  the frame's plumbing: upload budget, dynamic resolution, automatic quality,
+  timing
 - `src/aircraft/` flight model, aircraft and cockpit mesh with working
   instruments, first-person head camera
 - `src/core/` input, sound (recordings in `public/audio/`, mixed and pitched
   in `audio.js`), shared uniforms
-- `src/ui/` the map (continent, window, pin), the drop-down lists, styles
+- `src/ui/` the flight panel, the map (continent, window, pin, street-map
+  tiles), the drop-down lists, styles
 - `src/main.js` boot, game loop, flight logic
 
-Apart from the elevation, imagery and building tiles, the baked airfields and
+Apart from the elevation, imagery, building and land cover tiles, the baked airfields and
 towns and the sound recordings, everything (detail textures, clouds, trees,
 aircraft) is generated in code.
 

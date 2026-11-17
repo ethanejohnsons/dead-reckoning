@@ -350,10 +350,8 @@ float cloudDensity(vec3 p, Site s, float fp, int tier) {
 // term is then, say, od / (od + 1.5).
 export const CLOUD_SHADOW_UNIFORMS = ['tWxC', 'tCloudNoise', 'tCloudDetail', 'tCloudCurl', 'uCloudDriftN', 'uCloudDriftM', 'uCloudDriftD', 'uCloudDriftC', 'uCloudDriftW', 'uCloudDriftV', 'uCloudDriftS', 'uCloudShear', 'uCloudAniso', 'uCloudCells', 'uCloudFogBank', 'uCloudFogAmt'];
 // The holders exist from the moment this module loads, so a terrain shader built before the renderer has them.
-// (uCloudDriftM and uCloudDriftD carry three components here, whatever env.js first gave them.)
 for (const k of CLOUD_SHADOW_UNIFORMS) {
-  if (k === 'uCloudDriftM' || k === 'uCloudDriftD') (ENV[k] || (ENV[k] = {})).value = new THREE.Vector3();
-  else if (k === 'uCloudFogBank') ENV[k] = { value: [0, 1, 2, 3].map(() => new THREE.Vector4(0, 0, 1, -1e5)) };
+  if (k === 'uCloudFogBank') ENV[k] = { value: [0, 1, 2, 3].map(() => new THREE.Vector4(0, 0, 1, -1e5)) };
   else if (k === 'uCloudFogAmt') ENV[k] = { value: new THREE.Vector4() };
   else if (!ENV[k]) ENV[k] = { value: k[0] === 't' ? null : k === 'uCloudCells' ? 0 : new THREE.Vector2(k === 'uCloudAniso' || k === 'uCloudShear' ? 1 : 0, 0) };
 }
@@ -1278,7 +1276,7 @@ void main() { outColor = vec4(cloudShadowDepth(texelFetch(tPts, ivec2(gl_FragCoo
     return out;
   }
 
-  /** 'low' | 'med' | 'high'. (A numeric scale from the old API maps to the nearest tier.) */
+  /** 'low' | 'med' | 'high' | 'ultra'. (A numeric scale from the old API maps to the nearest tier.) */
   setQuality(tier) {
     if (typeof tier === 'number') tier = tier < 0.45 ? 'low' : tier > 0.65 ? 'high' : 'med';
     if (!TIERS[tier] || tier === this.tier) return;

@@ -86,20 +86,29 @@ ENV.tSeason = { value: null };
 /**
  * GLSL (after REGION_GLSL): seasonAt(p) for a point of the world, xyzw: leaves out (0 bare .. 1 full), turned (the
  * fall color, of what is still out), fresh (the light green of new leaves), dormant (grass gone to straw).
+ *
+ * The map is coarse (2 km a texel), so a shader short of texture units can read it in its vertex stage instead:
+ * SEASON_MAP_GLSL there, seasonMap(xz) passed on as a varying, and SEASON_OF_GLSL in the fragment stage,
+ * seasonOf(that, height), with no mention of tSeason (the terrain does this: world/chunks.js).
  */
-export const SEASON_GLSL = /* glsl */`
+export const SEASON_MAP_GLSL = /* glsl */`
 uniform sampler2D tSeason;
+// The map at a place: the season's lowland temperature (deg C), and how much warmer than an ordinary day the season
+// makes the place (deg C; negative in winter).
+vec2 seasonMap(vec2 xz) { return texture2D(tSeason, xz / (2.0 * uWxHalf) + 0.5).rg; }`;
+export const SEASON_OF_GLSL = /* glsl */`
 uniform vec4 uSeason;           // x: 1 while the days warm (spring), 0 while they cool (fall), in between at the turn
-vec4 seasonAt(vec3 p) {
-  float T = texture2D(tSeason, p.xz / (2.0 * uWxHalf) + 0.5).r - 0.0065 * max(p.y, 0.0), up = smoothstep(0.35, 0.65, uSeason.x);
+vec4 seasonOf(vec2 s, float y) {
+  float T = s.r - 0.0065 * max(y, 0.0), up = smoothstep(0.35, 0.65, uSeason.x);
   float leaf = mix(smoothstep(6.0, 11.0, T), smoothstep(12.0, 19.0, T), up);
   float turned = (1.0 - up) * (1.0 - smoothstep(15.0, 22.0, T));
   float fresh = up * smoothstep(12.0, 18.0, T) * (1.0 - smoothstep(21.0, 27.0, T));
   float dormant = 1.0 - smoothstep(5.0, 13.0, T);
   return vec4(leaf, turned, fresh, dormant);
-}
-// How much warmer than an ordinary day the season makes this place (deg C; negative in winter).
-float seasonShift(vec2 xz) { return texture2D(tSeason, xz / (2.0 * uWxHalf) + 0.5).g; }`;
+}`;
+export const SEASON_GLSL = SEASON_MAP_GLSL + SEASON_OF_GLSL + /* glsl */`
+vec4 seasonAt(vec3 p) { return seasonOf(seasonMap(p.xz), p.y); }
+float seasonShift(vec2 xz) { return seasonMap(xz).g; }`;
 export const SEASON_UNIFORMS = ['tSeason', 'uSeason'];
 
 // What the surface shaders need to know about the place: x: the tree line at the window's center (m),

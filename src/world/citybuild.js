@@ -1,11 +1,13 @@
 // Turns one vector tile of building footprints into meshes. Pure arithmetic on typed arrays (no DOM, no
 // three.js objects), so it runs in the city worker and can be exercised from Node.
 //
-//   parseTile   the tile's `building` layer -> a list of buildings in meters from the tile's northwest
-//               corner (+x east, +z south), each with a height, a kind and its colors decided once, so
-//               every level of detail of a tile agrees about them
-//   buildLevel  one level of detail of a tile (or of one quarter of it) -> vertex and index arrays in
-//               chunks of at most 60,000 vertices, the footprints for collision, and the obstruction lights
+//   parseTile     the tile's `building` layer -> a list of buildings in meters from the tile's northwest
+//                 corner (+x east, +z south), each with a height, a kind and its colors decided once, so
+//                 every level of detail of a tile agrees about them; and its roads, bridges and water
+//   parseOverture the same list from a tile of Overture's buildings (world/overture.js), which the city
+//                 worker uses in place of the first tile's when it has it
+//   buildLevel    one level of detail of a tile (or of one quarter of it) -> vertex and index arrays in
+//                 chunks of at most 60,000 vertices, the footprints for collision, and the obstruction lights
 //   (the near level also carries the tile's roads as ribbons laid on the ground: see buildRoads)
 //
 // Levels:  'near'  everything, with pitched roofs on houses and plant on big flat roofs
@@ -181,7 +183,44 @@ export function parseTile(buf, size, tx, ty) {
     const cls = ROAD_CLASS.indexOf(f.props.class), one = +f.props.oneway === -1 ? -1 : +f.props.oneway === 1 || cls === 0 || f.props.ramp ? 1 : 0;
     for (const g of f.geom) { if (g.length < 4) continue; const p = new Float32Array(g.length); for (let i = 0; i < g.length; i++) p[i] = g[i] * k; roads.push({ p, hw: f.props.ramp ? w[0] * 0.75 : w[0], rank: w[1], cls, one, ramp: f.props.ramp ? 1 : 0 }); }
   }
-  if (!L) return { blds, roads, size, tall: 0, br, water };
+  if (L) addBuildings(L, size, blds);
+  classify(blds, size, tx, ty);
+  let tall = 0; for (const b of blds) if (b.top >= TALL) tall++;
+  return { blds, roads, size, tall, br, water };
+}
+
+/**
+ * The buildings of the same tile from Overture's own tiles (world/overture.js): OpenStreetMap's where it has them,
+ * and elsewhere footprints traced from aerial imagery by Microsoft, Google and Esri, most with a height. A
+ * building drawn in parts gives its parts and not its outline, as OpenMapTiles does. Returns { blds, tall }.
+ */
+const FLOOR = 3.66;               // meters a floor, as OpenMapTiles counts them
+export function parseOverture(buf, size, tx, ty) {
+  const blds = [];
+  if (buf) {
+    const layers = decodeTile(buf, { building: true, building_part: true }), B = layers.building, P = layers.building_part;
+    const parted = new Set();
+    if (P) for (const f of P.features) if (f.props.building_id && !f.props.is_underground) parted.add(f.props.building_id);
+    // (the props the OpenMapTiles reader below knows)
+    const asOmt = (L, outline) => ({
+      extent: L.extent,
+      features: L.features.map((f) => {
+        const p = f.props, h = +p.height > 0 ? +p.height : +p.num_floors > 0 ? +p.num_floors * FLOOR : 0;
+        const mh = +p.min_height > 0 ? +p.min_height : +p.min_floor > 0 ? +p.min_floor * FLOOR : 0;
+        const hide = !!p.is_underground || (outline && p.has_parts && parted.has(p.id));
+        return { type: f.type, geom: f.geom, props: { render_height: h > mh ? h : 0, render_min_height: mh, colour: p.facade_color, hide_3d: hide } };
+      }),
+    });
+    if (B) addBuildings(asOmt(B, true), size, blds);
+    if (P) addBuildings(asOmt(P, false), size, blds);
+  }
+  classify(blds, size, tx, ty);
+  let tall = 0; for (const b of blds) if (b.top >= TALL) tall++;
+  return { blds, tall };
+}
+
+/** The footprints of a `building` layer as OpenMapTiles has it -> buildings (pushed onto blds), clipped to the tile. */
+function addBuildings(L, size, blds) {
   const ext = L.extent, k = size / ext, lo = -0.0155 * ext, hi = ext * 1.0155;
   for (const f of L.features) {
     if (f.type !== 3 || f.props.hide_3d) continue;
@@ -216,9 +255,6 @@ export function parseTile(buf, size, tx, ty) {
       blds.push(cur);
     }
   }
-  classify(blds, size, tx, ty);
-  let tall = 0; for (const b of blds) if (b.top >= TALL) tall++;
-  return { blds, roads, size, tall, br, water };
 }
 
 /** Decide each building's height where the map gives none, what kind of building it is, and its colors. */

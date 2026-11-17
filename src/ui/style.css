@@ -110,7 +110,6 @@ kbd { display: inline-block; min-width: 1.6rem; padding: 0.08rem 0.4rem; font: 6
 #loadBar i { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 2px; transition: width 0.18s linear; }
 #stream { position: absolute; top: 3.2rem; left: 0.75rem; display: flex; align-items: center; gap: 0.6rem; padding: 0.3rem 0.75rem;
   font-size: 0.7rem; letter-spacing: 0.09em; text-transform: uppercase; color: var(--dim); background: var(--glass); border: 1px solid var(--line); border-radius: 999px; }
-#stream[hidden] { display: none; }
 #stream .bar { width: 7rem; height: 3px; background: var(--fill-2); border-radius: 2px; overflow: hidden; }
 #stream .bar i { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 2px; transition: width 0.25s linear; }
 #stream .num { color: var(--faint); min-width: 2.6em; text-align: right; }
@@ -184,7 +183,6 @@ kbd { display: inline-block; min-width: 1.6rem; padding: 0.08rem 0.4rem; font: 6
 .fp-ann { display: flex; gap: 0.35rem; }
 .ann { padding: 0.2rem 0.65rem; font-size: var(--t-xs); font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; white-space: nowrap; color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 2rem; }
 .ann.nav { display: inline-flex; align-items: center; gap: 0.1rem; }
-.ann.nav[hidden] { display: none; }
 .ann.nav .arrow { width: 0.8rem; height: 0.8rem; margin-right: 0.35rem; }
 .ann b { margin-left: 0.3rem; color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: 0.02em; text-transform: none; }
 .fp-body { display: flex; align-items: stretch; height: 3.9rem; padding: 0 0.3rem; contain: layout style; white-space: nowrap; }
@@ -250,7 +248,6 @@ body.pit .fp-cell + .fp-cell { border-left: 1px solid var(--line); }
 body.pit .val b { font-size: 1.05rem; }
 body.pit .fp-cell.alert::before { inset: 0.2rem 0.15rem; }
 body.pit .ann { padding: 0.3rem 0.65rem; }
-body.pit #toast { top: 3.7rem; }
 
 /* With the map open the HUD keeps to what is left of the picture; a narrow picture gets the short panel. */
 body.chart-open #hud { right: var(--chart-w); }
@@ -293,11 +290,10 @@ body.chart-open #hud { right: var(--chart-w); }
 /* ---------- the map ---------- */
 #chartPanel { position: fixed; z-index: 20; top: 0; right: 0; bottom: 0; width: var(--chart-w); display: flex; flex-direction: column; background: #0d1218; border-left: 1px solid var(--line-2); box-shadow: -1rem 0 3rem rgba(0, 0, 0, 0.45); }
 #chartPanel header { display: flex; gap: 0.5rem; align-items: center; padding: 0.5rem 0.5rem 0.5rem 1rem; border-bottom: 1px solid var(--line); }
-#chartInfo { margin-left: 0.4rem; font-size: var(--t-s); color: var(--dim); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#chartInfo { flex: 0 1 auto; min-width: 0; margin-left: 0.4rem; font-size: var(--t-s); color: var(--dim); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 #chart { flex: 1; width: 100%; min-height: 0; cursor: grab; touch-action: none; }
 #chart:active { cursor: grabbing; }
 #chartPanel header .chip { flex: none; white-space: nowrap; }
-#chartInfo { flex: 0 1 auto; min-width: 0; }
 #chartPanel .chip.go { color: var(--on-accent); background: var(--accent); border-color: var(--accent); font-weight: 600; }
 #chartPanel .chip.go:hover { background: #a3e6f9; border-color: #a3e6f9; }
 body.title.chart-open #splash { right: var(--chart-w); }    /* the title screen makes room for it */

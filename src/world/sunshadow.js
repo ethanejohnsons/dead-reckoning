@@ -67,7 +67,7 @@ export class SunShadows {
     this.setQuality('high');
   }
 
-  /** 'low' | 'med' | 'high': the size of the maps. */
+  /** 'low' | 'med' | 'high' | 'ultra': the size of the maps. */
   setQuality(level) {
     const [acSize, map] = TIERS[level] || TIERS.med, r = this.renderer;
     if (this.acSize === acSize && this.map === map) return;

@@ -9,12 +9,13 @@
 import * as THREE from 'three';
 import * as dem from './dem.js';
 import { metersPerPixel, WORLD_HALF, LAND_HALF } from './geo.js';
-import { flatsIn, applyFlats, flatWeight, baseHeight, baseWater, URBAN, REGION_GLSL, REGION_UNIFORMS, SEASON_GLSL, SEASON_UNIFORMS } from './terrain.js';
+import { flatsIn, applyFlats, flatWeight, baseHeight, baseWater, URBAN, REGION_GLSL, REGION_UNIFORMS, SEASON_GLSL, SEASON_MAP_GLSL, SEASON_OF_GLSL, SEASON_UNIFORMS } from './terrain.js';
 import { townsIn, urbanDensity } from './towns.js';
 import { mulberry32 } from '../core/noise.js';
 import { ENV } from '../core/env.js';
 import { Trees } from './trees.js';
 import { BUILDING_COVER_UNIFORMS, WATER_COVER_UNIFORMS, WATER_COVER_GLSL } from './cities.js';
+import { LAND_COVER_UNIFORMS, LAND_COVER_GLSL } from './landcover.js';
 import { GROUND_LIGHT_GLSL, GROUND_LIGHT_UNIFORMS } from './groundlight.js';
 import { ATMO_GLSL, ATMO_UNIFORMS } from './atmosphere.js';
 import { IMAGERY_GLSL, IMAGERY_UNIFORMS } from './imagery.js';
@@ -89,7 +90,9 @@ const VERT = /* glsl */`
 attribute float aLayer;
 attribute vec4 aMorph;          // height of the parent's mesh here, the parent's layer, the distance at which the parent takes over (0: never), the parent's middle height
 attribute vec2 aUvP;            // this vertex in the parent's data texture
-varying vec3 vWorld; varying vec2 vUv, vUvP; centroid varying float vDist, vLayer, vLayerP, vMorph;   // centroid: see the note above VERT
+uniform float uWxHalf;
+${SEASON_MAP_GLSL}
+varying vec3 vWorld; varying vec2 vUv, vUvP, vSeason; centroid varying float vDist, vLayer, vLayerP, vMorph;   // centroid: see the note above VERT
 void main() {
   vUv = uv; vLayer = aLayer; vUvP = aUvP; vLayerP = aMorph.y;
   vec3 pos = position;
@@ -98,6 +101,7 @@ void main() {
   vMorph = aMorph.z > 0.0 ? smoothstep(${MORPH_FROM} * aMorph.z, ${MORPH_TO} * aMorph.z, d) : 0.0;
   pos.y = mix(position.y, aMorph.x, vMorph);
   vWorld = (modelMatrix * vec4(pos, 1.0)).xyz;
+  vSeason = seasonMap(vWorld.xz);    // here, not in FRAG, which already reads the 16 textures a Mac allows a stage
   vec4 mv = modelViewMatrix * vec4(pos, 1.0);
   vDist = length(mv.xyz);
   gl_Position = projectionMatrix * mv;
@@ -108,23 +112,25 @@ precision highp sampler2DArray;
 uniform sampler2DArray tChunks;
 uniform sampler2D tFields;
 uniform float uLandHalf;
-varying vec3 vWorld; varying vec2 vUv, vUvP; centroid varying float vDist, vLayer, vLayerP, vMorph;   // centroid: see the note above VERT
+varying vec3 vWorld; varying vec2 vUv, vUvP, vSeason; centroid varying float vDist, vLayer, vLayerP, vMorph;   // centroid: see the note above VERT
 ${LIGHT_GLSL}
 ${REGION_GLSL}
-${SEASON_GLSL}
+${SEASON_OF_GLSL}
 ${WATER_COVER_GLSL}
+${LAND_COVER_GLSL}
 
 // The season on what grows (se: seasonAt). Green that is dark is canopy: broadleaf woods turn red, orange and gold in
 // patches (n: a slow noise) and go gray-brown when bare, unless they are conifers (coni, or darker still: evergreen
 // woods are the darkest thing in the picture). Green that is light is grass and crops: straw when dormant, a
-// little yellow in the fall, a brighter green in spring.
-vec3 seasonGround(vec3 c, vec4 se, float coni, float n) {
+// little yellow in the fall, a brighter green in spring. field: how far the map says this is open country (landCover),
+// where dark green is a crop, not canopy.
+vec3 seasonGround(vec3 c, vec4 se, float coni, float n, float field) {
   float lum = dot(c, vec3(0.3, 0.55, 0.15));
   float mx = max(c.r, max(c.g, c.b)), chroma = (mx - min(c.r, min(c.g, c.b))) / max(mx, 1.0e-4);
   float green = clamp((c.g - c.r) / max(c.g, 1.0e-4) * 3.0, 0.0, 1.0);
   // (Woods in the satellite picture are often a dark teal, as blue as they are green: what marks them is that they are
   // dark, colored rather than gray like asphalt, and not red-brown like soil.)
-  float canopy = 1.0 - smoothstep(0.07, 0.16, lum);
+  float canopy = (1.0 - smoothstep(0.07, 0.16, lum)) * (1.0 - field);
   float decid = canopy * (1.0 - coni) * smoothstep(0.006, 0.02, lum) * smoothstep(0.12, 0.3, chroma) * (1.0 - smoothstep(0.95, 1.15, c.r / max(c.g, 1.0e-4)));
   vec3 fall = mix(mix(vec3(0.75, 0.17, 0.06), vec3(0.85, 0.40, 0.07), smoothstep(0.3, 0.55, n)), vec3(0.70, 0.55, 0.10), smoothstep(0.55, 0.8, n));
   fall *= lum / dot(fall, vec3(0.3, 0.55, 0.15)) * 1.25;              // (turned leaves are brighter than green ones)
@@ -169,6 +175,10 @@ void main() {
   // (thinning out to the odd irrigated field where it is dry), but not in the high valleys of the mountains.
   float farm = (1.0 - smoothstep(0.03, 0.09, slope)) * smoothstep(0.25, 0.42, mJ) * (1.0 - smoothstep(0.66, 0.78, mJ)) * (1.0 - smoothstep(tl - 1500.0, tl - 1100.0, h));
   float forest = smoothstep(0.42, 0.6, mJ) * (1.0 - smoothstep(tl - 100.0, tl + 50.0, h)) * (1.0 - smoothstep(0.38, 0.62, slope)) * (1.0 - 0.9 * farm);
+  // and what the map says (world/landcover.js): its woods are woods, its fields and prairie are open
+  vec2 lc = landCover(vWorld.xz);
+  float field = lc.y * (1.0 - lc.x);
+  forest = max(forest * (1.0 - field), lc.x * (1.0 - smoothstep(tl - 100.0, tl + 50.0, h)));
   float alpine = smoothstep(tl - 50.0, tl + 350.0, h);
   // Conifers hold the mountains and much of the north woods; the rest is broadleaf.
   float cDrop = min(1700.0, 0.5 * tl + 900.0 * smoothstep(1300.0, 900.0, tl)), cBand = min(600.0, 0.25 * tl);    // (as world/treeplace.js)
@@ -208,8 +218,8 @@ void main() {
   float shore = (1.0 - smoothstep(0.6, 3.5, h - 0.2)) * (1.0 - smoothstep(0.05, 0.2, slope));
   alb = mix(alb, vec3(0.33, 0.32, 0.30) * (0.8 + 0.4 * d1.r), shore * (1.0 - forest));
   // the season, on the rules' woods and grass
-  vec4 se = seasonAt(vWorld);
-  alb = seasonGround(alb, se, conifer, d2.r * 0.6 + d3.g * 0.4);
+  vec4 se = seasonOf(vSeason, vWorld.y);
+  alb = seasonGround(alb, se, conifer, d2.r * 0.6 + d3.g * 0.4, field);
   // Snow. The regional map carries the level it lies above on an ordinary day (see snowLine), lower on the faces
   // turned from the sun. Two kinds: the standing snow of the high mountains, whose line climbs on a warm day; and
   // what the weather has laid down. Cold air alone whitens nothing: the snow itself has to fall (uSnow, the pack
@@ -272,11 +282,12 @@ void main() {
     float grit = mix(d0.g, 0.5 * (d0.g + texture2D(tDetail, R2 * vWorld.xz / 7.3).r), det.a);
     photo *= mix(1.0, 1.0 - 0.5 * amp + amp * fine, exp(-vDist / 2200.0) * (1.0 - 0.8 * faceK) * (1.0 - 0.7 * det.a)) * mix(1.0, 0.66 + 0.68 * grit, max(closeK, det.a * exp(-vDist / 260.0)));
     photo *= mix(1.0, 0.72 + 0.56 * strata, faceK * midK);
-    // Under the trees the ground is in their shade: darken woodland in the picture out to where the trees end.
-    float woodsP = smoothstep(0.05, 0.024, dot(im.rgb, vec3(0.3, 0.55, 0.15))) * step(im.r, im.g * 1.1) * step(im.b, im.g * 1.15);
+    // Under the trees the ground is in their shade: darken woodland in the picture out to where the trees end
+    // (not the dark green of a field the map says is open: the trees leave those alone, see world/trees.js).
+    float woodsP = smoothstep(0.05, 0.024, dot(im.rgb, vec3(0.3, 0.55, 0.15))) * step(im.r, im.g * 1.1) * step(im.b, im.g * 1.15) * (1.0 - field);
     photo *= mix(1.0, 0.6, woodsP * (1.0 - smoothstep(3500.0, 9000.0, vDist)));
     // The picture was taken in summer: the season goes on it as on the rules.
-    photo = seasonGround(photo, se, conifer * 0.3, d2.r * 0.6 + d3.g * 0.4);     // (the rules' conifers are a guess: the picture's own darkest woods count too)
+    photo = seasonGround(photo, se, conifer * 0.3, d2.r * 0.6 + d3.g * 0.4, field);     // (the rules' conifers are a guess: the picture's own darkest woods count too)
     // Its own snow and ice are already in the picture; only add what the weather has laid down. The country still
     // shows through it: roads are cleared and driven gray, and what was dark in the picture (woods, most of all past
     // where the trees themselves are drawn) stays darker than the open fields.
@@ -284,7 +295,7 @@ void main() {
     vec3 photoSnow = mix(photo, snowCol * (1.0 - 0.3 * hardP), fresh * mix(0.5, 1.0, smoothstep(0.02, 0.06, lumP)) * (1.0 - 0.5 * hardP));
     // The picture's own snow is a summer's: the snow a cold season lays (the standing snow, where the season is well
     // colder than an ordinary day) goes on it like fresh snow, the plowed roads and the woods showing through.
-    float winter = standing * smoothstep(-3.0, -9.0, seasonShift(vWorld.xz));
+    float winter = standing * smoothstep(-3.0, -9.0, vSeason.g);
     photoSnow = mix(photoSnow, snowCol * (1.0 - 0.3 * hardP), winter * mix(0.55, 1.0, smoothstep(0.02, 0.06, lumP)) * (1.0 - 0.6 * hardP));
     snow = max(snow, winter * im.a);
     alb = mix(mix(alb, snowCol, snow), photoSnow, im.a);     // im.a: an arriving tile fades in over the rules
@@ -314,7 +325,7 @@ void main() {
   // the sheen of wet roads and rock: the sky mirrored at a low angle, and the sun's glint
   float sheen = wetG * mix(0.1, 0.8, hard);
   if (sheen > 0.02) {
-    float fr = pow(1.0 - max(dot(Nd, Vv), 0.0), 5.0);
+    float fr = pow(clamp(1.0 - dot(Nd, Vv), 0.0, 1.0), 5.0);
     vec3 Rw = reflect(-Vv, Nd); Rw.y = abs(Rw.y);
     float F = (0.02 + 0.6 * fr) * sheen;
     col = col * (1.0 - F) + skyRadiance(Rw) * F + uSunCol * (shadow * sheen * pow(max(dot(reflect(-L, Nd), Vv), 0.0), 60.0) * 0.5);
@@ -340,7 +351,7 @@ void main() {
     vec2 wxz = (w1 + w2 * 0.6) * (0.2 + 1.0 * wind + 0.8 * rough) * fade * (1.0 - 0.45 * lakeK) + w3 * (0.03 + 0.24 * wind + 0.3 * rough) * (1.0 - 0.8 * lakeK)
       + w4 * (1.1 * rough * exp(-vDist / 12000.0));
     vec3 wn = normalize(vec3(wxz.x, 1.0, wxz.y));
-    float fres = 0.02 + 0.98 * pow(1.0 - max(dot(Vv, wn), 0.0), 5.0);
+    float fres = 0.02 + 0.98 * pow(clamp(1.0 - dot(Vv, wn), 0.0, 1.0), 5.0);
     vec3 R = reflect(-Vv, wn); R.y = abs(R.y);
     vec3 refl = skyRadiance(R);
     float depth = mix(max(-reg.r, 0.0), 40.0, lake);
@@ -394,7 +405,7 @@ void main() {
 }`;
 
 const SHARED = ['uSunDir', 'uSunCol', 'uAmbSky', 'uAmbGround', 'uCloudDrift', 'uWxHalf', 'uTime', 'uTAnom', 'uWind', 'uSea', 'uWet', 'uSnow', 'uGroundT',
-  'tRegion', 'tWxA', 'tWxB', 'tDetail', ...ATMO_UNIFORMS, ...IMAGERY_UNIFORMS, ...GROUND_LIGHT_UNIFORMS, ...REGION_UNIFORMS, ...SEASON_UNIFORMS, ...WATER_COVER_UNIFORMS, ...BUILDING_COVER_UNIFORMS];
+  'tRegion', 'tWxA', 'tWxB', 'tDetail', ...ATMO_UNIFORMS, ...IMAGERY_UNIFORMS, ...GROUND_LIGHT_UNIFORMS, ...REGION_UNIFORMS, ...SEASON_UNIFORMS, ...WATER_COVER_UNIFORMS, ...BUILDING_COVER_UNIFORMS, ...LAND_COVER_UNIFORMS];
 const sharedUniforms = () => Object.fromEntries(SHARED.map((k) => [k, ENV[k]]));
 
 /** Tiling noise: r, g = two fractal value-noise fields; b, a = the slope of the first (a detail normal). */
@@ -529,7 +540,7 @@ export class Terrain {
       uniforms: { ...sharedUniforms(), tChunks: { value: this.atlas }, tFields: { value: makeFieldsTexture() }, uLandHalf: { value: LAND_HALF } },
       vertexShader: VERT, fragmentShader: FRAG,
     });
-    this.trees = new Trees(this.group, LIGHT_GLSL_TREES + REGION_GLSL + SEASON_GLSL + WATER_COVER_GLSL, sharedUniforms, defines);
+    this.trees = new Trees(this.group, LIGHT_GLSL_TREES + REGION_GLSL + SEASON_GLSL + WATER_COVER_GLSL + LAND_COVER_GLSL, sharedUniforms, defines);
     this.index = makeIndex(); this.uv = makeUv(); this.uvParent = [0, 1, 2, 3].map((q) => makeUvParent(q & 1, q >> 1));
     this.queue = []; this.shown = []; this.chunkCount = 0;
     this.done = []; this.flying = 0; this.nudge = null;       // builds come back from the workers; in flight; who to tell

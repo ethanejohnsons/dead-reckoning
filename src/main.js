@@ -17,12 +17,14 @@ import { skyRadiance } from './world/atmosphere.js';
 import { Airfields } from './world/airfield.js';
 import { TownLights, loadTowns, placeTowns, TOWNS_ATTRIBUTION } from './world/towns.js';
 import { Cities, CITY_ATTRIBUTION } from './world/cities.js';
+import { LandCover } from './world/landcover.js';
+import { OVERTURE_ATTRIBUTION } from './world/overture.js';
 import { Imagery, IMAGERY_ATTRIBUTION } from './world/imagery.js';
 import { GroundLight } from './world/groundlight.js';
 import { SunShadows } from './world/sunshadow.js';
 import { Weather, SITUATIONS, CLOUD_SIGMA } from './weather/weather.js';
 import { CloudRenderer } from './weather/clouds.js';
-import { Precip } from './weather/precip.js';
+import { Precip, airframeFor } from './weather/precip.js';
 import { Aircraft, FT, NM } from './aircraft/physics.js';
 import { buildAircraft, animateAircraft, disposeAircraft } from './aircraft/model.js';
 import { AIRCRAFT, aircraftById } from './aircraft/variants.js';
@@ -32,7 +34,7 @@ import { perf } from './render/perf.js';
 import { uploads } from './render/budget.js';
 import { DynRes } from './render/dynres.js';
 import { AutoQuality, tierForHardware, TIER_NAMES } from './render/autoquality.js';
-import { FlightPanel, FrameMeter, weatherWords, passRows, fahrenheit, visibilityWords } from './ui/hud.js';
+import { FlightPanel, FrameMeter, weatherWords, passRows, fahrenheit, visibilityWords, hdg3 } from './ui/hud.js';
 import { enhanceSelect, syncPickers } from './ui/picker.js';
 
 const $ = (id) => document.getElementById(id);
@@ -67,10 +69,10 @@ try {
 } catch { /* a corrupt save just starts fresh */ }
 const persist = () => { try { localStorage.setItem(SAVE_KEY, JSON.stringify({ v: SAVE_VERSION, opts: S.opts, settings: S.settings })); } catch { /* storage unavailable */ } };
 
-let renderer, scene, camera, terrain, sky, airfields, towns, cities, imagery, weather, clouds, precip, chart, input, sound, groundLight, sunShadows;
+let renderer, scene, camera, terrain, sky, airfields, towns, cities, landCover, imagery, weather, clouds, precip, chart, input, sound, groundLight, sunShadows;
 let ac, model, cityShadeT = 0, cityShadeN = 0;
 const roadClock = { time: 0, hour: 12 };   // what the traffic runs on (world/traffic.js)
-const wx = { x: 0, y: 0, z: 0, turb: 0, temp: 15, cloud: 0, precip: 0, snow: false, icing: 0, visibility: 60000, overcast: 0, shade: 0, col: null };
+const wx = { x: 0, y: 0, z: 0, turb: 0, temp: 15, cloud: 0, precip: 0, snow: false, snowMix: 0, icing: 0, visibility: 60000, overcast: 0, shade: 0, col: null };
 const env = { wind: new THREE.Vector3(), turb: 0, ground: groundHeight, surface: surfaceAt };
 const ctl = { pitch: 0, roll: 0, yaw: 0 };
 const ap = { on: false, hdg: 0, alt: 1000 };
@@ -106,7 +108,7 @@ const msg = (t, f) => { $('loadMsg').textContent = t; loadBar(f ?? loadFrac + (1
 const stream = { peak: 0, shown: false, quiet: 0 };
 function streamPending() {
   return dem.pendingCount() + terrain.flying + terrain.done.length + terrain.trees.farFlying + terrain.trees.farDone.length
-    + (imagery.enabled ? imagery.queue.size + imagery.inFlight.size + imagery.ready.length : 0) + cities.queue.length + cities.jobs.size;
+    + (imagery.enabled ? imagery.queue.size + imagery.inFlight.size + imagery.ready.length : 0) + cities.queue.length + cities.jobs.size + landCover.pending;
 }
 function updateStream(dt) {
   const n = streamPending(), el = $('stream');
@@ -124,7 +126,7 @@ function updateStream(dt) {
 
 async function boot() {
   $('splash').classList.add('loading');
-  $('credit').innerHTML = `${dem.ATTRIBUTION}<br>${IMAGERY_ATTRIBUTION}<br>${OSM_ATTRIBUTION}<br>${TOWNS_ATTRIBUTION}<br>${CITY_ATTRIBUTION}<br>${STARS_CREDIT}`;
+  $('credit').innerHTML = `${dem.ATTRIBUTION}<br>${IMAGERY_ATTRIBUTION}<br>${OSM_ATTRIBUTION}<br>${TOWNS_ATTRIBUTION}<br>${CITY_ATTRIBUTION}<br>${OVERTURE_ATTRIBUTION}<br>${STARS_CREDIT}`;
   if (!fieldById(S.opts.field)) S.opts.field = DEFAULT_FIELD;
   if (SEASONS[S.opts.season] === undefined) S.opts.season = 'summer';
   setSeason(seasonNow = S.opts.season);              // before the world is built: its climate is the season's
@@ -156,6 +158,7 @@ async function boot() {
   airfields = new Airfields(scene);
   towns = new TownLights(scene);
   cities = new Cities(scene, renderer);                 // real buildings, streamed around the aircraft (world/cities.js)
+  landCover = new LandCover(renderer);                  // where the map says woods and where open country, for the trees (world/landcover.js)
   precip = new Precip(scene);
   clouds = new CloudRenderer(renderer, weather);
   // Light on the ground: mountain shadow, cloud shadow and sky occlusion baked into maps around the camera,
@@ -183,7 +186,7 @@ async function boot() {
   onResize();
   addEventListener('resize', onResize);
   // Debug handle: lets tests drive the sim from the console without rendering every step.
-  window.DR = { S, ac, weather, precip, setWeather, imagery, terrain, camera, wx, ap, env, tick, input, clouds, sky, dem, AIRPORTS, FIELDS, REGION, toWorld, toLatLon, towns, cities, chart, loadWorld, ENV, skyRadiance, scene, renderer, get model() { return model; }, selectAircraft, groundLight, sunShadows, airfields, fly: (o) => { Object.assign(S.opts, o); return startFlight(); },
+  window.DR = { S, ac, weather, precip, setWeather, imagery, terrain, camera, wx, ap, env, tick, input, clouds, sky, dem, AIRPORTS, FIELDS, REGION, toWorld, toLatLon, towns, cities, landCover, chart, loadWorld, ENV, skyRadiance, scene, renderer, get model() { return model; }, selectAircraft, groundLight, sunShadows, airfields, fly: (o) => { Object.assign(S.opts, o); return startFlight(); },
     flyAt: (lat, lon) => startFlight({ lat, lon }), followAircraft,
     perf, uploads, res, auto, tier, applySettings,
     sim: (dt) => { S.time += dt; input.update(dt); if (S.mode === 'flying') simulate(dt * S.timeAccel); } };
@@ -224,6 +227,7 @@ async function loadWorld(place) {
   terrain?.reset(); airfields?.reset(); clearAirports();
   setRegion(place.lat, place.lon, place.title);
   cities?.reset();                                   // its tiles are laid out in the old window's meters
+  landCover?.reset();
   const say = `Downloading terrain round ${place.near}…`;
   await msg(say, 0.05);
   const base = await dem.loadBase(BN, (p) => { $('loadMsg').textContent = `${say} ${Math.round(p * 100)}%`; loadBar(0.05 + 0.55 * p); });
@@ -307,22 +311,28 @@ function onResize() {
   if (rw !== clouds.w || rh !== clouds.h) clouds.setSize(rw, rh);
 }
 
+let appliedTier = null;      // the tier the subsystems were last given (applySettings)
 function applySettings() {
   const s = S.settings;
   $('sSound').checked = s.sound; $('sInvert').checked = s.invert; $('sQuality').value = s.quality; $('sImagery').checked = s.imagery;
   if ($('sRes')) $('sRes').value = s.resolution === 'fixed' ? 'fixed' : 'auto';
   const q = tier();
   { const o = $('sQuality').querySelector('option[value="auto"]'), text = s.quality === 'auto' ? `Automatic (${TIER_NAMES[q]})` : 'Automatic'; if (o && o.textContent !== text) { o.textContent = text; syncPickers(); } }
-  imagery.enabled = s.imagery; imagery.setQuality(q === 'ultra' ? 'high' : q);
+  imagery.enabled = s.imagery;
   sound.setEnabled(s.sound);
-  clouds.setQuality(q);
-  terrain.setQuality(q);
-  sunShadows.setQuality(q);
-  sky.setQuality(q === 'ultra' ? 'high' : q);      // the sky's tables have no step above 'high'
-  cities.setQuality(q);
-  // the aircraft's own shadow map (three.js's): half the size on 'low'
-  const sh = sky.sun.shadow, shSize = q === 'low' ? 1024 : 2048;
-  if (sh.mapSize.x !== shSize) { sh.mapSize.set(shSize, shSize); sh.map?.dispose(); sh.map = null; }
+  // The tier only when it changes: some of these redraw maps or rebuild materials (any toggle comes through here).
+  if (q !== appliedTier) {
+    appliedTier = q;
+    imagery.setQuality(q === 'ultra' ? 'high' : q);
+    clouds.setQuality(q);
+    terrain.setQuality(q);
+    sunShadows.setQuality(q);
+    sky.setQuality(q === 'ultra' ? 'high' : q);      // the sky's tables have no step above 'high'
+    cities.setQuality(q);
+    // the aircraft's own shadow map (three.js's): half the size on 'low'
+    const sh = sky.sun.shadow, shSize = q === 'low' ? 1024 : 2048;
+    if (sh.mapSize.x !== shSize) { sh.mapSize.set(shSize, shSize); sh.map?.dispose(); sh.map = null; }
+  }
   res.enabled = s.resolution !== 'fixed';
   perf.watch = res.enabled;                // one GPU timer a frame for it to steer by
   if (!res.enabled) res.scale = res.max;
@@ -406,6 +416,7 @@ function selectAircraft(id) {
   clouds.fx.exhaust = model.parts.exhaust;
   clouds.subjBox = null;                          // the subject's cached bounding box belongs to the old model
   precip.tips = model.parts.wingtips;
+  precip.setAirframe(airframeFor(v.geom));        // what rain is kept out of and hail strikes
 }
 
 async function enterSplash() {
@@ -463,7 +474,7 @@ async function startFlight(pin = null) {
   // Make sure the ground under the wheels is at full detail before handing over.
   await dem.loadArea(dem.MAX_Z, ac.pos.x - 1800, ac.pos.z - 1800, ac.pos.x + 1800, ac.pos.z + 1800, 0);
   await terrain.warm(camera.position, 8000);
-  const at = `${(Math.round((ac.pos.y * FT) / 100) * 100).toLocaleString()} feet, heading ${String(Math.round(magnetic(ac.heading))).padStart(3, '0')}°`;
+  const at = `${(Math.round((ac.pos.y * FT) / 100) * 100).toLocaleString()} feet, heading ${hdg3(magnetic(ac.heading))}°`;
   if (pin) { const near = nearestAirport(ac.pos.x, ac.pos.z); toast(`${near.airport ? `${Math.round(near.dist / NM)} NM from ${near.airport.name}` : fmtPlace(pin.lat, pin.lon)}, at ${at}. You have control. C for the cockpit, Esc for controls.`, 9); }
   else if (air) toast(`Over ${a.name} at ${at}. You have control. C for the cockpit, Esc for controls.`, 9);
   else toast(`Runway ${rwy}, ${a.name}. Hold R for power, ease back at ${aircraftById(S.plane).speeds?.vr ?? 55} knots. C for the cockpit, Esc for controls.`, 9);
@@ -604,7 +615,7 @@ function drawChart() {
   if (pin) {
     const p = toWorld(pin.lat, pin.lon), dx = p.x - ac.pos.x, dz = p.z - ac.pos.z;
     const what = pin.field ? `${fieldById(pin.field)?.name || pin.field} (${pin.field})` : 'Pin';
-    say = inFlight ? `${what} ${String(Math.round(magnetic((Math.atan2(dx, -dz) / D2R + 360) % 360)) || 360).padStart(3, '0')}° ${Math.round(Math.hypot(dx, dz) / NM)} NM` : pin.field ? what : `Pin at ${fmtPlace(pin.lat, pin.lon)}`;
+    say = inFlight ? `${what} ${hdg3(magnetic(Math.atan2(dx, -dz) / D2R))}° ${Math.round(Math.hypot(dx, dz) / NM)} NM` : pin.field ? what : `Pin at ${fmtPlace(pin.lat, pin.lon)}`;
   } else if (!inFlight) say = 'Click an airfield, or anywhere to drop a pin';
   if (say !== chartSaid) { chartSaid = say; $('chartInfo').textContent = say; }
   if ($('chartFly').hidden !== !pin) $('chartFly').hidden = !pin;
@@ -820,7 +831,7 @@ function simulate(dt) {
   S.frost += ((wx.icing > 0 ? 0.55 : 0) - S.frost) * Math.min(1, dt * (wx.icing > 0 ? 0.03 : wx.temp > 1 ? 0.3 : 0.08));   // melts quickly in warm air
   // Rain on the airframe (a sheen on the paint, see animateAircraft): a few seconds of rain or a minute in cloud wets it;
   // the airflow dries it in about a minute of flight, standing still in mild air it takes several.
-  { const rain = wx.precip * (1 - (wx.snowMix ?? (wx.snow ? 1 : 0))), to = rain > 0.03 ? 1 : wx.cloud > 0 && wx.temp > 0 ? 0.6 : 0;
+  { const rain = wx.precip * (1 - wx.snowMix), to = rain > 0.03 ? 1 : wx.cloud > 0 && wx.temp > 0 ? 0.6 : 0;
     if (S.acWetFor !== f) { S.acWetFor = f; S.acWet = rain > 0.03 ? 1 : 0; }               // a new flight: it has stood out in whatever is falling
     const w = S.acWet;
     S.acWet = clamp(w + (to > w ? dt * (0.05 + 0.4 * rain) : -dt * (1 / 300 + ac.tas / 4200) * clamp(0.4 + wx.temp / 15, 0.2, 1.6)), 0, Math.max(to, w)); }
@@ -956,7 +967,7 @@ function tick(dt, shown = false) {
   { const w = ENV.uWind.value, seaT = Math.min(1, Math.max(Math.min(1, Math.max(0, (w - 5) / 11)), SEA_STATE[weather.kind] || 0, 0.8 * wx.precip));
     ENV.uSea.value = S.mode === 'flying' && dt > 0 && !seaSnap ? ENV.uSea.value + (seaT - ENV.uSea.value) * Math.min(1, dt / Math.max(30, 0.6 * (weather.trans?.remaining || 0))) : seaT; seaSnap = false; }
   // the ground's weather (ENV.uWet is set by the weather itself)
-  ENV.uSnow.value = weather.snowpack; ENV.uRain.value = wx.precip * (1 - (wx.snowMix ?? (wx.snow ? 1 : 0))); ENV.uGroundT.value = wx.temp + 0.0065 * Math.max(ac.agl || 0, 0);
+  ENV.uSnow.value = weather.snowpack; ENV.uRain.value = wx.precip * (1 - wx.snowMix); ENV.uGroundT.value = wx.temp + 0.0065 * Math.max(ac.agl || 0, 0);
   const night = ENV.uNight.value;
   animateAircraft(model.parts, ac, S.paused ? 0 : dt, S.time, night, Math.round((S.acWet || 0) * 50) / 50);
   // The eye adapts at night, so pull the light glows back or they burn out into white balls.
@@ -987,10 +998,11 @@ function tick(dt, shown = false) {
   if (flying) roadClock.time += dt * S.timeAccel;         // the traffic stands still with the flight
   roadClock.hour = weather.hour;
   cities.update(dt, camera, dusk, sky.exposure, roadClock);
+  landCover.update(camera.position);
   // New buildings change the height map the baked shadows are marched through: refill it now and then while they arrive.
   if ((cityShadeT -= dt) <= 0) { cityShadeT = 5; if (cities.builtCount !== cityShadeN) { cityShadeN = cities.builtCount; groundLight.stale(); } }
   towns.update(dt, dusk, camera.position, sky.exposure, cities);
-  const live = !S.paused, pr = live ? wx.precip : precip.level, sn = wx.snowMix ?? (wx.snow ? 1 : 0);   // rain turns to snow over a couple of degrees
+  const live = !S.paused, pr = live ? wx.precip : precip.level, sn = wx.snowMix;   // rain turns to snow over a couple of degrees: the particles, the glass and the sound all mix the two
   precip.update({
     dt: live ? dt : 0, time: S.time, rain: pr * (1 - sn), snow: pr * sn,
     hail: live ? wx.hail || 0 : 0, blow: wx.blow || 0, ground: groundHeight(camera.position.x, camera.position.z),
@@ -1000,7 +1012,7 @@ function tick(dt, shown = false) {
   });
   clouds.uFlashScreen.value *= Math.exp(-dt * 7);
   const fx = clouds.fx;
-  fx.time = S.time; fx.rain = wx.snow ? 0 : pr; fx.snow = wx.snow ? pr : 0; fx.ice = S.frost;
+  fx.time = S.time; fx.rain = pr * (1 - sn); fx.snow = pr * sn; fx.ice = S.frost;
   fx.cockpit = S.mode === 'flying' && S.view === 'cockpit' ? 1 : 0; fx.airspeed = ac.tas; fx.flash = clouds.uFlashScreen.value;
   fx.clearance = Math.max(camera.position.y - groundHeight(camera.position.x, camera.position.z), 1);      // lets post skip motion blur when nothing is near enough to streak
   fx.exposure = 0.64 * sky.exposure * S.settings.exposure;
@@ -1018,7 +1030,7 @@ function tick(dt, shown = false) {
     active: flying, view: S.view, time: S.time,
     rpm: ac.rpm, power: ac.thrustLevel, engine: ac.fuel > 0, crashed: !!ac.crashed,
     ias: ac.ias, onGround: ac.onGround, groundSpeed: ac.groundSpeed, surface: ac.surface,
-    rain: wx.snow ? 0 : wx.precip, snow: wx.snow ? wx.precip : 0, hail: wx.hail || 0, hailHits: precip.hits.rate, turb: wx.turb, cloud: wx.cloud / CLOUD_SIGMA,
+    rain: wx.precip * (1 - sn), snow: wx.precip * sn, hail: wx.hail || 0, hailHits: precip.hits.rate, turb: wx.turb, cloud: wx.cloud / CLOUD_SIGMA,
     stall: ac.stall > 0.45 && !ac.onGround, stallLevel: ac.stall,
   });
   perf.cpuEnd();

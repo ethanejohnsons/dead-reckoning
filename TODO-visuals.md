@@ -9,6 +9,12 @@
 - Testing: drive the sim with `window.DR.tick` / `window.DR.sim`; screenshots lag one frame;
   clear the test save between runs.
 - Priority: P1 = biggest visible gain, P2 = strong, P3 = polish.
+- Status (audit of 2026-11-17): most items below are done: the lookup-table sky, stars and Milky Way,
+  moon, wet ground, virga, chinook, sun shadows, cities and roads, landing light, rain on the airframe,
+  the ultra tier, GPU timing, baked ground light, dynamic resolution, FXAA skipped under TAA, the
+  terrain worker, the sharpening bug. The clear open one is anisotropy (now `chunks.js:442`, `:484`).
+  Line references below are from older versions of the files; the world is now the United States,
+  not New Zealand.
 
 ## Data
 - [P1] Ground imagery: Sentinel-2 at 10 m/px (`world/imagery.js`) → USGS NAIP aerial imagery,

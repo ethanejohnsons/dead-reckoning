@@ -27,6 +27,9 @@ export class Input {
 
     addEventListener('keydown', (e) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+      // Space on a button reached with the keyboard presses it, as on any page (main.js blurs what the mouse clicks,
+      // so a button keeps the focus only when Tab put it there).
+      if (e.code === 'Space' && e.target instanceof Element && e.target.closest('button, summary, [role=option], [role=listbox]')) return;
       if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
       if (e.repeat) return;
       this.keys.add(e.code);

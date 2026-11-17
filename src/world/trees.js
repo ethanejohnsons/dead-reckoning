@@ -12,7 +12,8 @@
 // (position, species, size) from height, slope, moisture and noise; the vertex
 // shader then keeps a candidate only where the satellite picture is dark and
 // green, or, where no picture has loaded, where the vegetation rules would grow
-// one.
+// one; and in either case only where the land cover map (world/landcover.js)
+// does not say the ground is a field, pasture or prairie.
 //
 // Everything about a tree changes smoothly with distance, so nothing pops in flight:
 //   - fewer trees are drawn far away (treeKeep), and each one left stands for its lost neighbors: it grows a
@@ -504,11 +505,12 @@ float woodsIn(vec3 c, float ruleDense, float level, out float shadowed) {
   float green = step(c.r, c.g * 1.1) * step(c.b, c.g * (1.15 + 0.3 * rule));
   return max(smoothstep(0.05 + 0.015 * rule, 0.024 + 0.008 * rule, lum) * green, shadowed);
 }
-// The same at a point on the ground; -1 where no picture has loaded.
+// The same at a point on the ground (none where the map says open country: see treeKept); -1 where no picture has loaded.
 float woodsAt(vec2 xz, float ruleDense) {
   vec4 im = imagery(xz, 0.0);
   float shadowed;
-  return im.a < 0.5 ? -1.0 : woodsIn(im.rgb, ruleDense, 1.0, shadowed);
+  vec2 lc = landCover(xz);
+  return im.a < 0.5 ? -1.0 : woodsIn(im.rgb, ruleDense, 1.0, shadowed) * (1.0 - lc.y * (1.0 - lc.x));
 }
 // The picture a tree is judged by. The finest level only reaches a few kilometers from the camera, and a tree
 // must not change its mind when the edge of that level passes over it: the level follows the tree's distance,
@@ -531,6 +533,13 @@ float treeKept(vec3 base, float d, float rank, float flags, vec4 ground, out vec
   if (waterCover(base.xz) > 0.5) { pic = vec3(-1.0); dense = 0.0; return 0.0; }          // or the map has water here
   float ruleDense = ground.w;
   float solitary = mod(flags, 2.0), rule = mod(floor(flags * 0.5), 2.0);
+  // What the map says grows here (world/landcover.js: ESA WorldCover, and OpenStreetMap's woods and farmland): x woods,
+  // y open country. From space a summer's corn or soybeans are as dark a green as a forest, so where the map says
+  // field, pasture or prairie the picture's color grows no woods; only a line of trees darker than the field round it
+  // (a shelter belt, the grove round a farmstead) still stands there, and the odd lone tree. Its woods are woods
+  // even where their picture is lighter than the plains' rule below would take.
+  vec2 lc = landCover(base.xz);
+  float open = lc.y * (1.0 - lc.x);
   vec4 im = treePicture(base.xz, d);
   if (im.a > 0.5) {
     const vec3 W = vec3(0.3, 0.55, 0.15);
@@ -544,9 +553,11 @@ float treeKept(vec3 base, float d, float rank, float flags, vec4 ground, out vec
     // (Nothing is plowed in the mountains: from about 1,500 m under the tree line up, the picture is trusted as it was.)
     float tlHere = treeLine(base.xz);
     float crop = (1.0 - smoothstep(0.44, 0.62, moist)) * (1.0 - smoothstep(0.05, 0.12, length(ground.xy) * 2.0)) * (1.0 - smoothstep(tlHere - 1560.0, tlHere - 1160.0, base.y));
-    woods *= mix(1.0, smoothstep(0.026, 0.014, lum), crop);
+    woods *= mix(1.0, smoothstep(0.026, 0.014, lum), crop * (1.0 - lc.x));
+    woods = max(woods * (1.0 - open), lc.x * green * smoothstep(0.085, 0.055, lum) * 0.9);
     float lumW = dot(imagery(base.xz, 3.0).rgb, W);
-    float line = smoothstep(0.1, 0.35, 1.0 - lum / max(lumW, 0.004)) * smoothstep(0.085, 0.045, lum) * green;
+    // (in open country a belt must stand out more from its field: crops differ from one another by a little)
+    float line = smoothstep(0.1 + 0.12 * open, 0.35 + 0.12 * open, 1.0 - lum / max(lumW, 0.004)) * smoothstep(0.085, 0.045, lum) * green;
     woods = max(woods, line);
     dense = woods * smoothstep(0.075, 0.035, lumW);
     pic = shadowed > 0.5 ? vec3(-1.0) : im.rgb;                   // a tree takes no color from a shadow
@@ -556,8 +567,9 @@ float treeKept(vec3 base, float d, float rank, float flags, vec4 ground, out vec
     // filling up with distance.
     return max(smoothstep(0.0, 0.03, woods * 0.92 - treeHash(rank, 0.4142135)), smoothstep(0.3, 0.7, solitary * pasture));
   }
-  pic = vec3(-1.0); dense = ruleDense * (1.0 - solitary);
-  return rule;
+  // (no picture: the rules' trees, fewer where the map says open, more where it says woods)
+  pic = vec3(-1.0); dense = max(ruleDense * (1.0 - open), lc.x) * (1.0 - solitary);
+  return max(rule * (1.0 - 0.8 * open * (1.0 - solitary)), lc.x * step(treeHash(rank, 0.4142135), 0.85));
 }
 
 // Dark blocks of woodland in the dry West are stands of pine: whatever was proposed there is drawn as one.
@@ -1039,7 +1051,7 @@ export class Trees {
     this.setQuality('high');
   }
 
-  /** 'low' | 'med' | 'high': how many trees and how far, how far the real meshes and the shade on the ground reach, how sharp the impostors are. */
+  /** 'low' | 'med' | 'high' | 'ultra': how many trees and how far, how far the real meshes and the shade on the ground reach, how sharp the impostors are. */
   setQuality(level) {
     const t = TIERS[level] || TIERS.med;
     this.tier = t;

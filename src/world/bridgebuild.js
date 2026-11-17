@@ -84,7 +84,7 @@ export function parseBridges(layers, size) {
   const T = layers.transportation;
   if (T) {
     const k = size / T.extent, ends = new Set(), feats = [], key = (x, y) => (x + 4096) * 16384 + (y + 4096);
-    const land = [new Set(), new Set(), new Set()], portal = [new Set(), new Set(), new Set()];      // (and where tunnels of each kind begin)       // the points of the lines on the ground, by kind: a bridge line that ends on one lands there
+    const land = [new Set(), new Set(), new Set()], portal = [new Set(), new Set(), new Set()];      // the points of the lines on the ground, by kind (and where tunnels of each kind begin): a bridge line that ends on one lands there
     for (const f of T.features) {
       if (f.type === 3 && f.props.class === 'bridge') {
         // the outline of a bridge, where the map has one: it gives the deck's true width

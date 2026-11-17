@@ -26,14 +26,14 @@ export const ENV = {
   uAtmAP: { value: new THREE.Vector4(32, Math.log(50), 1, 1 / 64) },   // x: slices, y: ln(first slice, m), z: 1 / ln(slice ratio), w: half a row
   uSkySH: { value: Array.from({ length: 9 }, () => new THREE.Vector3()) },   // sky irradiance / pi as spherical harmonics (skyIrradiance in ATMO_GLSL)
   tRegion: { value: null },    // r: terrain height (m), g: moisture 0..1, over the whole region
-  uWind: { value: 0 },
+  uWind: { value: 0 },        // surface wind speed, m/s (whitecaps)
   uSea: { value: 0 },        // how rough open water is, 0 calm .. 1 a full storm sea (eased; set in main.js)
   // Satellite imagery clip levels (see world/imagery.js)
   tImagery: { value: null },
   uImgA: { value: Array.from({ length: 7 }, () => new THREE.Vector4(0, 0, 1, 0)) },   // x0, z0, 1/extent, valid half-width
   uImgC: { value: Array.from({ length: 7 }, () => new THREE.Vector2()) },            // window center
   uImgOn: { value: 0 },
-  uPixAngle: { value: 0.001 },   // radians per screen pixel         // surface wind speed, m/s (whitecaps)
+  uPixAngle: { value: 0.001 },   // radians per screen pixel
   uTime: { value: 0 },
   uNight: { value: 0 },
   uWxHalf: { value: 262144 },
@@ -44,7 +44,7 @@ export const ENV = {
   // Cloud shapes for ground shadows: filled by the cloud renderer, read by the terrain and tree shaders
   // (see CLOUD_SHADOW_GLSL in weather/clouds.js).
   tWxC: { value: null }, tCloudNoise: { value: null }, tCloudDetail: { value: null }, tCloudCurl: { value: null },
-  uCloudDriftN: { value: new THREE.Vector2() }, uCloudDriftM: { value: new THREE.Vector2() }, uCloudDriftD: { value: new THREE.Vector2() },
+  uCloudDriftN: { value: new THREE.Vector2() }, uCloudDriftM: { value: new THREE.Vector3() }, uCloudDriftD: { value: new THREE.Vector3() },
   uCloudDriftC: { value: new THREE.Vector2() }, uCloudDriftW: { value: new THREE.Vector2() }, uCloudDriftV: { value: new THREE.Vector2() },
   uCloudDriftS: { value: new THREE.Vector2() }, uCloudShear: { value: new THREE.Vector2() }, uCloudCells: { value: 0 },
   uFlashPos: { value: new THREE.Vector3() },

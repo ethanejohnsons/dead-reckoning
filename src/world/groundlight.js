@@ -359,14 +359,15 @@ export class GroundLight {
     return z;
   }
 
-  /** Bring the height map up to date with the window round world block (cx, cz). Returns true if every block had to be redone. */
-  /** The world has moved under the maps (the window went to another part of the country): forget every block
-   *  of the near height map, so the next update refills it and bakes both maps afresh. */
+  /** The world has moved under the maps (the window went to another part of the country), or something else
+   *  they show has been replaced: forget every block of the near height map, so the next update refills it and
+   *  bakes both maps afresh. */
   reset() { this.blockAt.fill(1e9); this.blockZoom.fill(-1); this.cb[0] = this.cb[1] = 1e9; this.fresh = true; }
 
   /** Something that raise() reads has changed (city tiles arrived): have every block refilled, a few a frame. */
   stale() { for (let b = 0; b < this.blockZoom.length; b++) if (this.blockZoom[b] > 0) this.blockZoom[b] = 0; }
 
+  /** Bring the height map up to date with the window round world block (cx, cz). Returns true if every block had to be redone. */
   scroll(cx, cz) {
     const mod = (a) => ((a % NB) + NB) % NB;
     const moved = cx !== this.cb[0] || cz !== this.cb[1];
@@ -431,6 +432,4 @@ export class GroundLight {
     perf.end();
   }
 
-  /** Redo everything on the next update (after the weather is replaced, say). */
-  reset() { this.fresh = true; }
 }

@@ -203,7 +203,7 @@ float lobe(float ndh, float a) { float a2 = a * a, d = ndh * ndh * (a2 - 1.0) + 
 float glint(vec3 l, vec3 N, vec3 V, float a) {
   float d2 = max(dot(l, l), 0.01); l *= inversesqrt(d2);
   vec3 H = normalize(l + V + vec3(0.0, 1.0e-5, 0.0));
-  float F = 0.02 + 0.98 * pow(1.0 - max(dot(V, H), 0.0), 5.0);
+  float F = 0.02 + 0.98 * pow(clamp(1.0 - dot(V, H), 0.0, 1.0), 5.0);
   return lobe(max(dot(N, H), 0.0), a) * F * step(0.0, dot(N, l)) / (d2 * (4.0 * max(dot(N, V), 0.0) + 0.06));
 }
 
@@ -421,7 +421,7 @@ void main() {
   vec3 amb = skyIrradiance(N) * (1.0 - 0.5 * gLit.y) * (1.0 - 0.21 * trees * uTreeShadeP.y);
   // Seen at a low angle a dry road goes pale: the stones' flat tops catch the sky. (Wet, the water does the reflecting: below.)
   float dry = (1.0 - soft) * (1.0 - max(max(damp, puddle), snowOp));
-  float graze = pow(1.0 - max(V.y, 0.0), 5.0) * dry;
+  float graze = pow(clamp(1.0 - V.y, 0.0, 1.0), 5.0) * dry;
   vec3 col = alb * (uSunCol * ndl * shadow + amb + localLight(vWorld, N)) * (1.0 + 0.5 * graze);
   col += (uSunCol * shadow * pow(max(dot(reflect(-uSunDir, N), V), 0.0), 14.0) * 0.045 * dry + uAmbSky * graze * 0.10) * gloss;
   col += snowOp * uSunCol * shadow * pow(max(dot(reflect(-uSunDir, N), V), 0.0), 24.0) * 0.18;          // the sheen of snow, as on the terrain
@@ -457,7 +457,7 @@ void main() {
     R.y = abs(R.y);
     vec3 spec = skyRadiance(normalize(R + vec3(0.0, 0.5 * a, 0.0))) * sky * F;
     vec3 H = normalize(uSunDir + V);
-    float sun = lobe(max(dot(Nw, H), 0.0), max(a, 0.03)) * 3.14159 * (0.02 + 0.98 * pow(1.0 - max(dot(V, H), 0.0), 5.0)) / (4.0 * ndv + 0.15);
+    float sun = lobe(max(dot(Nw, H), 0.0), max(a, 0.03)) * 3.14159 * (0.02 + 0.98 * pow(clamp(1.0 - dot(V, H), 0.0, 1.0), 5.0)) / (4.0 * ndv + 0.15);
     spec += uSunCol * (shadow * min(sun, 24.0) * mirror * smoothstep(0.0, 0.05, dot(Nw, uSunDir)));
     // The aircraft's landing light, for whoever looks back at it over wet ground.
     if (uSpot[2].w > 0.0) {
@@ -570,9 +570,9 @@ void main() {
   float sunLit = vLight.x * localShadow(vWorld + N * 0.35);     // other buildings' shadows, and the aircraft's
   vec3 col = alb * (uSunCol * ndl * sunLit + amb + localLight(vWorld, N));
   vec3 V = normalize(cameraPosition - vWorld);
-  col += glass * (uAmbSky * 0.35 + uSunCol * sunLit * pow(max(dot(reflect(-uSunDir, N), V), 0.0), 24.0) * 0.2) * (0.04 + 0.96 * pow(1.0 - max(dot(N, V), 0.0), 5.0));
+  col += glass * (uAmbSky * 0.35 + uSunCol * sunLit * pow(max(dot(reflect(-uSunDir, N), V), 0.0), 24.0) * 0.2) * (0.04 + 0.96 * pow(clamp(1.0 - dot(N, V), 0.0, 1.0), 5.0));
   // a wet roof or wall shines with the sky at a low angle
-  col += wetB * (1.0 - lying) * skyIrradiance(vec3(0.0, up, sqrt(max(1.0 - up * up, 0.0)))) * 0.6 * pow(1.0 - max(dot(N, V), 0.0), 4.0);
+  col += wetB * (1.0 - lying) * skyIrradiance(vec3(0.0, up, sqrt(max(1.0 - up * up, 0.0)))) * 0.6 * pow(clamp(1.0 - dot(N, V), 0.0, 1.0), 4.0);
   col += lit * uLamps * vec3(1.0, 0.72, 0.38) * 0.35;         // rooms lit after dark
   vec3 outc = applyAtmosphere(col, cameraPosition, vWorld);
   if (any(isnan(outc)) || any(isinf(outc)) || !(outc.r + outc.g + outc.b < 1e4)) discard;

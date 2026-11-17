@@ -1,6 +1,6 @@
 # Encodes the NASA SVS Deep Star Maps 2020 Milky Way background (linear half-float EXR, celestial plate carree,
 # center RA 0h, RA increasing to the left) as an 8-bit image: value = sqrt(min(linear, CLIP) / CLIP).
-# usage: python3 -I mw_encode.py <in.raw float32 rgb> <width> <height> <out.jpg> <quality>
+# usage: python3 -I tools/bake-milkyway.py <in.raw float32 rgb> <width> <height> <out.jpg> <quality>
 import numpy as np, sys
 from PIL import Image
 CLIP = 0.6

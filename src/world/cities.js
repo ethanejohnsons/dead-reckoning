@@ -1,7 +1,9 @@
 // Cities: the real buildings of the towns under the aircraft, as 3D massing.
 //
-// Footprints and heights come from OpenStreetMap by way of OpenFreeMap's public vector tiles (zoom 14, the
-// `building` layer of the OpenMapTiles schema), streamed around the aircraft and never bundled. A worker
+// Footprints and heights come from Overture Maps' building tiles (world/overture.js: OpenStreetMap's buildings,
+// and footprints traced from aerial imagery where it has none), or where those cannot be had from OpenStreetMap
+// by way of OpenFreeMap's public vector tiles (zoom 14, the `building` layer of the OpenMapTiles schema), which
+// also give the roads, bridges and water; all streamed around the aircraft and never bundled. A worker
 // fetches and decodes each tile and builds its meshes (world/cities.worker.js, world/citybuild.js); this
 // file decides which tiles are wanted at which level of detail, puts the meshes in the scene a slice at a
 // time, lights them like the terrain, and answers "is there a building here?" for the flight model and
@@ -45,10 +47,10 @@ import { Traffic } from './traffic.js';
 const FACADE_URL = `${import.meta.env.BASE_URL}facades/`, FAC_N = 11;      // wall materials: public/facades, one layer each (tools/bake-facades.py)
 
 /** The credit OpenFreeMap asks for, for the title screen. */
-export const CITY_ATTRIBUTION = 'Buildings: OpenFreeMap © OpenMapTiles, data from OpenStreetMap (openstreetmap.org/copyright); wall materials from ambientCG.com (CC0)';
+export const CITY_ATTRIBUTION = 'Buildings, roads and bridges: OpenFreeMap © OpenMapTiles, data from OpenStreetMap (openstreetmap.org/copyright); wall materials from ambientCG.com (CC0)';
 
 const Z = 14;                              // the only zoom that carries every building with its height
-const TIERS = {                            // R0 near, R1 mid, SKY tall (m); upload budget a frame (bytes)
+const TIERS = {                            // how far each level reaches (m): R0 near, R1 mid, SKY tall
   low: { R0: 1200, R1: 5000, SKY: 26000 },
   med: { R0: 1600, R1: 6500, SKY: 34000 },
   high: { R0: 2000, R1: 8000, SKY: 42000 },
@@ -330,7 +332,7 @@ void main() {
     vec3 env = skyRadiance(normalize(vec3(R.x, max(R.y, 0.03), R.z)));
     env *= 1.0 - 0.5 * reveal;
     env = mix(env, uSunCol * max(uSunDir.y, 0.0) * vLight.x * 0.15 + uAmbSky * 0.4, smoothstep(0.0, -0.25, R.y));      // looking down a wall, it shows the street
-    float fres = F0 + (1.0 - F0) * pow(1.0 - max(dot(N, V), 0.0), 5.0);
+    float fres = F0 + (1.0 - F0) * pow(clamp(1.0 - dot(N, V), 0.0, 1.0), 5.0);
     col = mix(col, env, glass * fres);
     col += glass * uSunCol * sunLit * pow(max(dot(R, uSunDir), 0.0), 220.0) * (1.5 * F0 + 0.1);
   }
@@ -708,7 +710,7 @@ export class Cities {
     } catch (e) { console.warn('wall materials not loaded', e); }
   }
 
-  /** 'low' | 'med' | 'high': how far each level of detail reaches. */
+  /** 'low' | 'med' | 'high' | 'ultra': how far each level of detail reaches. */
   setQuality(level) {
     const t = TIERS[level] || TIERS.med;
     this.R0 = t.R0; this.R1 = t.R1; this.SKY = t.SKY;
@@ -838,7 +840,7 @@ export class Cities {
     this.fails = 0; this.warned = false;
     const s = this.stats;
     if (m.bytes) { s.bytes += m.bytes; s.fetched += m.fetched || 1; s.fetchMs += m.ms.fetch; s.parseMs += m.ms.parse; }
-    if (m.total !== undefined) this.learn(t, m.tall, m.total, m.bridges, m.water);
+    if (m.total !== undefined || m.bridges !== undefined) this.learn(t, m.tall, m.total, m.bridges, m.water);
     if (m.type === 'bplan' || m.bridge) {
       if (m.waterMesh) L.waterData = m.waterMesh;
       const b = s.bridge;
@@ -859,8 +861,13 @@ export class Cities {
     this.staging.push({ t, name, q, L });
   }
 
-  /** A tile has shown what it holds: where there are towers, look at its neighbors too. */
+  /**
+   * A tile has shown what it holds: where there are towers, look at its neighbors too. (A bridge job says nothing of
+   * the buildings when they come from another source than its tile: what is known of them is kept.)
+   */
   learn(t, tall, total, bridges = 0, water = 0) {
+    const had = this.info.get(t.key);
+    if (total === undefined && had) { tall = had.tall; total = had.total; }
     this.info.set(t.key, { tall, total, bridges, water });
     const e = this.sky.get(t.key);
     if (tall >= 1 && !e) this.sky.set(t.key, { tx: t.tx, ty: t.ty, depth: 4 });

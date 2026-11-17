@@ -2,6 +2,11 @@
 // level of detail asked for (world/citybuild.js), all off the main thread. One tile is built at a time;
 // fetches overlap. Decoded tiles are kept for a while, so the other levels of a tile cost no download.
 //
+// Two sources of the same zoom-14 grid: OpenFreeMap's tiles (OpenStreetMap) give the roads, bridges and water,
+// and Overture's (world/overture.js) the buildings, since it adds footprints traced from aerial imagery where
+// OpenStreetMap has none (most of the rural US). Where Overture cannot be reached the buildings are
+// OpenStreetMap's alone, from the first tile.
+//
 // in:   { type: 'build', id, key, z, x, y, level, quad, size, ground: { n, x0, z0, step, h }, skip: { rings: [Float32Array], boxes: Float32Array } }
 //       { type: 'forget' }                       the window of the world moved: tile-local meters mean something else
 //       { type: 'source', url }                  take the tiles from another server (TileJSON address)
@@ -13,8 +18,9 @@
 //       { type: 'built', id, chunks, coll, shade, lamps, count, bridge: true, ms }
 //       { type: 'failed', id, key, level, quad, error }
 
-import { parseTile, buildLevel, Out } from './citybuild.js';
+import { parseTile, parseOverture, buildLevel, Out } from './citybuild.js';
 import { assemble, buildBridges } from './bridgebuild.js';
+import { archive } from './overture.js';
 
 let SOURCE = 'https://tiles.openfreemap.org/planet';            // TileJSON: names the current weekly tile set
 const KEEP = 36;
@@ -23,6 +29,7 @@ const QUIET = { credentials: 'omit', referrerPolicy: 'no-referrer', mode: 'cors'
 
 let template = null, templateAt = 0;
 const cache = new Map();           // url -> Promise<{ tile, bytes }>
+const ovCache = new Map();         // tile -> Promise of its buildings from Overture (see overtureBuildings)
 const bridges = new Map();         // tile -> its bridge lines (small: kept long after the tile itself has gone from the cache)
 const plans = new Map();           // job id -> the bridges put together for it, waiting for their ground heights
 const made = new Map();            // tile -> the plan last made for it (its other level of detail asks for the same one soon after)
@@ -59,7 +66,7 @@ function getTile(job) {
     if (!r.ok && r.status !== 404) throw new Error('HTTP ' + r.status);                       // (404: no tile there, open country or water)
     if (buf) wire = +r.headers.get('content-length') || Math.round(buf.length * 0.6);         // bytes on the wire (the tiles come gzipped)
     const t1 = performance.now();
-    const tile = buf && buf.length ? parseTile(buf, job.size, job.x, job.y) : { blds: [], roads: [], size: job.size, tall: 0, br: { ways: [], under: [], water: [], size: job.size } };
+    const tile = buf && buf.length ? parseTile(buf, job.size, job.x, job.y) : { blds: [], roads: [], size: job.size, tall: 0, br: { ways: [], under: [], water: [], polys: [], size: job.size } };
     bridges.delete(id); bridges.set(id, { br: tile.br, tall: tile.tall, total: tile.blds.length, water: tile.water || null });
     if (bridges.size > KEEP_BRIDGES) bridges.delete(bridges.keys().next().value);
     return { tile, bytes: wire, fetch: t1 - t0, parse: performance.now() - t1 };
@@ -67,6 +74,30 @@ function getTile(job) {
   cache.set(id, p);
   p.catch(() => cache.delete(id));
   if (cache.size > KEEP) cache.delete(cache.keys().next().value);
+  return p;
+}
+
+/**
+ * A tile's buildings from Overture: { blds, tall, bytes, fetch, parse }; or { off: true } where Overture cannot be
+ * reached at all (the buildings are then OpenFreeMap's, as they always were), or { failed: true } where this one
+ * tile could not be had (its OpenFreeMap buildings stand in, and how many it has is not reported: see 'built').
+ */
+function overtureBuildings(job) {
+  const id = `${job.z}/${job.x}/${job.y}`;
+  let p = ovCache.get(id);
+  if (p) { ovCache.delete(id); ovCache.set(id, p); return p.then((r) => (r.blds ? { ...r, bytes: 0, fetch: 0 } : r)); }
+  p = (async () => {
+    const A = archive('buildings');
+    if (!(await A.available())) return { off: true };
+    const t0 = performance.now(), info = { bytes: 0 };
+    let buf;
+    try { buf = await A.tile(job.z, job.x, job.y, info); } catch { try { buf = await A.tile(job.z, job.x, job.y, info); } catch { return { failed: true }; } }
+    const t1 = performance.now(), r = parseOverture(buf, job.size, job.x, job.y);
+    return { ...r, bytes: info.bytes, fetch: t1 - t0, parse: performance.now() - t1 };
+  })();
+  ovCache.set(id, p);
+  p.then((r) => { if (!r.blds) ovCache.delete(id); });
+  if (ovCache.size > KEEP) ovCache.delete(ovCache.keys().next().value);
   return p;
 }
 
@@ -97,7 +128,9 @@ async function planBridges(job) {
   if (plan && !plan.need.length && whole) { made.delete(tid); made.set(tid, plan); if (made.size > KEEP_MADE) made.delete(made.keys().next().value); }
   // (the tile's water goes with the far level's answer: copies, since the tile's own stay here for the next asking)
   const wm = job.level === 'bf' && base.water ? { pos: base.water.pos.slice(), idx: base.water.idx.slice() } : null;
-  const info = { tall: base.tall, total: base.total, bridges: base.br.ways.length, water: base.water ? base.water.idx.length / 3 : 0, waterMesh: wm, bytes: bytes + extraBytes, fetched: (base.bytes ? 1 : 0) + extra, extra, extraBytes, ms: { fetch: base.fetch, parse: base.parse, build: ms } };
+  // (how many buildings the tile has is told by the building levels when they come from Overture)
+  const ovOff = !(await archive('buildings').available());
+  const info = { tall: ovOff ? base.tall : undefined, total: ovOff ? base.total : undefined, bridges: base.br.ways.length, water: base.water ? base.water.idx.length / 3 : 0, waterMesh: wm, bytes: bytes + extraBytes, fetched: (base.bytes ? 1 : 0) + extra, extra, extraBytes, ms: { fetch: base.fetch, parse: base.parse, build: ms } };
   if (!plan || plan.need.length || !plan.mine) { self.postMessage({ type: 'built', id: job.id, key: job.key, level: job.level, bridge: true, chunks: [], coll: null, shade: null, lamps: new Float32Array(0), count: 0, ...info }); return; }
   plan.urban = base.total >= 120;
   plans.set(job.id, plan);
@@ -119,7 +152,7 @@ function finishBridges(job) {
 
 self.onmessage = async (e) => {
   const job = e.data;
-  if (job.type === 'forget') { cache.clear(); bridges.clear(); plans.clear(); made.clear(); return; }
+  if (job.type === 'forget') { cache.clear(); ovCache.clear(); bridges.clear(); plans.clear(); made.clear(); return; }
   if (job.type === 'source') { SOURCE = job.url; template = null; cache.clear(); bridges.clear(); made.clear(); return; }      // another server of the same tiles (a mirror of one's own)
   if (job.type === 'bplan' || job.type === 'bbuild') {
     try { if (job.type === 'bplan') await planBridges(job); else finishBridges(job); }
@@ -128,7 +161,9 @@ self.onmessage = async (e) => {
   }
   if (job.type !== 'build') return;
   try {
-    const { tile, bytes, fetch: tf, parse } = await getTile(job);
+    const [got, ov] = await Promise.all([getTile(job), overtureBuildings(job)]);
+    const tile = ov.blds ? { ...got.tile, blds: ov.blds, tall: ov.tall } : got.tile;
+    const bytes = got.bytes + (ov.bytes || 0), tf = Math.max(got.fetch, ov.fetch || 0), parse = (got.parse || 0) + (ov.parse || 0);
     const t0 = performance.now();
     let skip = null;
     const S = job.skip;
@@ -147,7 +182,8 @@ self.onmessage = async (e) => {
     const transfer = [out.lights.buffer, out.foot.box.buffer, out.foot.q.buffer, out.foot.start.buffer, out.foot.pts.buffer];
     if (out.roads) transfer.push(out.roads.pos.buffer, out.roads.ar.buffer, out.roads.idx.buffer, out.roads.paths.p.buffer, out.roads.paths.m.buffer);
     for (const c of out.chunks) transfer.push(c.pos.buffer, c.nrm.buffer, c.uv.buffer, c.col.buffer, c.k.buffer, c.idx.buffer, c.ranges.buffer);
-    self.postMessage({ type: 'built', id: job.id, key: job.key, level: job.level, quad: job.quad, ...out, tall: tile.tall, total: tile.blds.length, bridges: tile.br.ways.length, water: tile.water ? tile.water.idx.length / 3 : 0, bytes, ms: { fetch: tf, parse: parse || 0, build: performance.now() - t0 } }, transfer);
+    const known = !ov.failed;          // (a tile whose Overture buildings could not be had does not say it has none)
+    self.postMessage({ type: 'built', id: job.id, key: job.key, level: job.level, quad: job.quad, ...out, tall: known ? tile.tall : undefined, total: known ? tile.blds.length : undefined, bridges: tile.br.ways.length, water: tile.water ? tile.water.idx.length / 3 : 0, bytes, ms: { fetch: tf, parse: parse || 0, build: performance.now() - t0 } }, transfer);
   } catch (err) {
     self.postMessage({ type: 'failed', id: job.id, key: job.key, level: job.level, quad: job.quad, error: String(err?.message || err) });
   }

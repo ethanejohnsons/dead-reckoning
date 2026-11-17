@@ -333,7 +333,7 @@ export class PostFX {
     mV.copy(camera.matrixWorldInverse).setPosition(0, 0, 0);
     mVP.multiplyMatrices(camera.projectionMatrix, mV);
     const reset = this.reset || pos.distanceTo(this.prevPos) > 400;
-    const cockpit = fx.cockpit || 0, spd = fx.airspeed || 0, precip = Math.max(fx.rain || 0, fx.snow || 0);
+    const cockpit = fx.cockpit || 0, spd = fx.airspeed || 0, precip = (fx.rain || 0) + (fx.snow || 0);      // (rain and snow mix over a couple of degrees: main.js)
     const sub = fx.subject?.isObject3D ? fx.subject : null;
     const cloud = opts.cloud || this.white;
     const deep = !!(T.deep && opts.depth && this.sceneRT);
@@ -343,7 +343,7 @@ export class PostFX {
 
     // Glass: wetness builds quickly and dries slowly, whichever view is up. Only the cockpit shows it:
     // the glazing is drawn from the pilot's eye so the final pass knows where on the glass each pixel is.
-    const wetTarget = Math.max(fx.rain || 0, (fx.snow || 0) * 0.3);
+    const wetTarget = (fx.rain || 0) + (fx.snow || 0) * 0.3;
     this.wet += (wetTarget - this.wet) * Math.min(1, dt * (wetTarget > this.wet ? 1.2 : 0.25));
     const glass = fx.glass?.isMesh && fx.glass.material?.alphaMap ? fx.glass : null;
     const glassOn = !!(glass && cockpit > 0.5 && opts.depth && (this.wet > 0.004 || (fx.ice || 0) > 0.01));

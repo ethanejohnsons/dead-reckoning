@@ -156,7 +156,7 @@ vec4 mirror(vec3 Prel, float z) {
   vec2 along = normalize(Vw.xz + vec2(1e-5)), across = vec2(-along.y, along.x);
   vec3 wn = normalize(vec3(swell.x, 1.0, swell.y));
   vec3 R = reflect(Vw, wn); R.y = abs(R.y) + 0.003; R = normalize(R);
-  float fres = 0.02 + 0.98 * pow(1.0 - max(dot(-Vw, wn), 0.0), 5.0);
+  float fres = 0.02 + 0.98 * pow(clamp(1.0 - dot(-Vw, wn), 0.0, 1.0), 5.0);
   if (fres < 0.03) return vec4(0.0);
 
   vec3 Rv = uCamRotInv * R;

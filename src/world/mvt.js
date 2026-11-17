@@ -1,6 +1,6 @@
-// A minimal reader for Mapbox Vector Tiles (protocol buffers), enough for the city layers: it decodes only
-// the layers asked for, and of each feature its type, its properties and its geometry as rings or lines in
-// tile units (0..extent, x east, y south). No dependencies; used from the city worker and from Node.
+// A minimal reader for Mapbox Vector Tiles (protocol buffers): it decodes only the layers asked for, and of each
+// feature its type, its properties and its geometry as rings or lines in tile units (0..extent, x east, y south).
+// No dependencies; used by the city, land cover and map workers (OpenFreeMap's tiles and Overture's), and from Node.
 //
 // Spec: https://github.com/mapbox/vector-tile-spec/tree/master/2.1
 

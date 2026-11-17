@@ -179,7 +179,7 @@ export function placeFine(P, x0, z0, H, W, GN, step, flats, env) {
  * drawn at that distance.
  *   job  { P, x0, z0, coarse, win, flats, q: [env x 4] }
  *        coarse: the terrain there is the 4 km patch (128 m mesh) instead of the 2 km one (64 m mesh);
- *        win: the elevation under the tile at the zoom the terrain uses there (dem.window);
+ *        win: the elevation under the tile at the zoom the terrain uses there (dem.cut);
  *        q: an env (see the top of this file) for each of the four patches.
  * Returns { n, lo, yr, A, B, C }: the tile's list in order of rank, packed for the shaders (n may be 0).
  */

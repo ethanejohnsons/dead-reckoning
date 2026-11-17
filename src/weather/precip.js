@@ -15,12 +15,13 @@
 
 import * as THREE from 'three';
 import { ENV } from '../core/env.js';
+import { warp } from '../aircraft/variants.js';
 
 const MAX = 9000;
 
 /**
  * The airframe as the weather sees it, in the aircraft's own axes (x right, y up, -z forward, meters). The defaults
- * are the Cessna 172 of aircraft/model.js; another variant passes its own numbers to Precip.setAirframe().
+ * are the Cessna 172 of aircraft/model.js; airframeFor() below gives another variant's.
  *   hull    fuselage stations, nose to tail: [z, top, bottom, half width, height of the widest point, superellipse exponent]
  *   cabin   [z0, z1] the part of the hull with windows (nothing is drawn inside the hull anywhere, this is for reference)
  *   cowl, screen, aft   [z0, z1] stretches of the hull's upper surface that hail lands on: engine cowl, windshield, rear fuselage
@@ -42,6 +43,20 @@ export const AIRFRAME_172 = {
   stab: { half: 1.72, y: 0.34, zLE: 4.75, zTE: 5.9 },
   fin: { foot: [4.4, 0.36], tip: [5.4, 1.52], thick: 0.1 },
 };
+/** The airframe of a variant (aircraft/variants.js): the 172's, every point moved as the variant's model moves it (warp). */
+export function airframeFor(geom) {
+  const A = AIRFRAME_172, p = [];
+  const at = (x, y, z) => warp(geom, x, y, z, p);
+  const Z = (z) => at(0, 0, z)[2];
+  const Y = (y, z) => at(0, y, z)[1];
+  return {
+    hull: A.hull.map(([z, top, bot, hw, ym, e]) => [Z(z), Y(top, z), Y(bot, z), at(hw, 0, z)[0], Y(ym, z), e]),
+    cabin: A.cabin.map(Z), cowl: A.cowl.map(Z), screen: A.screen.map(Z), aft: A.aft.map(Z),
+    wing: { ...A.wing, span: 2 * at(A.wing.span / 2, A.wing.y, 0)[0], y: Y(A.wing.y, 0), zLE: Z(A.wing.zLE), zTE: Z(A.wing.zTE) },
+    stab: { ...A.stab, half: at(A.stab.half, A.stab.y, A.stab.zLE)[0], y: Y(A.stab.y, A.stab.zLE), zLE: Z(A.stab.zLE), zTE: Z(A.stab.zTE) },
+    fin: { ...A.fin, foot: [Z(A.fin.foot[0]), Y(A.fin.foot[1], A.fin.foot[0])], tip: [Z(A.fin.tip[0]), Y(A.fin.tip[1], A.fin.tip[0])] },
+  };
+}
 const HULL_PAD = 0.02;          // the clip volume stands this far outside the skin (m)
 
 const FIELD_VERT = /* glsl */`
@@ -153,7 +168,7 @@ uniform vec3 uColor;
 uniform float uGain;
 varying float vS, vI;
 void main() {
-  float core = 1.0 - smoothstep(0.0, 0.35, abs(vS)), glow = pow(1.0 - abs(vS), 3.0);
+  float core = 1.0 - smoothstep(0.0, 0.35, abs(vS)), glow = pow(max(1.0 - abs(vS), 0.0), 3.0);
   gl_FragColor = vec4(uColor * (core * 1.0 + glow * 0.25) * uGain * (0.2 + 0.8 * vI), 1.0);
 }`;
 
