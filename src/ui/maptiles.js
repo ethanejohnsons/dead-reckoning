@@ -1,6 +1,7 @@
 // The map's tiles of real map data (ui/maptiles.worker.js paints them): which are wanted for the view, fetched
 // a few at a time nearest the middle first, kept for a while, and drawn under the map's own symbols. While a
-// tile is on its way, the nearest coarser tile already here stands in for it.
+// tile is on its way, the nearest coarser tile already here stands in for it. The map goes round the earth:
+// a view across the 180th meridian asks for columns past the end of the tile grid, which are the first again.
 
 import { worldX, worldZ, metersPerPixel } from '../world/geo.js';
 
@@ -33,8 +34,8 @@ export class MapTiles {
     const ix0 = Math.floor((x0 - worldX(0, z)) / tw), ix1 = Math.floor((x1 - worldX(0, z)) / tw);
     const iy0 = Math.max(0, Math.floor((z0 - worldZ(0, z)) / tw)), iy1 = Math.min(n - 1, Math.floor((z1 - worldZ(0, z)) / tw));
     const out = [];
+    // (columns beyond either end of the grid are the earth come round again: the worker fetches them as the tiles they are)
     for (let y = iy0; y <= iy1; y++) for (let x = ix0; x <= ix1; x++) {
-      if (x < 0 || x >= n) continue;
       const key = `${z}/${x}/${y}`, t = this.tiles.get(key);
       if (t) { t.at = performance.now(); }
       if (t?.state === 'ok') { out.push({ z, x, y, t, sub: null }); continue; }

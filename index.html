@@ -24,6 +24,47 @@
     <div id="stream" role="status" hidden><span id="streamTxt">Loading scenery</span><div class="bar"><i id="streamBar"></i></div><span id="streamN" class="num"></span></div>
     <div id="warn" role="alert"></div>
 
+    <!-- The rocket's panel: shown instead of the flight panel when the craft is a launch vehicle (space/mission.js). -->
+    <div id="rp" aria-label="Rocket panel">
+      <div class="fp-ann">
+        <span id="rpAuto" class="ann" hidden>Autopilot to orbit</span>
+        <span id="rpSas" class="ann" hidden>Holding <b id="rpSasV"></b></span>
+        <span id="rpXfer" class="ann" hidden>To the Moon <b id="rpXferV"></b></span>
+        <span id="rpWarp" class="ann" hidden>Time <b id="rpWarpV"></b></span>
+        <span id="rpTgt" class="ann" hidden>Target <b id="rpTgtV"></b></span>
+      </div>
+      <div class="fp-body">
+        <div class="fp-side fp-eng">
+          <div class="fp-line"><span class="lbl">Thrust</span><span class="bar"><i id="rpThrBar"></i></span><b id="rpThr" class="num"></b></div>
+          <div class="fp-line"><b id="rpStage"></b><span class="spacer"></span><b id="rpG" class="num"></b></div>
+        </div>
+        <div class="fp-cell fp-clk">
+          <span class="lbl"><span>Mission time</span></span>
+          <span class="val"><b id="rpClk" class="num"></b></span>
+        </div>
+        <div class="fp-cell rp-spd">
+          <span class="lbl" id="rpSpdLbl">Speed</span>
+          <span class="val"><b id="rpSpd" class="num"></b><small>mph</small></span>
+        </div>
+        <div class="fp-cell rp-alt">
+          <span class="lbl" id="rpAltLbl">Altitude</span>
+          <span class="val"><b id="rpAlt" class="num"></b><small id="rpAltU">ft</small></span>
+        </div>
+        <div class="fp-cell rp-att">
+          <span class="lbl">Pitch / heading</span>
+          <span class="val"><b id="rpPitch" class="num"></b><b id="rpHdg" class="num dim"></b></span>
+        </div>
+        <div class="fp-side fp-env rp-orb">
+          <div class="fp-line"><span class="lbl">High</span><b id="rpAp" class="num"></b><small>mi</small><small id="rpApT" class="num"></small></div>
+          <div class="fp-line"><span class="lbl">Low</span><b id="rpPe" class="num"></b><small>mi</small><small id="rpPeT" class="num"></small></div>
+        </div>
+        <div class="fp-cell rp-body">
+          <span class="lbl">Orbiting</span>
+          <span class="val"><b id="rpBody"></b></span>
+        </div>
+      </div>
+    </div>
+
     <!-- The flight panel. In the cockpit it folds down to speed, heading and altitude along the top edge. -->
     <div id="fp" aria-label="Flight panel">
       <div class="fp-ann">
@@ -34,7 +75,7 @@
       <div class="fp-body">
         <div class="fp-side fp-eng">
           <div class="fp-line"><span class="lbl">Power</span><span class="bar"><i id="fpPwrBar"></i></span><b id="fpPwr" class="num"></b></div>
-          <div class="fp-line"><span class="num"><b id="fpRpm"></b> <small>rpm</small></span><span class="spacer"></span><span id="fpFlapBox" class="flap"><span class="lbl">Flaps</span><b id="fpFlap"></b></span></div>
+          <div class="fp-line"><span class="num"><b id="fpRpm"></b> <small id="fpRpmUnit">rpm</small></span><span class="spacer"></span><span id="fpFlapBox" class="flap"><span class="lbl">Flaps</span><b id="fpFlap"></b></span></div>
         </div>
         <div class="fp-cell fp-clk">
           <span class="lbl"><span>Elapsed</span><span class="tod" title="Time of day"><svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.6" /><path d="M6 3.4V6l1.8 1.2" /></svg><span id="fpTod"></span></span></span>
@@ -154,12 +195,14 @@
       <div id="loadBar" role="progressbar" aria-label="Loading" hidden><i></i></div>
       <div id="setup" hidden>
         <div class="choices">
-          <label>Aircraft <select id="oPlane"></select></label>
-          <label>Airfield <select id="oField"></select></label>
+          <label>Craft <select id="oPlane"></select></label>
+          <label id="oFieldL">Airfield <select id="oField"></select></label>
+          <label id="oSiteL" hidden>Launch site <select id="oSite"></select></label>
           <label>Weather <select id="oWx"></select></label>
           <label>Time <select id="oHour"></select></label>
           <label>Season <select id="oSeason"></select></label>
-          <label>Start <select id="oStart"><option value="ground">On the runway</option><option value="air">In the air</option></select></label>
+          <label id="oRStartL" hidden>Start <select id="oRStart"><option value="pad">On the pad</option><option value="orbit">In orbit of the Earth</option><option value="moon">In orbit of the Moon</option></select></label>
+          <label id="oStartL">Start <select id="oStart"><option value="ground">On the runway</option><option value="air">In the air</option></select></label>
           <span class="go">
             <button id="btnMap" class="btn side" title="Open the map: click an airfield to start there, or drop a pin anywhere and start in the air over it">Map</button>
             <button id="btnFly" class="btn primary">Fly</button>
@@ -185,7 +228,23 @@
       <div class="cols">
         <div>
           <h3>Controls</h3>
-          <table class="keys">
+          <table class="keys rocket-keys">
+            <tr><td><kbd>Space</kbd></td><td>Light the engines and lift off; then drop the stage</td></tr>
+            <tr><td><kbd>G</kbd></td><td>Autopilot: flies the climb to orbit for you</td></tr>
+            <tr><td><kbd>W</kbd> <kbd>S</kbd></td><td>Lower / raise the nose against the horizon</td></tr>
+            <tr><td><kbd>A</kbd> <kbd>D</kbd></td><td>Swing the nose left / right around the compass</td></tr>
+            <tr><td><kbd>R</kbd> <kbd>F</kbd></td><td>More / less thrust (<kbd>Z</kbd> full, <kbd>X</kbd> off). The tanks never empty</td></tr>
+            <tr><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></td><td>Hold attitude / nose to the direction of travel / tail to it</td></tr>
+            <tr><td><kbd>L</kbd></td><td>To the Moon, from orbit: plans the burn, waits for the Moon, flies there and brakes into orbit of it</td></tr>
+            <tr><td><kbd>M</kbd></td><td>Orbit map: your path ahead. Drag to turn, wheel to zoom, <kbd>Tab</kbd> for the next center</td></tr>
+            <tr><td><kbd>.</kbd> <kbd>,</kbd></td><td>Run time faster / slower (<kbd>T</kbd> steps up), engines off above the air</td></tr>
+            <tr><td><kbd>N</kbd></td><td>Next satellite to aim for</td></tr>
+            <tr><td><kbd>C</kbd></td><td>Chase view / camera on the rocket; drag to look around, wheel to zoom</td></tr>
+            <tr><td><kbd>V</kbd></td><td>Weather</td></tr>
+            <tr><td><kbd>Esc</kbd></td><td>This menu</td></tr>
+          </table>
+          <p class="muted small rocket-keys">To orbit by hand: lift off, tip the nose east a little at a time (W) so it is on the horizon by 60 miles up, and keep burning until the low point of the orbit is above 90 miles. To the Moon: in orbit, press L and watch; or do it yourself: press 2 and burn until the high point reaches the Moon's path, timed so the Moon is there when you are.</p>
+          <table class="keys plane-keys">
             <tr><td><kbd>W</kbd> <kbd>S</kbd></td><td>Push down / pull up (the arrow keys also fly)</td></tr>
             <tr><td><kbd>A</kbd> <kbd>D</kbd></td><td>Roll left / right</td></tr>
             <tr><td><kbd>Q</kbd> <kbd>E</kbd></td><td>Rudder; steering on the ground</td></tr>
@@ -198,17 +257,19 @@
             <tr><td><kbd>T</kbd></td><td>Speed up time</td></tr>
             <tr><td><kbd>Esc</kbd></td><td>This menu</td></tr>
           </table>
-          <p class="muted small">Hold R, ease back at 55 knots (50 in the 152, 60 in the 182) and you are flying. Flaps, brakes and fuel take care of themselves. A gamepad works too.</p>
+          <p class="muted small plane-keys">Hold R, ease back at 55 knots (50 in the 152, 60 in the 182) and you are flying. Flaps, brakes and fuel take care of themselves. A gamepad works too.</p>
         </div>
         <div>
           <h3>Flight</h3>
           <div class="stack">
-            <label>Aircraft <select id="pPlane"></select></label>
-            <label>Airfield <select id="pField"></select></label>
+            <label>Craft <select id="pPlane"></select></label>
+            <label id="pFieldL">Airfield <select id="pField"></select></label>
+            <label id="pSiteL" hidden>Launch site <select id="pSite"></select></label>
             <label>Weather <select id="pWx"></select></label>
             <label>Time <select id="pHour"></select></label>
             <label>Season <select id="pSeason"></select></label>
-            <label>Start <select id="pStart"><option value="ground">On the runway</option><option value="air">In the air</option></select></label>
+            <label id="pRStartL" hidden>Start <select id="pRStart"><option value="pad">On the pad</option><option value="orbit">In orbit of the Earth</option><option value="moon">In orbit of the Moon</option></select></label>
+            <label id="pStartL">Start <select id="pStart"><option value="ground">On the runway</option><option value="air">In the air</option></select></label>
             <button id="pApply" class="btn">Restart with these</button>
           </div>
           <h3>Options</h3>

@@ -140,3 +140,25 @@ export function standInBurst(ctx, seconds, lowpassHz, decay, seed = 9) {
   normalize(d, 0.6);
   return buf;
 }
+
+/**
+ * Stand-in for the whine of a jet engine's fan and compressor at about three-quarter speed: a few steady tones
+ * that are not quite harmonics of one another, each wavering a little, over a hiss. Loopable; played faster and
+ * slower with the engine.
+ */
+export function whineBuffer(ctx, seconds = 4, seed = 13) {
+  const sr = ctx.sampleRate, n = Math.round(seconds * sr), buf = ctx.createBuffer(2, n, sr), r = rng(seed);
+  for (let c = 0; c < 2; c++) {
+    const d = buf.getChannelData(c), parts = [];
+    for (const [hz, a] of [[1180, 1], [1765, 0.55], [2390, 0.7], [3560, 0.35], [4730, 0.2]]) {
+      const cycles = Math.round(hz * seconds * (1 + 0.004 * (r() - 0.5)));              // whole cycles: the loop closes
+      parts.push({ w: TAU * cycles / n, a, p: r() * TAU, wm: TAU * Math.round(2 + r() * 9) / n, pm: r() * TAU, dm: 0.15 + 0.25 * r() });
+    }
+    const hiss = new Float32Array(n);
+    for (let i = 0; i < n; i++) hiss[i] = r() * 2 - 1;
+    highpassPeriodic(hiss, sr, 2500); normalize(hiss, 0.5);
+    for (let i = 0; i < n; i++) { let v = hiss[i]; for (const p of parts) v += p.a * (1 + p.dm * Math.sin(p.wm * i + p.pm)) * Math.sin(p.w * i + p.p); d[i] = v; }
+    setRms(d, -23);
+  }
+  return buf;
+}

@@ -1,6 +1,31 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "dead-reckoning", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev", "--", "--port", "5183", "--strictPort"], "port": 5183 }
+    {
+      "name": "dead-reckoning",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--",
+        "--port",
+        "5183",
+        "--strictPort"
+      ],
+      "port": 5183
+    },
+    {
+      "name": "dead-reckoning-build",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "preview",
+        "--",
+        "--port",
+        "5185",
+        "--strictPort"
+      ],
+      "port": 5185
+    }
   ]
 }

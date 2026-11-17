@@ -328,3 +328,21 @@ body.title #chartPanel { z-index: 45; }                     /* over the title sc
 .dev select { grid-column: 1 / -1; padding: 0.15rem 0.3rem; font: inherit; color: inherit; background: #10140d; border: 1px solid #5d6552; border-radius: 0; }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* The rocket's panel (space/mission.js) stands where the flight panel does; each hides while the other craft is flown. */
+#rp { position: absolute; left: 50%; bottom: 0.9rem; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 0.35rem; }
+body:not(.rocket) #rp, body.rocket #fp { display: none; }
+body:not(.rocket) .rocket-keys, body.rocket .plane-keys { display: none; }
+.rp-spd { width: 8.4rem; } .rp-alt { width: 8rem; } .rp-att { width: 8rem; } .rp-body { width: 5.4rem; }
+.rp-att .val { gap: 0.5rem; } .rp-att .val .dim { font-weight: 500; color: var(--dim); }
+.rp-orb { width: 13.5rem; } .rp-orb .lbl { width: 2.4rem; } .rp-orb small.num { margin-left: auto; min-width: 4.2rem; text-align: right; }
+.rp-orb .fp-line .num:last-child { margin-left: auto; }
+@container hud (max-width: 62rem) { .rp-body, #rp .fp-eng { display: none; } }
+/* The orbit map's labels: plain text over the canvas, each placed by its own transform. */
+#orbLabels { position: fixed; inset: 0; z-index: 3; pointer-events: none; overflow: hidden; font-size: var(--t-xs); font-weight: 600; letter-spacing: 0.06em; }
+#orbLabels span { position: absolute; left: 0; top: 0; margin: -0.5rem 0 0 0.6rem; padding: 0.05rem 0.35rem; white-space: nowrap; color: var(--text); text-shadow: 0 0 4px #000, 0 0 2px #000; }
+#orbLabels .body { text-transform: uppercase; letter-spacing: 0.14em; color: var(--dim); }
+#orbLabels .craft { color: #fff; }
+#orbLabels .mark { color: #8fdcff; } #orbLabels .mark.plan { color: #9df0a8; } #orbLabels .mark.hit { color: #ffb070; }
+#orbLabels .sat { color: #d8c48a; font-weight: 500; } #orbLabels .sat.on { color: #ffe29a; font-weight: 700; }
+#orbLabels span[hidden] { display: none; }

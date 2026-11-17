@@ -26,7 +26,8 @@ async function tileUrl(z, x, y) {
     })();
     template.catch(() => { template = null; });
   }
-  return (await template).replace('{z}', z).replace('{x}', x).replace('{y}', y);
+  const n = 2 ** z;          // (the map goes round the earth: columns beyond the grid are the same tiles again)
+  return (await template).replace('{z}', z).replace('{x}', ((x % n) + n) % n).replace('{y}', y);
 }
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -148,7 +149,7 @@ function labelsOf(d, z, tx, ty) {
     const n = nameOf(p);
     if (n && (p.class === 'peak' || p.class === 'volcano') && (p.rank ?? 9) <= (z < 9 ? 1 : z < 11 ? 2 : z < 13 ? 4 : 9)) {
       const e = p.ele_ft ?? (p.ele != null ? Math.round(p.ele * 3.281) : null);
-      out.push({ k: 'peak', n, ...q, p: 7 + (p.rank ?? 5) * 0.3, e: e > 0 && e < 21000 ? e : null });       // (the odd height in the data is a typo: none here tops 20,310 ft)
+      out.push({ k: 'peak', n, ...q, p: 7 + (p.rank ?? 5) * 0.3, e: e > 0 && e < 29100 ? e : null });       // (the odd height in the data is a typo: nothing tops Everest's 29,032 ft)
     }
   });
   points(d.park, (p, q) => { const n = nameOf(p); if (n) out.push({ k: 'park', n, ...q, p: 8 + (p.rank ?? 5) * 0.2 }); });
@@ -178,8 +179,9 @@ function labelsOf(d, z, tx, ty) {
     }
   };
   along(d.waterway, (p) => (p.class === 'river' || p.class === 'canal') && nameOf(p), (p, q, a, len) => out.push({ k: 'river', n: nameOf(p), ...q, p: 8.6, a, len }));
-  along(d.transportation_name, (p) => p.ref && /^(us-interstate|us-highway|ca-transcanada|us-state)/.test(p.network || '') && (p.class === 'motorway' || p.class === 'trunk' || p.class === 'primary'), (p, q) => {
-    const net = p.network.startsWith('us-interstate') ? 'i' : p.network.startsWith('us-highway') ? 'us' : p.network.startsWith('ca-') ? 'ca' : 'st';
+  // (in the United States and Canada by their networks; in the rest of the world the motorways and trunk roads, on a plain plate)
+  along(d.transportation_name, (p) => p.ref && String(p.ref).length <= 6 && (/^(us-interstate|us-highway|ca-transcanada|us-state)/.test(p.network || '') ? p.class === 'motorway' || p.class === 'trunk' || p.class === 'primary' : !/^(us|ca)-/.test(p.network || '') && (p.class === 'motorway' || p.class === 'trunk')), (p, q) => {
+    const network = p.network || '', net = network.startsWith('us-interstate') ? 'i' : network.startsWith('us-highway') ? 'us' : network.startsWith('ca-') ? 'ca' : 'st';
     out.push({ k: 'shield', n: String(p.ref).split(';')[0], ...q, p: net === 'i' ? 7.2 : net === 'us' ? 8.2 : 9.6, net });
   });
   return out;

@@ -1,9 +1,11 @@
 # Dead Reckoning
 
-A browser flight simulator set over the real terrain of North America. Fly a
-four-seat high-wing single from any of more than five hundred real airfields in
-every state of the United States, every province and territory of Canada,
-Mexico, Central America and the Caribbean,
+A browser flight simulator set over the real terrain of the whole earth. Fly a
+four-seat high-wing single from any of five thousand real airfields: six
+hundred of them in full detail (every state of the United States, every
+province and territory of Canada, Mexico, Central America, the Caribbean, and
+some forty of the world's great and famous airports, from Heathrow to Lukla),
+and the runways of every other large and medium airport on earth;
 or start in the air over any point you pin on the map, from outside or from the
 cockpit, through volumetric cloud, rain, thunderstorms, hail, snow, fog and
 fronts. There is no edge to the world: keep flying and the country keeps coming.
@@ -60,27 +62,54 @@ In flight the window follows the aircraft (`followAircraft` in `src/main.js`):
 150 km from its center the window is moved to lie around a point 60 km ahead,
 the aircraft is put where it was over the ground in the new coordinates, and
 the weather is carried along with it (`Weather.shift`). The flight stands still
-for the second or two that takes. So there is no edge to reach, in the United
-States, Canada or beyond them; only the airfields, the towns' lights and the
-climate rules stop at the two countries. (The plane the world lies on is Web
-Mercator, so the far Arctic is stretched, and a flight across the 180th
-meridian is not provided for.)
+for the second or two that takes. So there is no edge to reach anywhere on
+earth, the 180th meridian included (longitudes are taken the short way round
+from the window's center, and the map tiles' columns wrap: `wrapTile` in
+`src/world/geo.js`). Only toward the poles is there an end: the plane the world
+lies on is Web Mercator, which stretches without limit and whose tiles stop at
+85 degrees, so the window's center goes no nearer a pole than 80 degrees, a
+flight cannot be started beyond 81, and an aircraft that flies on is turned back
+at about 81.5 with a word of why.
+
+What is the same everywhere: the terrain, the satellite picture, buildings,
+roads and bridges, the land cover, the map, the weather, the sky for the
+latitude and the season for the hemisphere. What is better in the United
+States: the aerial photography that sharpens the ground close to the aircraft
+exists only there, and the elevation survey is three times finer. What is
+better in North America: the detailed airfields, towns down to 1,500 people
+(5,000 elsewhere), and a climate drawn by hand.
 
 What grows where no satellite picture has loaded, where the tree line is, how
 warm an ordinary day is (59°F in Minnesota, the low 80s in the tropics, a few
 degrees above freezing on the Arctic coast) and how readily the picture's dark
-green is taken for woodland come from a rough climate of the continent in
-`src/world/terrain.js` (`lowlandMoisture`, `treelineAt`, `seaTempAt`): prairie and plowed country keep trees to their shelter belts,
-river bottoms and towns, however green the crops are in the picture. Magnetic
-variation is interpolated from a table of values around the continent
-(`magVarAt` in `src/world/geo.js`), good to a degree or two.
+green is taken for woodland come from a rough climate in
+`src/world/terrain.js` (`lowlandMoisture`, `treelineAt`, `seaTempAt`, `seasonShift`): prairie and plowed country keep trees to their shelter belts,
+river bottoms and towns, however green the crops are in the picture. North
+America's climate is drawn by hand there. The rest of the world's is broader:
+how wet its lowlands are is read off a half-degree grid
+(`public/data/climate.bin`, baked by `tools/bake-climate.py` from the color of
+the ground in the satellite picture itself, fitted to the hand-drawn map), the
+tree line follows latitude, hemisphere and the sea (4,000 m in Nepal, 2,000 m in
+the Alps, 400 m above the Beagle Channel), and the seasons swing less where
+the weather comes off the sea (London, Sydney) than inside a continent. South
+of the equator the seasons are half a year on: "summer" is January.
+
+Magnetic variation is the World Magnetic Model's (WMM2025 by NOAA NCEI and the
+British Geological Survey, public domain), evaluated to degree 12 for mid-2026
+(`magVarAt` in `src/world/geo.js`; `tools/bake-magvar.mjs` prints its table of
+coefficients and checks the evaluator against the model's test values).
 
 ## Terrain data
 
 Elevation comes from the public [Terrain Tiles](https://registry.opendata.aws/terrain-tiles/)
 dataset on AWS (Mapzen "terrarium" tiles; in the United States the sources are
 the USGS 3DEP survey, SRTM, GMTED and ETOPO1). No key is needed. It is used down
-to zoom 14, about 7 m a pixel, which is as fine as the 10 m survey goes.
+to zoom 14, about 7 m a pixel, which is as fine as the 10 m survey goes. The
+rest of the world is SRTM's 30 m survey between 60° north and 56° south (with
+finer national surveys in places) and GMTED's 250 m beyond, so the far north is
+soft. Close to the 180th meridian the data's zoom levels disagree in places
+(Taveuni in Fiji is land at one zoom and sea at the next), which shows as
+steps in the ground there.
 
 Water is found in the data, with no list of lakes (`src/world/water.js`): the
 survey levels every lake, so a patch of pixels at one level, big enough for its
@@ -106,7 +135,10 @@ The ground is colored by real satellite imagery:
 seven nested windows of tiles around the aircraft, about 10 m a pixel at the
 finest, with shadows lifted and close-up detail added in the shader. Close to
 the aircraft it is sharpened by aerial photography from the USGS National Map
-(USDA NAIP orthoimagery, public domain), about a meter a pixel. Trees
+(USDA NAIP orthoimagery, public domain), about a meter a pixel, in the United
+States and its territories; nothing is asked of those servers anywhere else
+(`aerialCovers` in `src/world/imagery.js`), and the ground there is the
+satellite's picture with the shader's own close-up detail. Trees
 stand where the picture shows woods, except where the land cover says the
 ground is open: from space a summer's corn is as dark a green as a forest, so a
 map of woods and open country (`src/world/landcover.js`) is drawn around the
@@ -123,13 +155,35 @@ The attribution is shown on the title screen and must stay with any copy.
 
 ## Airfields and towns
 
-The airfields are the real places: every runway where it really is, with its
+The airfields are the real places. There are two kinds.
+
+The detailed ones (606: North America, and about forty flagship airports of
+the rest of the world): every runway where it really is, with its
 heading, length, width, surface and designators, the taxiways, aprons, hold
 lines and parking spots, and the footprints of the terminals, hangars and towers.
 The layout comes from [OpenStreetMap](https://www.openstreetmap.org). The list
 of fields is `tools/airfield-list.mjs`; the bake writes one file per field to
 `public/airfields/` (fetched when the field comes into the window) and the
-index of them all to `src/world/airfield-index.js`:
+index of them all to `src/world/airfield-index.js`.
+
+The plain ones (about 4,500): every other large and medium airport on earth,
+from [OurAirports](https://ourairports.com) (public domain), baked by
+`tools/bake-world-airfields.mjs` into one file, `public/data/world-airfields.json`:
+each field's names and the two ends, width and surface of each of its runways.
+The game lays out a field from those on the spot (`worldData` in
+`src/world/airports.js`): runways where they really are, with their markings,
+lights and a windsock, the ground graded under them. Their buildings are
+whatever the map has there (the streamed buildings of `src/world/cities.js`),
+and their taxiways and aprons are only the satellite picture's: no pavement is
+invented where the picture would contradict it. About one runway in nine has
+no surveyed ends in the data and is laid through the airport's listed position
+on its heading. A field baked in detail wins over its plain entry.
+
+```bash
+node tools/bake-world-airfields.mjs DIR   # DIR: OurAirports' airports.csv, runways.csv, countries.csv, regions.csv
+```
+
+The detailed fields and the towns:
 
 ```bash
 node tools/fetch-airfields.mjs            # the fields of the list not baked yet: a batch per Overpass request, with pauses
@@ -137,6 +191,7 @@ node tools/fetch-airfields.mjs --all      # every field again (--offline: from t
 node tools/fetch-airfields.mjs --source api   # the same from the main OpenStreetMap API, a field at a time, when no Overpass server answers
 node tools/fetch-towns.mjs                # towns and cities (a request for each box of the map) -> public/data/towns.json
 node tools/fetch-towns.mjs --geonames cities1000.txt   # fill the boxes that have no towns yet from GeoNames, with no network
+node tools/fetch-towns.mjs --world cities5000.txt      # the rest of the world's towns from GeoNames, with no network
 ```
 
 The scripts keep the raw answers in a cache directory outside the repository
@@ -147,8 +202,10 @@ simplified harder and keep only their larger buildings).
 
 The towns of Hawaii, of Mexico below the Tropic, of Central America and of the
 Caribbean in `public/data/towns.json` are from [GeoNames](https://www.geonames.org)
-(`cities1000`, CC BY 4.0), taken while no Overpass server answered; its credit
-is on the title screen too.
+(`cities1000`, CC BY 4.0), taken while no Overpass server answered, and so are
+the towns of the rest of the world (`cities5000`: places of 5,000 people and
+more); its credit is on the title screen too. A town's size on the ground is
+worked out from its population and how closely its part of the world builds.
 
 `src/world/airfield-index.js`, `public/airfields/*.json` and
 `public/data/towns.json` are a derived database of OpenStreetMap data,
@@ -250,9 +307,10 @@ data comes from, and has a line on every file. In short:
   start-up, drawn as meshes close in and as baked impostors beyond), airfields
   (layout data, grading, pavement, buildings and lights), cities (streamed
   buildings, roads and bridges, and the traffic on the roads), the climate of
-  the continent, sky and atmospheric scattering
-- `tools/` the scripts that bake the airfields and towns from OpenStreetMap
-  (Node), and the wall materials, stars and Milky Way (Python)
+  the earth, sky and atmospheric scattering
+- `tools/` the scripts that bake the airfields and towns from OpenStreetMap,
+  OurAirports and GeoNames (Node), and the climate grid, wall materials, stars
+  and Milky Way (Python)
 - `src/weather/` weather simulation, volumetric clouds (ray-marched at half
   resolution, accumulated over time and composited against full-resolution
   depth), rain/snow/hail/lightning
@@ -263,17 +321,39 @@ data comes from, and has a line on every file. In short:
   bloom, sun rays, rain and frost on the glass, tone curve and grading; and
   the frame's plumbing: upload budget, dynamic resolution, automatic quality,
   timing
-- `src/aircraft/` flight model, aircraft and cockpit mesh with working
-  instruments, first-person head camera
+- `src/aircraft/` flight model; the fleet (`variants.js`); the Cessna airframe
+  and cockpit with working instruments, generated in code; the loader for the
+  aircraft that come as model files (`public/models/`); first-person head camera
 - `src/core/` input, sound (recordings in `public/audio/`, mixed and pitched
   in `audio.js`), shared uniforms
-- `src/ui/` the flight panel, the map (continent, window, pin, street-map
+- `src/ui/` the flight panel, the map (the world, the window, pin, street-map
   tiles), the drop-down lists, styles
 - `src/main.js` boot, game loop, flight logic
 
 Apart from the elevation, imagery, building and land cover tiles, the baked airfields and
-towns and the sound recordings, everything (detail textures, clouds, trees,
-aircraft) is generated in code.
+towns, the sound recordings and three aircraft models, everything (detail textures, clouds, trees,
+the Cessnas) is generated in code.
+
+## Aircraft
+
+Six aircraft, chosen on the title screen or under Menu:
+
+- **Cessna 172, 152 and 182**: piston singles, generated in code, with a
+  modeled cabin and working instruments.
+- **P-51D Mustang**: 1,500 horsepower and a tail wheel.
+- **F-16**: with the power lever all the way forward the afterburner lights,
+  and it goes supersonic.
+- **Boeing 737-800**: wants a runway of 1,500 m (the F-16 900 m, the P-51 550
+  m); from a shorter one the flight starts in the air over the field.
+
+The last three are FlightGear's models, converted by `tools/ac2glb.py`, and
+are under the GNU General Public License, version 2 (see
+`public/models/CREDITS.md`). Their landing gear and flaps look after
+themselves, the airbrakes of the jets open when the power lever is at idle,
+and the jets leave contrails in air colder than about -38 °C (above roughly
+28,000 feet on an ordinary day). The flight panel shows the Mach number for a
+jet where it shows rpm for the others. They have no modeled cockpit: `C`
+gives a clear view from the pilot's seat.
 
 ## Sound
 
@@ -285,22 +365,25 @@ an idling four-cylinder single recorded on an airfield. Rain and hail were
 recorded inside cars, the thunder is five different storms, and the wheels are
 the same Cessna landing on grass. The stall horn, the buffet of a stalled wing
 and the swell of gusts are synthesized, and so is a stand-in for any file that
-fails to load.
+fails to load. The jets have their own engine recordings: an F-80 at full
+power for the roar, an idling F-22 for the whine, the cabin of a 737 in
+cruise, and an F-4 taking off for the afterburner. (The P-51 borrows the
+Cessna's engine for now.)
 
 All the recordings are public domain (CC0) from Freesound;
 `public/audio/CREDITS.md` lists each file with its author and source. They were
 made from Freesound's public previews, not the lossless originals. The files
-add about 3.5 MB and load after you press Fly. Mix levels are in the `MIX`
+add about 4 MB and load after you press Fly. Mix levels are in the `MIX`
 table at the top of `src/core/audio.js`.
 
 ## Playing
 
 Pick an airfield (the list is grouped by state and province, then Mexico,
-Central America and the Caribbean; type a name, a
-city, a state or a code to search it), a weather system, a time of day and
+Central America and the Caribbean, then every other country; type a name, a
+city, a state, a country or a code to search it), a weather system, a time of day and
 whether to start on the runway or already in the air over the field, then
 press Fly. Or press Map and click an airfield to start from it, or click
-anywhere else on the continent to drop a pin and press Fly from pin to start in
+anywhere else on earth (the map can be moved and zoomed all the way round it) to drop a pin and press Fly from pin to start in
 the air over that spot; the same works from the
 map in flight (`M`). While a pin is set, the flight panel points the way to it:
 an arrow, the heading to steer, the distance and the time at your present speed. `W`/`S` pitch, `A`/`D` roll, `Q`/`E` rudder, `R`/`F` faster and
@@ -308,6 +391,39 @@ slower; flaps, brakes and fuel take care of themselves. `C` switches between the
 chase view and the cockpit (drag to look around, wheel to zoom). `G` hands the
 aircraft to the autopilot, and `T` speeds time up: ×2, ×4, ×8, ×16, ×32, ×64,
 then back to normal. `Esc` opens the menu.
+
+### Rockets
+
+Choose the Saturn V or Starship under Craft and the airfield gives way to a launch site (Kennedy's two
+Apollo pads, Cape Canaveral, Starbase, Vandenberg, Wallops, Kodiak, and the world's others from Kourou to
+Tanegashima: every one a place with real launch pads). Or
+press Map, drop a pin anywhere on earth and press Launch from here: a pad is built on the spot. The weather
+chosen is the weather the rocket climbs through.
+
+`Space` lights the engines and lets go; after that it drops the stage. `G` is the autopilot, which flies the
+whole climb to a circular orbit about 118 miles up and shuts the engines down. By hand: `W`/`S` lower and
+raise the nose against the horizon, `A`/`D` swing it around the compass, `R`/`F` (or `Z`/`X`) set the thrust,
+and `1`/`2`/`3` hold the attitude, the nose on the direction of travel, or the tail to it. There is no fuel
+to run out. Between 15 and 22 miles up the game's world gives way to the view from space: the same
+satellite picture on a globe, the weather you left as cloud below, the thin blue line of the air, the Moon
+where the sky had it.
+
+`L`, from a low orbit of the Earth, is the way to the Moon: it works out the burn, waits (with time run fast)
+until the Moon is where it needs to be, burns, coasts for three days, trims the path as it nears the Moon and
+brakes into a circular orbit about 95 miles above it. The plan is drawn on the map; touch any control to take
+over. The Moon itself is NASA's: the Lunar Reconnaissance Orbiter's color mosaic and elevation.
+
+A rocket is heard through the air it is in: a crackling roar on the pad (recordings of real launches), duller and
+fainter as the air thins, a rumble through the structure in the onboard view (`C`) all the way to orbit. Coming
+home, the air glows around the craft.
+
+`M` in a rocket is the orbit map: the path ahead, with its high and low points, drawn around the Earth, and
+around the Moon for the part of it inside the Moon's pull. `.` and `,` run time faster and slower (up to
+100,000 times, engines off, above the air). `N` picks a satellite to aim for: the ISS (whose orbit passes
+over the launch site as the flight starts), Tiangong, Hubble, a Starlink train, GPS, a weather satellite.
+Start can also be "In orbit of the Earth" or "In orbit of the Moon" to skip the climb. Coming back, the air
+slows the craft, the ground is fetched again under wherever it comes down, and a rocket set down upright
+and gently on its engines has landed.
 
 Graphics is "Automatic" unless you choose a tier in the menu. The first guess
 comes from the name of the graphics card (`src/render/autoquality.js`); in

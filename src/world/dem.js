@@ -3,7 +3,9 @@
 // float heights, cached, and sampled by the terrain mesher, the flight
 // physics and the regional maps. Water is detected from the data itself
 // (water.js). Tiles are addressed by their place on the globe, so the cache
-// stays good when the game's window of the world moves.
+// stays good when the game's window of the world moves. A window across the
+// 180th meridian has tile columns beyond either end of the grid (geo.js):
+// they are brought round into it wherever a tile is looked up or asked for.
 //
 // Downloading, decoding and the water rules run in the worker pool (workers.js), a few milliseconds a tile
 // that the frame no longer pays; only the finished arrays come back. The cache itself stays here on the
@@ -16,11 +18,12 @@ import { pool } from './workers.js';
 import { perf } from '../render/perf.js';
 
 // Zoom 14 is as fine as the data goes in the United States (the 10 m 3DEP survey; a pixel is about 7 m
-// here). Zoom 15 exists but is the same survey resampled.
+// here). Zoom 15 exists but is the same survey resampled. The rest of the world is SRTM's 30 m between 60 N
+// and 56 S (with finer national surveys in places: much of Europe, New Zealand), and GMTED's 250 m beyond.
 export const BASE_Z = 8, MAX_Z = 14;
-export const ATTRIBUTION = 'Terrain: Mapzen Terrain Tiles on AWS (USGS 3DEP, SRTM, GMTED, ETOPO1 and others)';
+export const ATTRIBUTION = 'Terrain: Mapzen Terrain Tiles on AWS (USGS 3DEP, SRTM, GMTED, ETOPO1 and national surveys: github.com/tilezen/joerd/blob/master/docs/attribution.md)';
 export const tileUrl = (z, x, y) => `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`;
-const KEY = (z, x, y) => z * 67108864 + x * 16384 + y;
+const KEY = (z, x, y) => z * 67108864 + (x & ((1 << z) - 1)) * 16384 + y;          // (the column wrapped round the earth)
 const MAX_ACTIVE = 8, CACHE_LIMIT = 300;
 
 // A tile asked for only in passing (ensure(): a patch that wants it asks again every frame) is let go if
@@ -77,7 +80,8 @@ function failed(p, e, dropped) {
   // Give up on this tile: stand in a flat patch of the best coarser data so meshing can proceed.
   stats.failed++; active++;
   const t0 = performance.now(), h = new Float32Array(65536), mpp = metersPerPixel(p.z);
-  const ox = (p.x * 256 + 0.5 - pixelX(0, p.z)) * mpp, oz = (p.y * 256 + 0.5 - pixelY(0, p.z)) * mpp;
+  const around = 256 * 2 ** p.z, dpx = p.x * 256 + 0.5 - pixelX(0, p.z);       // (the copy of the tile nearest the window)
+  const ox = (dpx - around * Math.round(dpx / around)) * mpp, oz = (p.y * 256 + 0.5 - pixelY(0, p.z)) * mpp;
   for (let j = 0; j < 256; j++) for (let i = 0; i < 256; i++) h[j * 256 + i] = heightAt(ox + i * mpp, oz + j * mpp, p.z - 1);
   console.warn('Terrain tile failed, using coarser data:', p.z, p.x, p.y, e.message);
   finish(p, h, waterMask(p.z, p.x, p.y, h));
@@ -123,6 +127,7 @@ function evict() {
  * passing, which lapses unless it is repeated (its promise then never settles: nobody is waiting on it).
  */
 export function load(z, x, y, prio = 1, keep = true) {
+  x &= (1 << z) - 1;
   const key = KEY(z, x, y), t = tiles.get(key);
   if (t) { t.used = ++stamp; return Promise.resolve(t); }
   const now = performance.now();
@@ -141,10 +146,10 @@ export const pendingCount = () => pending.size;
 
 /** Tile range covering a world rectangle (with a pixel of margin for filtering). */
 function range(z, x0, z0, x1, z1) {
-  const m = 2.5, max = 2 ** z - 1;
+  const m = 2.5, max = 2 ** z - 1;          // (rows end at the edge of the map; columns go on round the earth)
   return [
-    Math.max(0, Math.floor((pixelX(x0, z) - m) / 256)), Math.max(0, Math.floor((pixelY(z0, z) - m) / 256)),
-    Math.min(max, Math.floor((pixelX(x1, z) + m) / 256)), Math.min(max, Math.floor((pixelY(z1, z) + m) / 256)),
+    Math.floor((pixelX(x0, z) - m) / 256), Math.max(0, Math.floor((pixelY(z0, z) - m) / 256)),
+    Math.floor((pixelX(x1, z) + m) / 256), Math.min(max, Math.floor((pixelY(z1, z) + m) / 256)),
   ];
 }
 /** True if every tile under the rectangle is loaded; otherwise requests the missing ones. */
@@ -167,7 +172,7 @@ export function loadArea(z, x0, z0, x1, z1, prio = 0) {
 // Texel fetch with a one-tile memo; missing neighbors clamp to the current tile's edge.
 let memo = null;
 function texel(z, ix, iy, channel) {
-  const tx = ix >> 8, ty = iy >> 8;
+  const tx = (ix >> 8) & ((1 << z) - 1), ty = iy >> 8;
   let t = memo;
   if (!t || t.z !== z || t.x !== tx || t.y !== ty) { t = tiles.get(KEY(z, tx, ty)); if (!t) return NaN; memo = t; }
   return channel ? t.water[(iy & 255) * 256 + (ix & 255)] : t.h[(iy & 255) * 256 + (ix & 255)];
@@ -180,15 +185,15 @@ function texel(z, ix, iy, channel) {
  */
 export function sampleGrid(z, x0, z0, step, n, outH, outW) {
   const mpp = metersPerPixel(z), sx = step / mpp;
-  const fx0 = pixelX(x0, z) - 0.5, fy0 = pixelY(z0, z) - 0.5;
+  const fx0 = pixelX(x0, z) - 0.5, fy0 = pixelY(z0, z) - 0.5, wrap = (1 << z) - 1;
   for (let j = 0; j < n; j++) {
     const fy = fy0 + j * sx, iy = Math.floor(fy), v = fy - iy;
     for (let i = 0; i < n; i++) {
       const fx = fx0 + i * sx, ix = Math.floor(fx), u = fx - ix, k = j * n + i;
       let a, b, c, d;
-      const lx = ix & 255, ly = iy & 255;
-      const t = (memo && memo.z === z && memo.x === ix >> 8 && memo.y === iy >> 8) ? memo : (texel(z, ix, iy, 0), memo);
-      if (t && lx < 255 && ly < 255 && t.z === z && t.x === ix >> 8 && t.y === iy >> 8) {
+      const lx = ix & 255, ly = iy & 255, tx = (ix >> 8) & wrap;
+      const t = (memo && memo.z === z && memo.x === tx && memo.y === iy >> 8) ? memo : (texel(z, ix, iy, 0), memo);
+      if (t && lx < 255 && ly < 255 && t.z === z && t.x === tx && t.y === iy >> 8) {
         const o = ly * 256 + lx, h = t.h;
         a = h[o]; b = h[o + 1]; c = h[o + 256]; d = h[o + 257];
         if (outW) { const w = t.water, wa = w[o] ? 1 : 0, wb = w[o + 1] ? 1 : 0, wc = w[o + 256] ? 1 : 0, wd = w[o + 257] ? 1 : 0; outW[k] = ((wa + (wb - wa) * u) * (1 - v) + (wc + (wd - wc) * u) * v) * 255; }
@@ -261,7 +266,7 @@ function forgetOutside() {
   for (const [key, t] of tiles) {
     if (t.z > BASE_Z) continue;
     const [ax, ay, bx, by] = range(t.z, -WORLD_HALF, -WORLD_HALF, WORLD_HALF, WORLD_HALF);
-    if (t.x < ax || t.x > bx || t.y < ay || t.y > by) tiles.delete(key);
+    if (((t.x - ax) & ((1 << t.z) - 1)) > bx - ax || t.y < ay || t.y > by) tiles.delete(key);
   }
 }
 

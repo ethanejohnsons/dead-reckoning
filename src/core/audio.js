@@ -9,8 +9,14 @@
 // processing rather than playback: the recorded engine is also bent through a soft curve to bring out exhaust
 // harmonics, more of them under load. If a file fails to load, a synthesized stand-in takes its place so the
 // game still sounds like something.
+//
+// A jet has its own engine voice (the roar of the exhaust, the whine of the fan, the rumble that reaches the
+// cabin, an afterburner), driven by thrust and fan speed where the piston engine is driven by rpm. Its layers
+// are recordings too (jet_roar: an F-80 at full power; jet_whine: an F-22 idling; jet_cabin: the cabin of a 737 in
+// cruise; jet_burner: an F-4 taking off in afterburner), with synthesized stand-ins (shaped noise, a cluster of
+// tones) for any that fail to load.
 
-import { gustBuffer, buffetBuffer, reedWave, noiseBuffer, standInEngine, standInBurst, rng } from './audio-synth.js';
+import { gustBuffer, buffetBuffer, reedWave, noiseBuffer, standInEngine, standInBurst, whineBuffer, rng } from './audio-synth.js';
 
 const AUDIO_URL = `${import.meta.env.BASE_URL}audio/`;
 
@@ -64,6 +70,7 @@ export const MIX = {
   roll: dB(1), rollOutside: dB(-7),
   thunder: dB(6), worldInCabin: dB(-2.5),
   horn: 0.13, hornOutside: dB(-1),
+  jetOutside: dB(4), jetCabin: dB(-3), jetWhineCabin: dB(-13), jetBurner: dB(5),
 };
 
 /** A looping recording behind its own gain. The source is (re)made when the buffer arrives. */
@@ -97,7 +104,7 @@ export class Sound {
     this.loaded = null;            // promise, resolves when `ready` turns true
     this._started = false; this._running = false; this._active = false; this._offline = false; this._hidden = false;
     this._fresh = false; this._engOn = false; this._engT0 = -1e9; this._settleRpm = 1330; this._surface = 'paved'; this._lastClap = null;
-    this._view = 1; this._rand = rng(20231);
+    this._view = 1; this._rand = rng(20231); this._jet = false;
     this.state = {};               // what the last update asked for (rates, weights, levels); read by tests
   }
 
@@ -222,6 +229,19 @@ export class Sound {
     const millOut = chain(this.mill.gain, filter('lowpass', 420), gain(1));
     millOut.connect(this.cabin); chain(millOut, gain(0.7), this.outside);
 
+    // Jet engine: roar (dull and low at idle, opening up with thrust), whine (pitched by fan speed), the rumble in
+    // the cabin, and the afterburner. Silent while a piston aircraft is flown, as the piston loops are for a jet.
+    this.jetOn = gain(0); this.jetOnCab = gain(0);
+    this.jetRoarLP = filter('lowpass', 500, 0.5);
+    this.jetRoar = new Loop(ctx, this.jetRoarLP); this.jetWhine = new Loop(ctx, null); this.jetCabin = new Loop(ctx, null); this.jetBurner = new Loop(ctx, null);
+    const jetOut = gain(1), jetIn = gain(1);
+    chain(this.jetRoarLP, jetOut); chain(this.jetWhine.gain, filter('highpass', 500), jetOut);
+    chain(this.jetBurner.gain, filter('lowpass', 1400, 0.5), gain(MIX.jetBurner), jetOut);
+    chain(this.jetRoarLP, filter('lowpass', 420, 0.5), gain(dB(-6)), jetIn); chain(this.jetCabin.gain, jetIn);
+    chain(this.jetWhine.gain, filter('lowpass', 3200), gain(MIX.jetWhineCabin), jetIn);
+    chain(this.jetBurner.gain, filter('lowpass', 260), gain(dB(-2)), jetIn);
+    chain(jetOut, this.jetOn, gain(MIX.jetOutside), this.outside); chain(jetIn, this.jetOnCab, gain(MIX.jetCabin), this.cabin);
+
     // Air.
     this.airCabLP = filter('lowpass', 3000, 0.5);
     this.airCab = new Loop(ctx, this.airCabLP); chain(this.airCabLP, gain(MIX.airCabin), this.cabin);
@@ -325,7 +345,8 @@ export class Sound {
       if (cabin && list[0].name === name) this.mill.set(buffer, meta.loop, this._rand()), this.millRpm = meta.rpm;
       return;
     }
-    const loops = { air_cabin: this.airCab, air_rush: this.airRush, air_gust: this.airGust, rain_light: this.rainLight, rain_heavy: this.rainHeavy, hail: this.hail, roll_grass: this.roll };
+    const loops = { jet_roar: this.jetRoar, jet_whine: this.jetWhine, jet_cabin: this.jetCabin, jet_burner: this.jetBurner, air_cabin: this.airCab, air_rush: this.airRush, air_gust: this.airGust, rain_light: this.rainLight, rain_heavy: this.rainHeavy, hail: this.hail, roll_grass: this.roll };
+    if (name === 'jet_whine') this.whineRef = meta.n1 ?? 0.08;      // how fast the engine was turning in the recording (0 idle .. 1 full)
     if (loops[name]) { loops[name].set(buffer, meta.loop, phase); return; }
     if (name.startsWith('thunder_')) this.claps.push({ name, buffer, kind: name.includes('near') ? 'near' : 'far', long: buffer.duration > 16 });
     else { this.buf[name] = buffer; if (name === 'eng_start') this.startMeta = meta; }
@@ -343,6 +364,8 @@ export class Sound {
     noise(this.airCab, 'pink', 31, 'cabin air'); noise(this.airRush, 'brown', 37, 'wind');
     if (!this.rainHeavy.loaded && !this.rainLight.loaded) noise(this.rainHeavy, 'white', 41, 'rain');
     noise(this.roll, 'brown', 43, 'wheels');
+    noise(this.jetRoar, 'pink', 61, 'jet roar'); noise(this.jetCabin, 'brown', 67, 'jet cabin'); noise(this.jetBurner, 'brown', 71, 'afterburner');
+    if (!this.jetWhine.loaded) { this.jetWhine.set(whineBuffer(ctx), null); this.whineRef = 0.75; used.push('jet whine'); }
     if (!this.claps.length) {
       this.claps.push({ name: 'stand-in near', buffer: standInBurst(ctx, 7, 700, 1.6, 51), kind: 'near' }, { name: 'stand-in far', buffer: standInBurst(ctx, 9, 160, 2.6, 53), kind: 'far' });
       used.push('thunder');
@@ -359,7 +382,10 @@ export class Sound {
    * Every frame. Only `active` is required; everything else has a sensible default.
    *   active      flying, not paused, not loading
    *   view        'cockpit' or 'chase'
-   *   rpm         engine speed (falls back to an estimate from `power`)
+   *   rpm         engine speed (falls back to an estimate from `power`); for a jet, fan speed in percent
+   *   jet         true for a jet: its own engine voice. reheat 0..1: the afterburner. jetTone 0..1: from an airliner's
+   *               deep fan to a fighter's hard-edged exhaust
+   *   airRef      airspeed (m/s) at which the airflow is as loud as a Cessna's in cruise (default 52)
    *   power       thrust lever position after engine lag, 0..1
    *   engine      false when the engine has stopped (fuel) and the propeller windmills
    *   crashed     true while the wreck sits there
@@ -386,6 +412,8 @@ export class Sound {
     const ias = Math.max(0, s.ias || 0), onGround = !!s.onGround, crashed = !!s.crashed;
     const fire = s.engine !== false && !crashed;                 // the engine is running under its own power
     if (s.surface) this._surface = s.surface;
+    const jet = !!s.jet;
+    if (jet !== this._jet) { this._jet = jet; if (this._engOn && !this._fresh) this._fresh = 'running'; }    // another kind of engine: hand over to its voice
 
     // ---- engine state: start from cold, cut on a crash, die away when it stops
     if (fire !== this._engOn) {
@@ -427,8 +455,19 @@ export class Sound {
     this.mill.setLevel(mill * dB(-9), t, 0.25);
     st.rpm = rpm; st.load = load; st.engineLevel = level;
 
+    // ---- jet engine: thrust sets the roar, fan speed the pitch of the whine
+    if (jet) {
+      const n1 = clamp((rpmIn - 15) / 85, 0, 1), tone = clamp(s.jetTone ?? 0, 0, 1), ab = clamp(s.reheat || 0, 0, 1);
+      this.jetRoar.setLevel(dB(-17 + (17 + 3 * tone) * Math.pow(power, 0.6)), t, 0.15); this.jetRoar.setRate(0.7 + 0.3 * n1, t, 0.2);
+      this.jetRoarLP.frequency.setTargetAtTime(260 + (1700 + 2600 * tone) * Math.pow(power, 1.3), t, 0.15);
+      this.jetWhine.setLevel(dB(-9 - 9 * power - 3 * tone), t, 0.15); this.jetWhine.setRate((0.6 + 0.5 * n1) / (0.6 + 0.5 * (this.whineRef ?? 0.08)), t, 0.12);
+      this.jetCabin.setLevel(dB(-12 + 10 * power), t, 0.2); this.jetCabin.setRate(0.8 + 0.3 * n1, t, 0.2);
+      this.jetBurner.setLevel(ab, t, 0.12); this.jetBurner.setRate(0.85 + 0.2 * ab, t, 0.2);
+      st.n1 = n1; st.reheat = ab;
+    }
+
     // ---- air: dynamic pressure, so the square of airspeed
-    const q = clamp((ias / 52) * (ias / 52), 0, 2.2), v1 = clamp(ias / 60, 0, 1.3);
+    const aref = s.airRef || 52, q = clamp((ias / aref) * (ias / aref), 0, 2.2), v1 = clamp(ias / (aref * 1.15), 0, 1.3);
     const turb = clamp(s.turb || 0, 0, 1), cloud = clamp(s.cloud || 0, 0, 1);
     const swell = clamp(0.1 + 1.5 * turb, 0, 1) * 0.6;           // how far gusts move the wind level
     const cab = 0.9 * Math.pow(q, 0.85), rush = Math.pow(q, 0.85), gust = turb * (0.2 + 0.8 * Math.min(q, 1.3));
@@ -475,8 +514,12 @@ export class Sound {
   _startEngine(t, cold = true) {
     const g = this.engLoops.gain, e = this.extLoops.gain, shot = cold && this.buf.eng_start, meta = this.startMeta || {};
     const at = shot ? meta.catchAt ?? 1.3 : 0;                   // when the engine catches, after the starter
+    for (const p of [g, e, this.jetOn.gain, this.jetOnCab.gain]) { p.cancelScheduledValues(t); p.setValueAtTime(0, t); }
+    if (this._jet) {                                             // a jet winds up over a few seconds, with no starter to hear
+      for (const p of [this.jetOn.gain, this.jetOnCab.gain]) p.linearRampToValueAtTime(1, t + (cold ? 2.4 : 0.4));
+      this._engT0 = -1e9; return;
+    }
     this._engT0 = cold ? t + at : -1e9; this._settleRpm = shot ? meta.settleRpm ?? 1330 : 1100;
-    for (const p of [g, e]) { p.cancelScheduledValues(t); p.setValueAtTime(0, t); }
     if (!cold) for (const p of [g, e]) p.linearRampToValueAtTime(1, t + 0.4);
     else if (shot) {
       // Starter and first firing from the recording, then a short hand-over to the loops at the same speed.
@@ -487,7 +530,7 @@ export class Sound {
   }
 
   _stopEngine(t, tau) {
-    for (const p of [this.engLoops.gain, this.extLoops.gain]) { p.cancelScheduledValues(t); p.setTargetAtTime(0, t, tau); }
+    for (const p of [this.engLoops.gain, this.extLoops.gain, this.jetOn.gain, this.jetOnCab.gain]) { p.cancelScheduledValues(t); p.setTargetAtTime(0, t, tau); }
     if (this._starter) { const g = this._starter.gain.gain; g.cancelScheduledValues(t); g.setTargetAtTime(0, t, tau); this._starter = null; }
     this._engT0 = -1e9;
   }

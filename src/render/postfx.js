@@ -396,10 +396,12 @@ export class PostFX {
           A.w = 0;
           if (!e || !(heat > 0)) continue;
           vA.set(e[0], e[1], e[2]).applyMatrix4(sub.matrixWorld).applyMatrix4(camera.matrixWorldInverse);
-          vB.set(e[0] * 1.15, e[1] + 0.12, e[2] + 3.4).applyMatrix4(sub.matrixWorld).applyMatrix4(camera.matrixWorldInverse);
+          // (an entry may carry its plume's length and how many times wider than a piston's stack it is: a jet's nozzle)
+          const len = e[3] || 3.4, wide = e[4] || 1;
+          vB.set(e[0] * (e[3] ? 1 : 1.15), e[1] + (e[3] ? 0 : 0.12), e[2] + len).applyMatrix4(sub.matrixWorld).applyMatrix4(camera.matrixWorldInverse);
           if (-vA.z < camera.near + 0.3 || -vB.z < camera.near + 0.3) continue;
-          A.set(vA.x / (-vA.z * tanX) * 0.5 + 0.5, vA.y / (-vA.z * tanY) * 0.5 + 0.5, -vA.z, 0.2 / (-vA.z * 2 * tanY));
-          B.set(vB.x / (-vB.z * tanX) * 0.5 + 0.5, vB.y / (-vB.z * tanY) * 0.5 + 0.5, -vB.z, 0.55 / (-vB.z * 2 * tanY));
+          A.set(vA.x / (-vA.z * tanX) * 0.5 + 0.5, vA.y / (-vA.z * tanY) * 0.5 + 0.5, -vA.z, 0.2 * wide / (-vA.z * 2 * tanY));
+          B.set(vB.x / (-vB.z * tanX) * 0.5 + 0.5, vB.y / (-vB.z * tanY) * 0.5 + 0.5, -vB.z, 0.55 * wide / (-vB.z * 2 * tanY));
         }
       } else { su.uBoxMin.value.set(1, 1, 1); su.uBoxMax.value.set(-1, -1, -1); }
       su.uHeat.value = heat; su.uRigid.value = sub ? 0 : cockpit > 0.5 ? 4 : 38;

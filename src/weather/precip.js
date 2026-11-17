@@ -146,6 +146,77 @@ uniform vec3 uColor;
 varying float vA, vS;
 void main() { float a = vA * (1.0 - vS * vS) * (1.0 - vS * vS); if (a < 0.003) discard; gl_FragColor = vec4(uColor, a); }`;
 
+/**
+ * Contrails: the exhaust of a jet freezing into a line of cloud behind each engine, in air cold enough for it
+ * (about -38 C and below: the upper troposphere). One ribbon an engine, laid point by point along the path flown
+ * and drifting with the wind; it starts a little way behind the nozzle, spreads as it ages and is gone in a minute.
+ */
+class Contrails {
+  constructor(scene, ribbons = 4, points = 150) {
+    const R = this.R = ribbons, N = this.N = points, n = R * N, idx = [];
+    for (let t = 0; t < R; t++) for (let i = 0; i < N - 1; i++) { const a = (t * N + i) * 2; idx.push(a, a + 1, a + 2, a + 2, a + 1, a + 3); }
+    const g = new THREE.BufferGeometry(), side = new Float32Array(n * 2);
+    for (let i = 0; i < n; i++) { side[i * 2] = -1; side[i * 2 + 1] = 1; }
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 2 * 3), 3));
+    g.setAttribute('aAlpha', new THREE.BufferAttribute(new Float32Array(n * 2), 1));
+    g.setAttribute('aSide', new THREE.BufferAttribute(side, 1));
+    g.setIndex(idx);
+    this.u = { uColor: { value: new THREE.Color() } };
+    this.mesh = new THREE.Mesh(g, new THREE.ShaderMaterial({ uniforms: this.u, vertexShader: TRAIL_VERT, fragmentShader: TRAIL_FRAG, transparent: true, depthWrite: false, side: THREE.DoubleSide }));
+    this.mesh.frustumCulled = false; this.mesh.renderOrder = 5; this.mesh.visible = false;
+    scene.add(this.mesh);
+    this.p = Array.from({ length: R }, () => ({ x: new Float64Array(N), y: new Float64Array(N), z: new Float64Array(N), s: new Float32Array(N), age: new Float32Array(N).fill(999), head: 0, lx: 0, ly: 0, lz: 0 }));
+    this.sources = [];                    // the nozzles, in the aircraft's axes (THREE.Vector3): set with the aircraft
+    this.live = false;
+    this.tip = new THREE.Vector3(); this.side = new THREE.Vector3(); this.tan = new THREE.Vector3(); this.toCam = new THREE.Vector3();
+  }
+
+  /** strength 0..1: how readily a trail forms here and now (0 still lets the trail already laid fade out). */
+  update(dt, ac, strength, wind, camPos) {
+    const n = Math.min(this.sources.length, this.R);
+    if (!n || (!this.live && !(strength > 0))) { this.mesh.visible = false; return; }
+    const LIFE = 55, N = this.N, pos = this.mesh.geometry.attributes.position, al = this.mesh.geometry.attributes.aAlpha;
+    const { tip, side, tan, toCam } = this, step = Math.max(8, (ac.tas || 0) * 0.3);
+    let any = false;
+    for (let t = 0; t < this.R; t++) {
+      const P = this.p[t];
+      if (t >= n) { for (let k = 0; k < N; k++) { al.setX((t * N + k) * 2, 0); al.setX((t * N + k) * 2 + 1, 0); } continue; }
+      tip.copy(this.sources[t]).applyQuaternion(ac.quat).add(ac.pos);
+      for (let i = 0; i < N; i++) { P.age[i] += dt; P.x[i] += wind.x * dt; P.y[i] += (wind.y - 0.3) * dt; P.z[i] += wind.z * dt; }
+      const moved = Math.hypot(tip.x - P.lx, tip.y - P.ly, tip.z - P.lz);
+      if (moved > 40 * step) P.age.fill(999);                 // the aircraft was repositioned: drop the old trail
+      if (moved > step) {
+        P.head = (P.head + 1) % N;
+        P.x[P.head] = tip.x; P.y[P.head] = tip.y; P.z[P.head] = tip.z; P.s[P.head] = strength; P.age[P.head] = 0;
+        P.lx = tip.x; P.ly = tip.y; P.lz = tip.z;
+      }
+      for (let k = 0; k < N; k++) {
+        const i = (P.head - k + N) % N, j = (P.head - Math.min(k + 1, N - 1) + N) % N, o = (t * N + k) * 2;
+        const dead = k > 0 && P.age[i] > 900;
+        const x = k === 0 || dead ? tip.x : P.x[i], y = k === 0 || dead ? tip.y : P.y[i], z = k === 0 || dead ? tip.z : P.z[i];
+        const age = k === 0 ? 0 : P.age[i], life = Math.max(0, 1 - age / LIFE);
+        // nothing for the first stretch behind the nozzle (the exhaust has not yet cooled), then full, then thinning
+        const a = dead ? 0 : (k === 0 ? 0 : P.s[i]) * Math.pow(life, 1.3) * 0.62 * THREE.MathUtils.smoothstep(age, 0.12, 0.5);
+        if (a > 0.004) any = true;
+        tan.set(P.x[j] - x, P.y[j] - y, P.z[j] - z);
+        toCam.set(camPos.x - x, camPos.y - y, camPos.z - z);
+        side.crossVectors(tan, toCam);
+        const sl = side.length();
+        if (sl > 1e-6) side.multiplyScalar((0.7 + age * 0.38) / sl); else side.set(0, 0, 0);
+        pos.setXYZ(o, x - ac.pos.x - side.x, y - ac.pos.y - side.y, z - ac.pos.z - side.z);
+        pos.setXYZ(o + 1, x - ac.pos.x + side.x, y - ac.pos.y + side.y, z - ac.pos.z + side.z);
+        al.setX(o, a); al.setX(o + 1, a);
+      }
+    }
+    this.live = any; this.mesh.visible = any;
+    if (!any) return;
+    pos.needsUpdate = true; al.needsUpdate = true;
+    this.mesh.position.copy(ac.pos);
+    const col = this.u.uColor.value, sky = ENV.uAmbSky.value, sun = ENV.uSunCol.value;
+    col.setRGB(1.6 * sky.r + 0.55 * sun.r + 0.02, 1.6 * sky.g + 0.55 * sun.g + 0.02, 1.6 * sky.b + 0.55 * sun.b + 0.02);
+  }
+}
+
 const BOLT_VERT = /* glsl */`
 attribute vec3 aOther;
 attribute float aSide;
@@ -548,6 +619,7 @@ export class Precip {
     // Point history: world position (doubles), strength at birth, age.
     this.tp = [0, 1].map(() => ({ x: new Float64Array(this.TN), y: new Float64Array(this.TN), z: new Float64Array(this.TN), s: new Float32Array(this.TN), age: new Float32Array(this.TN).fill(99), head: 0, lx: 0, ly: 0, lz: 0 }));
     this.tips = [new THREE.Vector3(-7.95, 1.18, 0.4), new THREE.Vector3(7.95, 1.18, 0.4)];
+    this.contrails = new Contrails(scene);        // (its `sources` are set with the aircraft: a jet's nozzles)
 
     // Lightning: up to 700 camera-facing segments, additive and far brighter than white.
     this.BMAX = 700;
@@ -600,6 +672,8 @@ export class Precip {
    *                   drawn inside the fuselage and hail strikes the airframe. Also read: vel (Vector3, its velocity; else worked
    *                   out from its movement) and root (its Object3D: impact debris is then drawn as part of the aircraft)
    *   humidity        (optional) 0..1 moist air; trails also form in cloud, rain, or under high g
+   *   temp            (optional) air temperature at the aircraft, C: a jet (see `contrails.sources`) leaves contrails in very
+   *                   cold air; its aircraft.power (0..1) says how hard the engines are working
    *   blow            0..1 (optional) snow blowing along the ground here; needs `ground`
    *   ground          (optional) height of the ground under the camera, m
    * Afterward `hits` holds the hail strikes on the airframe: { rate per second (smoothed), frame, glass, total }.
@@ -643,6 +717,11 @@ export class Precip {
     this.vapor.update(dt, time, Math.min(1, (s.cloud || 0) * 1.4), wind, camVel, camPos, this.amb, this.sun);
 
     this.updateTrails(s, dt, wind, camPos);
+    // Contrails form behind a jet's engines in very cold air, more readily the harder they are working.
+    if (s.aircraft?.pos) {
+      const a = s.aircraft, cold = THREE.MathUtils.smoothstep(-(s.temp ?? 15), 33, 41);
+      this.contrails.update(dt, a, a.onGround ? 0 : cold * (0.45 + 0.55 * (a.power ?? 1)) * THREE.MathUtils.smoothstep(a.tas ?? 0, 60, 110), wind, camPos);
+    }
     this.updateLightning(dt, s.camera);
   }
 

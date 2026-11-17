@@ -6,7 +6,7 @@
 // and the touchdown all register without the horizon ever lurching.
 
 import * as THREE from 'three';
-import { PILOT_EYE } from './model.js';
+import { PILOT_EYE, PILOT_VIEW } from './model.js';
 
 /** Near plane the cockpit needs: the door frame is a hand's width from the pilot's ear. */
 export const COCKPIT_NEAR = 0.08;
@@ -14,9 +14,10 @@ export const COCKPIT_NEAR = 0.08;
 // 18 degrees below the horizon, so the six flight instruments fill the middle of the screen and a band of
 // windshield stays above the glareshield for the horizon and the runway. Looking round with the mouse lifts
 // the gaze back toward level, so the side windows show the world and not the door cards.
-const FOV = 50, LOOK_DOWN = 0.31;            // resting field of view (deg) and downward tilt (rad)
+// (An aircraft without a modeled panel rests its gaze nearly level: PILOT_VIEW.down is set with the aircraft.)
+const FOV = 50;                              // resting field of view (deg); the downward tilt is PILOT_VIEW.down (rad)
 
-const S = { yaw: 0, pitch: -LOOK_DOWN, fov: FOV, lead: 0, last: -1, t: 0, wasDown: true, strike: null, off: new THREE.Vector3(), vel: new THREE.Vector3() };
+const S = { yaw: 0, pitch: -PILOT_VIEW.down, fov: FOV, lead: 0, last: -1, t: 0, wasDown: true, strike: null, off: new THREE.Vector3(), vel: new THREE.Vector3() };
 const v = new THREE.Vector3(), tgt = new THREE.Vector3(), q = new THREE.Quaternion(), e = new THREE.Euler(0, 0, 0, 'YXZ');
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 const sstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -38,7 +39,7 @@ export function cockpitCamera(camera, ac, input, dt, turb = 0) {
   S.last = now;
   const look = input.look;
   look.yaw = clamp(look.yaw, -2.55, 2.55);                                       // about 145 degrees over either shoulder
-  const yawT = look.yaw, down = LOOK_DOWN * (1 - 0.7 * sstep(0.35, 1.2, Math.abs(look.yaw)));
+  const yawT = look.yaw, down = PILOT_VIEW.down * (1 - 0.7 * sstep(0.35, 1.2, Math.abs(look.yaw)));
   const pitchT = clamp(-look.pitch * 0.8 - down, -1.25, 1.0);
   const fovT = clamp(FOV * input.zoom, 28, 96);
   const airborne = !ac.onGround;

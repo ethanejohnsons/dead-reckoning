@@ -1,16 +1,21 @@
-// The map. Two layers of relief: the whole continent, coarse, shaded once from a few dozen elevation tiles
-// (loadOverview), and over it the game's window of the world in detail, baked from the regional elevation
-// grid each time the window moves (bakeChart). Over the relief, real map data (OpenStreetMap, as vector tiles:
+// The map: of the whole earth, to be moved and zoomed anywhere. Three layers of relief: the world, coarse, shaded
+// once from the 64 elevation tiles of zoom 3 (loadOverview); the part of the world around the game's window, twice
+// as fine, shaded again when the window has moved far (loadRegion); and over them the window itself in detail, baked
+// from the regional elevation grid each time the window moves (bakeChart). The map is drawn in the window's own
+// coordinates, in which the earth repeats east and west every worldAround() meters: its middle may be moved half
+// way round either way, and whatever has a longitude (airfields, the pin, the graticule) is drawn in the copy
+// nearest the middle of the view. Over the relief, real map data (OpenStreetMap, as vector tiles:
 // ui/maptiles.js): water, rivers, woods, towns' built-up ground, parks, borders, roads, railroads and runways,
 // and the names of places, waters, peaks, parks and landmarks, placed so that none covers another. On top: a
-// graticule of latitude and longitude, every airfield of the game, the aircraft, a pin the player can drop
-// anywhere (a flight can be started in the air over it), and optionally the synoptic weather picture.
+// graticule of latitude and longitude, the airfields of the game (the biggest alone from far out), the aircraft,
+// a pin the player can drop anywhere short of the poles (a flight can be started in the air over it), and
+// optionally the synoptic weather picture.
 
 import { baseHeight, baseWater, moisture, LAND_HALF } from '../world/terrain.js';
-import { AIRPORTS, FIELDS, airportById } from '../world/airports.js';
+import { AIRPORTS, FIELDS } from '../world/airports.js';
 import { allTowns } from '../world/towns.js';
 import { tileUrl } from '../world/dem.js';
-import { toWorld, toLatLon, worldX, worldZ } from '../world/geo.js';
+import { toWorld, toLatLon, worldX, worldZ, pixelX, pixelY, worldAround, wrapLon, wrapTile, PIN_LAT_MAX } from '../world/geo.js';
 import { NM } from '../aircraft/physics.js';
 import { MapTiles, MAP_ATTRIBUTION } from './maptiles.js';
 
@@ -101,13 +106,26 @@ function dryCanvas(dry, W, H) {
 }
 
 /**
- * The relief of North America, from the Arctic islands to Central America, as one shaded picture on the Web
- * Mercator plane (the plane the game's world lies on, so it is drawn under the map by scale and offset
- * alone): 36 elevation tiles of zoom 4, about 7 km a pixel in the middle latitudes. Resolves with
- * { canvas, z, px0, py0 } (px0, py0: global pixel coordinates of its top left corner), or null if nothing came.
+ * The relief of the whole earth as one shaded picture on the Web Mercator plane (the plane the game's world
+ * lies on, so it is drawn under the map by scale and offset alone): the 64 elevation tiles of zoom 3, about
+ * 14 km a pixel in the middle latitudes. Resolves with { canvas, land, z, px0, py0 } (px0, py0: global pixel
+ * coordinates of its top left corner), or null if nothing came.
  */
-export async function loadOverview() {
-  const Z = 4, X0 = 0, X1 = 5, Y0 = 2, Y1 = 7, W = (X1 - X0 + 1) * 256, H = (Y1 - Y0 + 1) * 256;
+export const loadOverview = () => relief(3, 0, 7, 0, 7);
+/**
+ * The same for the part of the world around the game's window as it is now, twice as fine: 36 tiles of zoom 4,
+ * some 4,000 km each way in the middle latitudes. (Its columns may run past the edge of the tile grid, round the earth.)
+ */
+export function loadRegion() {
+  const Z = REGION_Z, c = regionTile();
+  return relief(Z, c.x - 3, c.x + 2, Math.max(0, c.y - 3), Math.min(2 ** Z - 1, c.y + 2));
+}
+const REGION_Z = 4;
+/** The tile corner of zoom REGION_Z nearest the middle of the window. */
+const regionTile = () => ({ x: Math.round(pixelX(0, REGION_Z) / 256), y: Math.round(pixelY(0, REGION_Z) / 256) });
+
+async function relief(Z, X0, X1, Y0, Y1) {
+  const W = (X1 - X0 + 1) * 256, H = (Y1 - Y0 + 1) * 256;
   const hs = new Float32Array(W * H), tile = document.createElement('canvas');
   tile.width = tile.height = 256;
   const tg = tile.getContext('2d', { willReadFrequently: true });
@@ -115,7 +133,7 @@ export async function loadOverview() {
   const jobs = [];
   for (let ty = Y0; ty <= Y1; ty++) for (let tx = X0; tx <= X1; tx++) jobs.push((async () => {
     try {
-      const r = await fetch(tileUrl(Z, tx, ty));
+      const r = await fetch(tileUrl(Z, wrapTile(tx, Z), ty));
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const bmp = await createImageBitmap(await r.blob(), { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
       tg.clearRect(0, 0, 256, 256); tg.drawImage(bmp, 0, 0); bmp.close?.();
@@ -143,6 +161,10 @@ export async function loadOverview() {
       if (h <= 0 || lake) {
         const t = lake ? 0.25 : Math.min(1, -h / 2500);
         r = 0.08 - 0.03 * t; gr = 0.17 - 0.05 * t; b = 0.29 - 0.09 * t;
+      } else if (lat < -1.05 || (lat > 1.03 && h > 1100 && e > 1000 && w > 1000)) {
+        // The ice of Antarctica and of the inside of Greenland: pale, with a little shading.
+        const nx = -(e - w) / (2 * px), nz = -(s - n) / (2 * px), sh = Math.max(0.8, Math.min(1.1, 0.95 + (nx * -0.7 + nz * -0.7) * 9));
+        r = 0.62 * sh; gr = 0.67 * sh; b = 0.72 * sh;
       } else {
         r = mix(mix(0.15, 0.22, h / mid), mix(0.33, 0.74, (h - hi) / span), (h - mid) / (hi - mid));
         gr = mix(mix(0.21, 0.25, h / mid), mix(0.31, 0.77, (h - hi) / span), (h - mid) / (hi - mid));
@@ -160,26 +182,46 @@ export async function loadOverview() {
   return { canvas: c, land: dryCanvas(dry, W, H), z: Z, px0: X0 * 256, py0: Y0 * 256 };
 }
 
-const fmtLat = (v, dp = 0) => `${Math.abs(v).toFixed(dp)}°${v >= 0 ? 'N' : 'S'}`, fmtLon = (v, dp = 0) => `${Math.abs(v).toFixed(dp)}°${v >= 0 ? 'E' : 'W'}`;
-/** A position in words: 46.52°N 93.11°W. */
+// (the equator, the prime meridian and the 180th take no letter)
+const fmtDeg = (v, dp, pos, neg) => { const t = Math.abs(v).toFixed(dp); return `${t}°${+t === 0 || (pos === 'E' && +t === 180) ? '' : v >= 0 ? pos : neg}`; };
+const fmtLat = (v, dp = 0) => fmtDeg(v, dp, 'N', 'S'), fmtLon = (v, dp = 0) => fmtDeg(wrapLon(v), dp, 'E', 'W');
+/** A position in words: 46.52°N 93.11°W, 33.95°S 151.18°E. */
 export const fmtPlace = (lat, lon, dp = 2) => `${fmtLat(lat, dp)} ${fmtLon(lon, dp)}`;
+/** The latitudes the map shows: as far as its tiles go. */
+const MAP_LAT = 84;
 
 export class Chart {
   /** base: the canvas from bakeChart (give it a new one, `chart.base = bakeChart()`, when the world moves). */
   constructor(base) {
     this.base = base;
-    this.over = null;                                    // the map of the continent, once loadOverview has it
+    this.over = null;                                    // the relief of the world, once loadOverview has it
+    this.near = null;                                    // the relief around the window, finer (loadRegion): asked for here, when the window has moved
+    this.nearAt = null; this.nearBusy = false;
+    this.note = '';                                      // why the last click dropped no pin (for whoever shows the pin's place)
     this.cx = 0; this.cz = 0; this.scale = 0.0016;       // pixels per meter
     this.showWx = false;
     this.pin = null;                                     // { lat, lon, field? }: kept by latitude and longitude, so it stays put when the world moves; field: the airfield it was dropped on
     this.tiles = new MapTiles();
   }
 
-  /** The world rectangle the map can be moved over: the continent when its map is loaded, else the window. */
+  /** Is there a map of more than the window: the relief of the world, or the map data? */
+  get world() { return !!this.over || this.tiles.ok; }
+  /** The world rectangle the middle of the map can be moved over: half way round the earth either way and nearly to the poles, or without a map of the world, the window. */
   bounds() {
-    const o = this.over;
-    if (!o) return [-LAND_HALF, -LAND_HALF, LAND_HALF, LAND_HALF];
-    return [worldX(o.px0, o.z), worldZ(o.py0, o.z), worldX(o.px0 + o.canvas.width, o.z), worldZ(o.py0 + o.canvas.height, o.z)];
+    if (!this.world) return [-LAND_HALF, -LAND_HALF, LAND_HALF, LAND_HALF];
+    const A = worldAround();
+    return [-A / 2, toWorld(MAP_LAT, 0).z, A / 2, toWorld(-MAP_LAT, 0).z];
+  }
+  /** A world x brought to the copy of the earth nearest the middle of the view. */
+  nearX(x) { const A = worldAround(); return x + A * Math.round((this.cx - x) / A); }
+  /** Which airfields of the index are drawn at this scale (pixels per meter, in interface units): all of them close in, from far out the big ones alone. */
+  shows(f, S) { return S > 0.00012 || (f.big ? true : !f.world && S > 0.00006); }
+  /** Ask for the finer relief around the window when the window has moved well away from the last one's middle. */
+  wantRegion() {
+    const c = regionTile(), a = this.nearAt;
+    if (this.nearBusy || !this.over || (a && Math.abs(wrapTile(c.x - a.x + 8, REGION_Z) - 8) <= 1 && Math.abs(c.y - a.y) <= 1)) return;
+    this.nearBusy = true;
+    loadRegion().then((n) => { if (n) { this.near = n; this.nearAt = c; this.tiles.onLoad?.(); } }, () => {}).finally(() => { setTimeout(() => { this.nearBusy = false; }, 5000); });
   }
   /** Fit a route (or the whole window) into a viewport of w x h pixels. */
   fit(w, h, route, pad = 0.25) {
@@ -190,7 +232,7 @@ export class Chart {
   }
   /** Zoom by a factor, keeping the point under (px, py) where it is (the middle of the view without one). */
   zoom(f, w, h, px = w / 2, py = h / 2) {
-    const b = this.bounds(), min = Math.min(w, h) / (this.over ? Math.min(b[2] - b[0], b[3] - b[1]) : LAND_HALF * 2.4);
+    const b = this.bounds(), min = this.world ? w / (b[2] - b[0]) : Math.min(w, h) / (LAND_HALF * 2.4);         // (never more than once round the earth in view)
     const s = Math.max(min, Math.min(0.16, this.scale * f)), k = 1 / this.scale - 1 / s;
     this.cx += (px - w / 2) * k; this.cz += (py - h / 2) * k; this.scale = s;
     this.pan(0, 0);
@@ -204,15 +246,19 @@ export class Chart {
   worldAt(px, py, w, h) { return { x: this.cx + (px - w / 2) / this.scale, z: this.cz + (py - h / 2) / this.scale }; }
   /** Drop the pin at a point of the viewport; a click on the pin itself takes it away. Returns the pin (or null). */
   pinAt(px, py, w, h) {
-    if (this.pin) { const p = toWorld(this.pin.lat, this.pin.lon); if (Math.hypot((p.x - this.cx) * this.scale + w / 2 - px, (p.z - this.cz) * this.scale + h / 2 - py) < 14) return (this.pin = null); }
+    this.note = '';
+    if (this.pin) { const p = toWorld(this.pin.lat, this.pin.lon); if (Math.hypot((this.nearX(p.x) - this.cx) * this.scale + w / 2 - px, (p.z - this.cz) * this.scale + h / 2 - py) < 14) return (this.pin = null); }
     // A click on an airfield pins the airfield itself (the pin then carries its code, and a flight from it starts there).
+    const q = this.worldAt(px, py, w, h), ll = toLatLon(q.x, q.z), S = this.scale / uiScale(), c = Math.cos(ll.lat * D2R), reach = 13 / this.scale / 111200;      // (degrees)
     let best = null, bd = 13;
     for (const f of FIELDS) {
-      const p = toWorld(f.lat, f.lon), d = Math.hypot((p.x - this.cx) * this.scale + w / 2 - px, (p.z - this.cz) * this.scale + h / 2 - py);
+      if (Math.abs(f.lat - ll.lat) > reach || Math.abs(wrapLon(f.lon - ll.lon)) * c > reach * 1.5 || !this.shows(f, S)) continue;
+      const p = toWorld(f.lat, f.lon), d = Math.hypot((this.nearX(p.x) - this.cx) * this.scale + w / 2 - px, (p.z - this.cz) * this.scale + h / 2 - py);
       if (d < bd) { bd = d; best = f; }
     }
     if (best) return (this.pin = { lat: best.lat, lon: best.lon, field: best.id });
-    const q = this.worldAt(px, py, w, h), ll = toLatLon(q.x, q.z);
+    // Nearer a pole than the game's world goes (world/geo.js): no pin, and a word of why.
+    if (Math.abs(ll.lat) > PIN_LAT_MAX) { this.note = `The charts end at ${PIN_LAT_MAX}° ${ll.lat > 0 ? 'north' : 'south'}: drop the pin nearer the equator`; return (this.pin = null); }
     return (this.pin = { lat: ll.lat, lon: ll.lon });
   }
 
@@ -227,13 +273,20 @@ export class Chart {
     g.fillStyle = '#0d1f33'; g.fillRect(0, 0, w, h);
     g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
     const dry = this.tiles.ok;                          // (with the map data, the relief without its own water)
-    if (this.over) { const b = this.bounds(); g.drawImage(dry ? this.over.land : this.over.canvas, X(b[0]), Z(b[1]), (b[2] - b[0]) * S, (b[3] - b[1]) * S); }
+    const A = worldAround(), vx0 = this.cx - w / 2 / S, vx1 = this.cx + w / 2 / S, NX = (x) => x + A * Math.round((this.cx - x) / A);
+    // The relief of the world, in as many copies as the view shows of it (two, looking across its seam), and the finer relief around the window over it.
+    for (const o of [this.over, S * A > 2400 ? this.near : null]) {
+      if (!o) continue;
+      const x0 = worldX(o.px0, o.z), z0 = worldZ(o.py0, o.z), x1 = worldX(o.px0 + o.canvas.width, o.z), z1 = worldZ(o.py0 + o.canvas.height, o.z);
+      for (let k = Math.ceil((vx0 - x1) / A); x0 + k * A < vx1; k++) g.drawImage(dry ? o.land : o.canvas, X(x0 + k * A), Z(z0), (x1 - x0) * S, (z1 - z0) * S);
+    }
+    this.wantRegion();
     // The window in detail, once a pixel of it is no bigger than a pixel of the screen or two (from far off the coarse map is enough).
     const detail = !this.over || S * LAND_HALF * 2 > 160;
     if (detail) g.drawImage(dry && this.base.land ? this.base.land : this.base, X(-LAND_HALF), Z(-LAND_HALF), LAND_HALF * 2 * S, LAND_HALF * 2 * S);
     // The map data over the relief, at the tile zoom that suits the scale (coarser tiles standing in while finer ones come).
-    const tz = this.tiles.zoomFor(this.scale), vx0 = this.cx - w / 2 / S, vz0 = this.cz - h / 2 / S;
-    const cover = this.tiles.cover(tz, vx0, vz0, this.cx + w / 2 / S, this.cz + h / 2 / S, this.cx, this.cz);
+    const tz = this.tiles.zoomFor(this.scale), vz0 = this.cz - h / 2 / S;
+    const cover = this.tiles.cover(tz, vx0, vz0, vx1, this.cz + h / 2 / S, this.cx, this.cz);
     const labelTiles = new Set();
     for (const c of cover) {
       const r = this.tiles.rect(c.z, c.x, c.y), x0 = Math.floor(X(r[0])), y0 = Math.floor(Z(r[1])), x1 = Math.ceil(X(r[2])), y1 = Math.ceil(Z(r[3]));
@@ -244,12 +297,14 @@ export class Chart {
     this.tiles.pump();
 
     // Graticule: parallels and meridians, as close together as there is room to label.
-    const view = [toLatLon(this.cx - w / 2 / S, this.cz - h / 2 / S), toLatLon(this.cx + w / 2 / S, this.cz + h / 2 / S)];      // northwest and southeast corners
-    const spanLon = view[1].lon - view[0].lon, step = [0.25, 0.5, 1, 2, 5, 10, 20].find((v) => spanLon / v <= 9) || 20, dp = step < 1 ? 2 : 0;
+    const view = [toLatLon(vx0, this.cz - h / 2 / S), toLatLon(vx1, this.cz + h / 2 / S)];      // northwest and southeast corners
+    // (longitudes counted on from the window's own, so that they run through the view without a jump at the 180th meridian)
+    const lonC = toLatLon(0, 0).lon, lonW = lonC + (vx0 / A) * 360, lonE = lonC + (vx1 / A) * 360;
+    const spanLon = lonE - lonW, step = [0.25, 0.5, 1, 2, 5, 10, 20, 30].find((v) => spanLon / v <= 9) || 45, dp = step < 1 ? 2 : 0;
     g.strokeStyle = 'rgba(255,255,255,0.07)'; g.lineWidth = 1; g.fillStyle = 'rgba(237,241,244,0.42)'; g.font = `500 10.5px ${SANS}`; g.textAlign = 'left'; g.textBaseline = 'top';
     g.beginPath();
-    for (let lon = Math.ceil(view[0].lon / step) * step; lon <= view[1].lon; lon += step) { const px = X(toWorld(0, lon).x); g.moveTo(px, 0); g.lineTo(px, h); g.fillText(fmtLon(lon, dp), px + 3, 3); }
-    for (let lat = Math.ceil(view[1].lat / step) * step; lat <= view[0].lat; lat += step) { const pz = Z(toWorld(lat, 0).z); g.moveTo(0, pz); g.lineTo(w, pz); if (pz > 18) g.fillText(fmtLat(lat, dp), 3, pz + 3); }
+    for (let lon = Math.ceil(lonW / step) * step; lon <= lonE; lon += step) { const px = X(((lon - lonC) / 360) * A); g.moveTo(px, 0); g.lineTo(px, h); g.fillText(fmtLon(lon, dp), px + 3, 3); }
+    for (let lat = Math.ceil(Math.max(view[1].lat, -MAP_LAT - 1) / step) * step; lat <= Math.min(view[0].lat, MAP_LAT + 1); lat += step) { const pz = Z(toWorld(lat, 0).z); g.moveTo(0, pz); g.lineTo(w, pz); if (pz > 18) g.fillText(fmtLat(lat, dp), 3, pz + 3); }
     g.stroke();
 
     if (opts.weather && this.showWx) this.drawWeather(g, w, h, opts.weather, X, Z);
@@ -257,24 +312,31 @@ export class Chart {
     // Names: the map's own (placed round the airfields, which come first), or without map data the game's list of
     // cities, the bigger the area in view, the bigger a city must be to be named.
     const named = S > 0.0011, coded = S > 0.00035;
-    if (labelTiles.size) this.drawLabels(g, w, h, X, Z, labelTiles, this.airfieldBoxes(w, h, X, Z, view, named, coded));
+    const inWin = new Set(AIRPORTS.map((a) => a.id));
+    // The airfields of the index in view, beyond the window (those in it are drawn from the window's own list): [field, px, pz].
+    const far = [];
+    for (const f of FIELDS) {
+      if (f.lat > view[0].lat || f.lat < view[1].lat || inWin.has(f.id) || !this.shows(f, S)) continue;
+      const p = toWorld(f.lat, f.lon), px = X(NX(p.x));
+      if (px > -40 && px < w + 40) far.push([f, px, Z(p.z)]);
+    }
+    if (labelTiles.size) this.drawLabels(g, w, h, X, Z, labelTiles, this.airfieldBoxes(w, h, X, Z, far, named, coded));
     const minPop = S > 0.0016 ? 30000 : S > 0.0006 ? 120000 : S > 0.00022 ? 450000 : 1500000;
     g.font = `500 10.5px ${SANS}`; g.textAlign = 'center'; g.textBaseline = 'middle';
     if (!this.tiles.ok) for (const [name, lat, lon, pop] of allTowns()) {
       if (pop < minPop) break;                         // (the list is sorted, biggest first)
-      if (lat > view[0].lat || lat < view[1].lat || lon < view[0].lon || lon > view[1].lon) continue;
-      const p = toWorld(lat, lon), px = X(p.x), pz = Z(p.z);
+      if (lat > view[0].lat || lat < view[1].lat) continue;
+      const p = toWorld(lat, lon), px = X(NX(p.x)), pz = Z(p.z);
+      if (px < -40 || px > w + 40) continue;
       g.fillStyle = 'rgba(13,18,24,0.5)'; g.fillRect(px - 1.5, pz - 1.5, 3, 3);
       g.strokeStyle = 'rgba(13,18,24,0.7)'; g.lineWidth = 2.5; g.strokeText(name, px, pz - 8);
       g.fillStyle = 'rgba(213,221,228,0.78)'; g.fillText(name, px, pz - 8);
     }
 
     // Airfields beyond the window, from the index: a dot from far off, its name from closer in.
-    for (const f of FIELDS) {
-      if (airportById(f.id)) continue;
-      if (f.lat > view[0].lat || f.lat < view[1].lat || f.lon < view[0].lon || f.lon > view[1].lon) continue;
-      const p = toWorld(f.lat, f.lon), px = X(p.x), pz = Z(p.z), r = coded ? 3.5 : f.big ? 2.6 : 1.8;
-      g.fillStyle = '#0d1218'; g.strokeStyle = BLUE; g.lineWidth = coded ? 1.5 : 1.1;
+    for (const [f, px, pz] of far) {
+      const r = coded ? 3.5 : S < 0.00006 ? 1.5 : f.big ? 2.6 : 1.8;
+      g.fillStyle = '#0d1218'; g.strokeStyle = BLUE; g.lineWidth = coded ? 1.5 : S < 0.00006 ? 0.9 : 1.1;
       g.beginPath(); g.arc(px, pz, r, 0, 7); g.fill(); g.stroke();
       if (!named && !(coded && (f.big || S > 0.0007))) continue;
       const text = named ? `${f.name}  ${f.id}` : f.id;
@@ -304,8 +366,8 @@ export class Chart {
 
     // The pin, and the line to it from the aircraft
     if (this.pin) {
-      const p = toWorld(this.pin.lat, this.pin.lon), px = X(p.x), pz = Z(p.z);
-      if (opts.ac && opts.line !== false) { g.strokeStyle = 'rgba(255,182,73,0.55)'; g.lineWidth = 1.25; g.setLineDash([5, 4]); g.beginPath(); g.moveTo(X(opts.ac.pos.x), Z(opts.ac.pos.z)); g.lineTo(px, pz); g.stroke(); g.setLineDash([]); }
+      const p = toWorld(this.pin.lat, this.pin.lon), px = X(NX(p.x)), pz = Z(p.z);
+      if (opts.ac && opts.line !== false && Math.abs(NX(p.x) - p.x) < 1) { g.strokeStyle = 'rgba(255,182,73,0.55)'; g.lineWidth = 1.25; g.setLineDash([5, 4]); g.beginPath(); g.moveTo(X(opts.ac.pos.x), Z(opts.ac.pos.z)); g.lineTo(px, pz); g.stroke(); g.setLineDash([]); }
       g.fillStyle = AMBER; g.strokeStyle = '#0a0e13'; g.lineWidth = 1.5;
       g.beginPath(); g.moveTo(px, pz); g.bezierCurveTo(px - 3, pz - 9, px - 9, pz - 12, px - 9, pz - 19); g.arc(px, pz - 19, 9, Math.PI, 0); g.bezierCurveTo(px + 9, pz - 12, px + 3, pz - 9, px, pz); g.closePath(); g.fill(); g.stroke();
       g.fillStyle = '#0a0e13'; g.beginPath(); g.arc(px, pz - 19, 3.2, 0, 7); g.fill();
@@ -334,11 +396,9 @@ export class Chart {
   }
 
   /** Where the airfields' symbols and names will be drawn (as drawn in draw): the names of the map keep clear of them. */
-  airfieldBoxes(w, h, X, Z, view, named, coded) {
+  airfieldBoxes(w, h, X, Z, far, named, coded) {
     const boxes = [], len = (t, px) => t.length * px;
-    for (const f of FIELDS) {
-      if (airportById(f.id) || f.lat > view[0].lat || f.lat < view[1].lat || f.lon < view[0].lon || f.lon > view[1].lon) continue;
-      const p = toWorld(f.lat, f.lon), px = X(p.x), pz = Z(p.z);
+    for (const [f, px, pz] of far) {
       boxes.push([px - 5, pz - 5, px + 5, pz + 5]);
       if (named) boxes.push([px + 7, pz - 8, px + 13 + len(`${f.name}  ${f.id}`, 6.6), pz + 7]);
       else if (coded && (f.big || this.scale / (this._u || 1) > 0.0007)) boxes.push([px + 6, pz - 6, px + 6 + len(f.id, 7), pz + 6]);

@@ -37,7 +37,7 @@ const LOW_AGL = 760;           // meters above ground under which the height abo
 export class FlightPanel {
   constructor() {
     this.t = {};
-    for (const k of ['Clk', 'Tod', 'Spd', 'Hdg', 'Alt', 'Vs', 'Pwr', 'Rpm', 'Flap', 'Agl', 'Wind', 'Oat', 'ApHdg', 'ApAlt', 'AccelV', 'SpdLbl', 'NavLbl', 'NavHdg', 'NavDist', 'NavEte']) this.t[k] = slot('fp' + k);
+    for (const k of ['Clk', 'Tod', 'Spd', 'Hdg', 'Alt', 'Vs', 'Pwr', 'Rpm', 'RpmUnit', 'Flap', 'Agl', 'Wind', 'Oat', 'ApHdg', 'ApAlt', 'AccelV', 'SpdLbl', 'NavLbl', 'NavHdg', 'NavDist', 'NavEte']) this.t[k] = slot('fp' + k);
     this.ball = $('fpBall').style; this.vsBar = $('fpVsBar').style; this.pwrBar = $('fpPwrBar').style; this.arrow = $('fpWindArrow').style;
     this.spdState = state($('fpSpdCell')); this.altState = state($('fpAltCell')); this.vsState = state($('fpVsCell'));
     this.flapOn = state($('fpFlapBox')); this.low = state($('fpAltCell').querySelector('.lbl'));
@@ -98,7 +98,9 @@ export class FlightPanel {
         const v = Math.round(this.vs / 50) * 50;
         t.Vs(v > 0 ? '+' + thousands(v) : thousands(v));
         t.Pwr(Math.round(ac.throttle * 100) + '%');
-        t.Rpm(thousands(Math.round(ac.rpm / 10) * 10));
+        // a piston engine's speed; for a jet, the Mach number
+        const jet = !!ac.spec?.jet;
+        t.Rpm(jet ? ac.mach.toFixed(2) : thousands(Math.round(ac.rpm / 10) * 10)); t.RpmUnit(jet ? 'Mach' : 'rpm');
         const low = !ac.onGround && ac.agl < LOW_AGL;
         this.low(low ? 'low' : '');
         if (low) t.Agl(`${thousands(Math.max(0, Math.round((ac.agl * FT) / 10) * 10))} ft above ground`);
@@ -112,7 +114,7 @@ export class FlightPanel {
       // Near the stall: within a few degrees of the angle where the wing lets go, or flying barely faster than
       // the speed at which it would in level flight. (The stalling angle, 15.5 degrees clean and 13 with full
       // flap, and the flaps' lift are the flight model's own numbers, repeated here.)
-      const sp = ac.spec || SPEC, aStall = sp.aStall - 2.5 * ac.flap, clMax = sp.CL0 + 0.7 * ac.flap + (sp.CLa * aStall) / R2D;
+      const sp = ac.spec || SPEC, aStall = sp.aStall - 2.5 * ac.flap, clMax = sp.CL0 + sp.flapLift * ac.flap + (sp.CLa * aStall) / R2D;
       const vStall = Math.sqrt((2 * sp.mass * G) / (RHO0 * sp.S * clMax));
       const spd = !air ? '' : ac.stall > 0.45 ? 'alert' : ac.stall > 0.03 || aStall - ac.alpha * R2D < 2.5 || ac.ias < vStall * 1.06 ? 'caution' : '';
       // Sinking fast near the ground: seconds to the ground at this rate.

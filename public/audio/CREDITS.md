@@ -34,14 +34,27 @@ loudness (-23 LUFS for loops, about -20 LUFS for single sounds) and encoded as M
 | `tire_chirp.mp3` | Tire chirp on a paved runway | [tire_skid_02](https://freesound.org/people/loganzsound/sounds/774265/) | loganzsound | CC0 1.0 | Wave, 0:01.500, 434.9 KB | 0.03-0.45 s |
 | `tire_screech.mp3` | Tire squeal on a hard landing | [Distant car tire screetch](https://freesound.org/people/Sadiquecat/sounds/737192/) | Sadiquecat | CC0 1.0 | Wave, 0:01.282, 221.2 KB | whole file |
 | `crash.mp3` | Crash | [Car Crash](https://freesound.org/people/squareal/sounds/237375/) | squareal | CC0 1.0 | Wave, 0:04.367, 1.2 MB | 0-3.75 s |
+| `jet_roar.mp3` | Jet engine from outside: the roar | [G09-02_F-80 Jet Start and Fast Idle.wav](https://freesound.org/people/craigsmith/sounds/437895/) | craigsmith | CC0 1.0 | Wave, 4:03.437, 36.3 MB | the engine at full speed, 176-187 s (10 s loop) |
+| `jet_whine.mp3` | Jet engine: the whine of the fan and compressor | [Idle F-22 Jet Plane.flac](https://freesound.org/people/qubodup/sounds/187734/) | qubodup | CC0 1.0 | Flac, 0:19.529, 1.6 MB | 4-15 s (10 s loop), high-passed at 120 Hz |
+| `jet_cabin.mp3` | Jet engine and air heard in the cabin | [Jet Cabin During Flight](https://freesound.org/people/CHallSmith/sounds/870467/) | CHallSmith | CC0 1.0 | Wave, 3:00.536, 49.6 MB | the cabin of a Boeing 737 in cruise, 30-43 s (12 s loop) |
+| `jet_burner.mp3` | Afterburner | [Afterburner sound.wav](https://freesound.org/people/StoneyJ/sounds/104883/) | StoneyJ | CC0 1.0 | Wave, 0:39.781, 6.7 MB | an F-4 Phantom's take-off run in afterburner, 24.3-30.3 s (5 s loop) |
+| `rocket_roar.mp3` | A rocket's roar and crackle (space/rocketsound.js) | [shuttlelaunch.wav](https://freesound.org/people/klangfabrik/sounds/220127/), a re-edit of NASA's public-domain recordings of Space Shuttle launches with the commentary taken out | klangfabrik | CC0 1.0 | Wave, 2:12.423, 22.3 MB | 4.8-12.8 s, the end cross-faded into the beginning to loop |
+| `rocket_rumble.mp3` | A rocket's rumble below 120 Hz, in the ground and through the vehicle | [Rocket Launch Rumble at Canaveral](https://freesound.org/people/felix.blume/sounds/613855/), a night launch recorded 20 km from Kennedy Space Center | felix.blume | CC0 1.0 | Wave, 4:25.483, 146.6 MB | 18-32 s, the end cross-faded into the beginning to loop |
+| `rocket_ignite.mp3` | Engines lighting | [NASA Artemis II Moon Rocket Launch](https://freesound.org/people/qubodup/sounds/849949/), the sound of NASA's 360-degree video of the launch | qubodup | CC0 1.0 | M4a, 1:25.147, 1.3 MB | 7.2-13.7 s: from the last quiet moment to full roar, faded out |
 
 The engine recordings by keng-wai-chane-chick-te are four parts of one flight in a Cessna 152 at the Namur aero club,
 recorded in the cabin on 21 October 2017 with an Olympus LS-100. The engine speed of each band was measured from the
 recording itself (the period of one four-stroke cycle) and is stored in `manifest.json`, so the game can play each
 band at exactly the speed the flight model asks for.
 
+The four jet recordings are played as loops whose ends are cross-faded over a second. The F-22 recording was taken
+by its uploader from a United States government video. The engine's pitch in the game follows the fan speed, from the speed each recording was made at
+(`n1` in `manifest.json`).
+
 ## Not recordings
 
 Three sounds are synthesized in `src/core/audio.js` and `src/core/audio-synth.js`: the stall warning (a reed horn; no
 free recording of a Cessna reed horn was found), the buffet of a stalled wing, and the slow swell that moves the level
 of the recorded wind in gusts. If a file fails to load, a synthesized stand-in is used for that layer.
+
+The three `rocket_*.mp3` files are cut by `tools/bake-rocket-sounds.py`, which also writes `rocket.json` (their loop points).

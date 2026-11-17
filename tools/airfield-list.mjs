@@ -646,6 +646,68 @@ rows.push(...abroad('The Caribbean and Bermuda', null, [
   ['TUPW', 'Virgin Gorda', 'Spanish Town', 'British Virgin Islands', 18.4466, -64.4279, 'A short strip between a hill and the sea.'],
 ]));
 
+// ---- The rest of the world. Its airfields come by the thousand from OurAirports (tools/bake-world-airfields.mjs:
+// runways alone); these few are baked in detail like the fields above, and the menu lists them under their country.
+const world = (country, list) => abroad(country, country, list);
+rows.push(
+  ...world('United Kingdom', [
+    ['EGLL', 'London Heathrow', 'London', 'England', 51.4706, -0.4619, 'Two long runways in the western suburbs, the Thames and Windsor Castle off the end of them.', { r: 4.2, traffic: 1 }],
+    ['EGLC', 'London City', 'London', 'England', 51.5053, 0.0553, 'A short runway on a quay in the old Royal Docks, a steep approach over the towers of Canary Wharf.', { traffic: 0.6 }],
+  ]),
+  ...world('Gibraltar', [['LXGB', 'Gibraltar', 'Gibraltar', 'Gibraltar', 36.1512, -5.3497, 'A runway across the isthmus under the Rock, with the sea at both ends and a road across the middle.', { traffic: 0.4 }]]),
+  ...world('France', [['LFPG', 'Paris Charles de Gaulle', 'Paris', 'Île-de-France', 49.0097, 2.5479, 'Four runways on the plain northeast of Paris.', { r: 5, traffic: 1 }]]),
+  ...world('Germany', [['EDDF', 'Frankfurt am Main', 'Frankfurt', 'Hesse', 50.0333, 8.5706, 'In the forest south of the Main, the towers of Frankfurt on the horizon.', { r: 4.6, traffic: 1 }]]),
+  ...world('Netherlands', [['EHAM', 'Amsterdam Schiphol', 'Amsterdam', 'North Holland', 52.3086, 4.7639, 'Six runways on the floor of a drained lake, thirteen feet below the sea.', { r: 5.6, traffic: 1 }]]),
+  ...world('Switzerland', [['LSZH', 'Zurich', 'Zurich', 'Zurich', 47.4647, 8.5492, 'In the Glatt valley north of the city, the Alps along the southern horizon.', { r: 3.6, traffic: 0.8 }]]),
+  ...world('Austria', [['LOWI', 'Innsbruck', 'Innsbruck', 'Tyrol', 47.2602, 11.3440, 'On the floor of the Inn valley, with mountain walls 7,000 feet above it on both sides.', { traffic: 0.5 }]]),
+  ...world('Spain', [['LEMD', 'Madrid Barajas', 'Madrid', 'Community of Madrid', 40.4936, -3.5668, 'On the dry plateau of Castile, 2,000 feet up, the Sierra de Guadarrama to the north.', { r: 5, traffic: 1 }]]),
+  ...world('Portugal', [['LPMA', 'Madeira (Cristiano Ronaldo)', 'Funchal', 'Madeira', 32.6979, -16.7745, 'A runway on pillars over the sea, on a shelf of the island under the mountains.', { r: 3, traffic: 0.5 }]]),
+  ...world('Italy', [['LIRF', 'Rome Fiumicino', 'Rome', 'Lazio', 41.8003, 12.2389, 'On the coast at the mouth of the Tiber, beside the harbors of ancient Rome.', { r: 4.6, traffic: 1 }]]),
+  ...world('Greece', [['LGAV', 'Athens (Eleftherios Venizelos)', 'Athens', 'Attica', 37.9364, 23.9445, 'On the plain of Mesogeia behind Mount Hymettus, the Aegean a few miles east.', { r: 4, traffic: 0.8 }]]),
+  ...world('Turkey', [['LTFM', 'Istanbul', 'Istanbul', 'Istanbul', 41.2753, 28.7519, 'On the Black Sea shore northwest of the Bosporus.', { r: 5.6, traffic: 1 }]]),
+  ...world('Iceland', [
+    ['BIKF', 'Keflavík International', 'Keflavík', 'Southern Peninsula', 63.9850, -22.6056, 'On the lava fields of the Reykjanes peninsula, the Atlantic on three sides.', { r: 4, traffic: 0.6 }],
+    ['BIRK', 'Reykjavík', 'Reykjavík', 'Capital Region', 64.1300, -21.9406, 'In the middle of the town, between the harbor and the bay.', { traffic: 0.4 }],
+  ]),
+  ...world('Egypt', [['HECA', 'Cairo International', 'Cairo', 'Cairo', 30.1219, 31.4056, 'On the edge of the desert northeast of the city, the Nile and its delta to the west.', { r: 4.6, traffic: 0.9 }]]),
+  ...world('Kenya', [['HKJK', 'Nairobi (Jomo Kenyatta)', 'Nairobi', 'Nairobi', -1.3192, 36.9278, 'On the Athi plains a mile above the sea, the national park beside it.', { r: 4, traffic: 0.7 }]]),
+  ...world('South Africa', [
+    ['FAOR', 'Johannesburg (O. R. Tambo)', 'Johannesburg', 'Gauteng', -26.1392, 28.2460, 'On the Highveld at 5,500 feet, among the mine dumps of the Witwatersrand.', { r: 4.6, traffic: 1 }],
+    ['FACT', 'Cape Town International', 'Cape Town', 'Western Cape', -33.9648, 18.6017, 'On the Cape Flats, with Table Mountain to the west and False Bay to the south.', { r: 3.8, traffic: 0.8 }],
+  ]),
+  ...world('United Arab Emirates', [['OMDB', 'Dubai International', 'Dubai', 'Dubai', 25.2528, 55.3644, 'Between the creek and the desert, the tallest building on earth eight miles off.', { r: 4.6, traffic: 1 }]]),
+  ...world('India', [['VIDP', 'Delhi (Indira Gandhi)', 'New Delhi', 'Delhi', 28.5665, 77.1031, 'On the plain of the Yamuna, in haze more often than not.', { r: 4.6, traffic: 1 }]]),
+  ...world('Nepal', [
+    ['VNKT', 'Kathmandu (Tribhuvan)', 'Kathmandu', 'Bagmati', 27.6966, 85.3591, 'In a bowl of terraced hills at 4,400 feet, the Himalaya behind them.', { r: 3, traffic: 0.6 }],
+    ['VNLK', 'Lukla (Tenzing-Hillary)', 'Lukla', 'Koshi', 27.6869, 86.7297, 'The way to Everest: 1,700 feet of runway sloping up a mountainside at 9,300 feet, a wall at one end and a drop at the other.', { r: 1.2 }],
+  ]),
+  ...world('Bhutan', [['VQPR', 'Paro', 'Paro', 'Paro', 27.4032, 89.4246, 'In a deep valley at 7,300 feet, reached by turning between the ridges by eye.', { r: 2.2 }]]),
+  ...world('Thailand', [['VTBS', 'Bangkok Suvarnabhumi', 'Bangkok', 'Samut Prakan', 13.6811, 100.7475, 'On the flat wet plain east of Bangkok.', { r: 4.6, traffic: 1 }]]),
+  ...world('Singapore', [['WSSS', 'Singapore Changi', 'Singapore', 'Singapore', 1.3502, 103.9940, 'On reclaimed land at the eastern tip of the island, a degree north of the equator.', { r: 5, traffic: 1 }]]),
+  ...world('Hong Kong', [['VHHH', 'Hong Kong International', 'Hong Kong', 'Hong Kong', 22.3089, 113.9146, 'On an island leveled for it, under the peaks of Lantau.', { r: 4.6, traffic: 1 }]]),
+  ...world('China', [['ZBAA', 'Beijing Capital', 'Beijing', 'Beijing', 40.0801, 116.5846, 'On the plain northeast of the city, the mountains and the Great Wall to the north.', { r: 5, traffic: 1 }]]),
+  ...world('South Korea', [['RKSI', 'Seoul Incheon', 'Incheon', 'Incheon', 37.4691, 126.4510, 'On tidal flats filled in between two islands of the Yellow Sea.', { r: 5.2, traffic: 1 }]]),
+  ...world('Japan', [['RJTT', 'Tokyo Haneda', 'Tokyo', 'Tokyo', 35.5523, 139.7798, 'On the edge of Tokyo Bay, with Mount Fuji to the southwest on a clear day.', { r: 4.6, traffic: 1 }]]),
+  ...world('Australia', [
+    ['YSSY', 'Sydney (Kingsford Smith)', 'Sydney', 'New South Wales', -33.9461, 151.1772, 'Runways built out into Botany Bay, the harbor and its bridge five miles north.', { r: 4, traffic: 1 }],
+    ['YMML', 'Melbourne (Tullamarine)', 'Melbourne', 'Victoria', -37.6733, 144.8433, 'On the basalt plain northwest of the city.', { r: 4, traffic: 0.9 }],
+  ]),
+  ...world('Fiji', [['NFFN', 'Nadi International', 'Nadi', 'Western', -17.7554, 177.4434, 'On the dry side of Viti Levu, cane fields and reef, two and a half degrees short of the 180th meridian.', { r: 3.2, traffic: 0.5 }]]),
+  ...world('Brazil', [
+    ['SBGR', 'São Paulo Guarulhos', 'São Paulo', 'São Paulo', -23.4356, -46.4731, 'On the northeastern edge of the biggest city of the southern hemisphere.', { r: 4, traffic: 1 }],
+    ['SBGL', 'Rio de Janeiro Galeão', 'Rio de Janeiro', 'Rio de Janeiro', -22.8100, -43.2506, 'On an island in Guanabara Bay.', { r: 4.6, traffic: 0.8 }],
+    ['SBRJ', 'Rio de Janeiro Santos Dumont', 'Rio de Janeiro', 'Rio de Janeiro', -22.9105, -43.1631, 'A short runway on the bay at the foot of downtown, Sugarloaf off its end.', { traffic: 0.7 }],
+  ]),
+  ...world('Ecuador', [['SEQM', 'Quito (Mariscal Sucre)', 'Quito', 'Pichincha', -0.1292, -78.3575, 'On a plateau at 7,900 feet among the volcanoes, on the equator.', { r: 4, traffic: 0.6 }]]),
+  ...world('Peru', [['SPZO', 'Cusco (Alejandro Velasco Astete)', 'Cusco', 'Cusco', -13.5357, -71.9388, 'In a valley of the Andes at 10,900 feet, the old Inca capital around it.', { r: 3, traffic: 0.5 }]]),
+  ...world('Chile', [['SCEL', 'Santiago (Arturo Merino Benítez)', 'Santiago', 'Santiago Metropolitan', -33.3930, -70.7858, 'In the central valley, the wall of the Andes to the east.', { r: 4, traffic: 0.9 }]]),
+  ...world('Argentina', [
+    ['SAEZ', 'Buenos Aires Ezeiza', 'Buenos Aires', 'Buenos Aires', -34.8222, -58.5358, 'On the pampa southwest of the city.', { r: 4.6, traffic: 0.9 }],
+    ['SAWH', 'Ushuaia (Malvinas Argentinas)', 'Ushuaia', 'Tierra del Fuego', -54.8433, -68.2958, 'On a spit in the Beagle Channel under the last of the Andes: the southernmost city on earth.', { r: 3, traffic: 0.4 }],
+  ]),
+);
+
 const CANADA = new Set(['British Columbia', 'Alberta', 'Saskatchewan', 'Manitoba', 'Ontario', 'Quebec', 'New Brunswick', 'Nova Scotia', 'Prince Edward Island', 'Newfoundland and Labrador', 'Yukon', 'Northwest Territories', 'Nunavut']);
-// group: what the menu lists the field under where that is not its state (the fields beyond the two countries).
+// group: what the menu lists the field under where that is not its state (the fields beyond the two countries:
+// a region for Mexico, Central America and the Caribbean, the country for the rest of the world).
 export const AIRFIELD_LIST = rows.map(([id, name, city, state, lat, lon, blurb, o = {}]) => ({ id, name, city, state, country: o.country || (CANADA.has(state) ? 'Canada' : 'United States'), group: o.group, lat, lon, blurb, radius: o.r || 2.7, traffic: o.traffic ?? 0.2 }));

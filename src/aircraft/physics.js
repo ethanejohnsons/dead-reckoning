@@ -1,5 +1,6 @@
-// Flight model for the Skyhawk-class trainer: a four-seat, high-wing piston single
-// with a fixed-pitch propeller and fixed tricycle gear.
+// Flight model. It began as the Skyhawk-class trainer's (a high-wing piston single with a fixed-pitch
+// propeller and fixed tricycle gear) and flies anything whose numbers it is given (see variants.js):
+// jets have their own thrust law, drag that rises near the speed of sound, airbrakes and legs that fold away.
 // Forces come from real lift/drag/thrust physics (stalls, slips, wind and
 // ground effect all emerge from it). Pitch uses a rate-command law with
 // auto-trim so the aircraft holds the attitude you leave it in.
@@ -14,6 +15,8 @@ export const G = 9.81;
 export const RHO0 = 1.225;
 export const KT = 1.94384, FT = 3.28084, NM = 1852;
 export const airDensity = (alt) => RHO0 * Math.exp(-alt / 8500);
+/** Speed of sound (m/s) at an altitude: it falls with the temperature up to the tropopause, then holds. */
+export const speedOfSound = (alt) => 340.3 * Math.sqrt(Math.max(216.65, 288.15 - 0.0065 * alt) / 288.15);
 
 // The numbers come per aircraft (see variants.js): `new Aircraft(spec)` or `ac.setSpec(spec)`. SPEC is the
 // 172's set, kept for readers that want a default; the aircraft being flown is always `ac.spec`.
@@ -39,6 +42,8 @@ export class Aircraft {
     this.quat = new Quaternion(); this.omega = new Vector3();
     this.throttle = 0; this.thrustLevel = 0; this.rpm = 0;
     this.flapTarget = 0; this.flap = 0;           // 0, 0.5, 1
+    this.gearTarget = 1; this.gear = 1;           // landing gear: 1 down and locked, 0 up (only aircraft with spec.retract move it)
+    this.mach = 0; this.reheat = 0; this.airbrake = 0;       // Mach number; afterburner and airbrakes, 0..1
     this.brake = 0;
     this.elev = 0; this.ail = 0; this.rud = 0;    // surface deflections -1..1
     this.trimI = 0;
@@ -67,7 +72,9 @@ export class Aircraft {
     this.pos.set(x, groundY + this.spec.gearHeight + 0.02, z);
     this.vel.set(0, 0, 0); this.omega.set(0, 0, 0);
     this.quat.setFromAxisAngle(v1.set(0, 1, 0), -headingDeg * D2R);
+    if (this.spec.groundPitch) this.quat.multiply(dq.setFromAxisAngle(v1.set(1, 0, 0), this.spec.groundPitch));      // a tail-dragger stands nose-high on its tail wheel
     this.throttle = 0; this.thrustLevel = 0; this.flapTarget = 0; this.flap = 0; this.brake = 1;
+    this.gear = this.gearTarget = 1; this.reheat = 0; this.airbrake = 0;
     this.trimI = 0; this.ice = 0; this.crashed = null; this.touchdown = null;
     this.scrape = 0; this.scrapePart = null; this.strike = null; this._hullT = {};
     this.onGround = true; this.maxAgl = 0; this.agl = 0;
@@ -78,9 +85,31 @@ export class Aircraft {
     this.pos.set(x, y, z);
     this.quat.setFromAxisAngle(v1.set(0, 1, 0), -headingDeg * D2R);
     this.vel.set(0, 0, -speed).applyQuaternion(this.quat);
-    this.omega.set(0, 0, 0); this.trimI = 0; this.throttle = 0.7; this.thrustLevel = 0.7;
+    this.omega.set(0, 0, 0); this.trimI = 0; this.throttle = this.thrustLevel = this.spec.cruiseThrottle;
+    this.gear = this.gearTarget = this.spec.retract ? 0 : 1; this.reheat = 0; this.airbrake = 0;
     this.crashed = null; this.onGround = false; this.flap = this.flapTarget = 0; this.maxAgl = 100;
     this.scrape = 0; this.scrapePart = null; this.strike = null; this._hullT = {}; this.wheelsDown = 0;
+  }
+
+  /**
+   * Flaps and landing gear set themselves; call once a frame before stepping. A piston single's flaps come out for
+   * a slow approach with the power back and go in again as power comes on. A jet's follow airspeed alone (they stay
+   * out through the take-off and the climb away). Legs that can fold do so once the aircraft is climbing, and come
+   * down again for a slow descent toward the ground.
+   */
+  configure() {
+    const sp = this.spec, [half, full, up] = sp.flapAuto;
+    if (!sp.jet) {
+      if (this.throttle < 0.45 && this.ias < half && !this.onGround) this.flapTarget = this.ias < full ? 1 : 0.5;
+      else if (this.throttle > 0.6 || this.ias > up || this.onGround) this.flapTarget = 0;
+    } else if (this.onGround) this.flapTarget = this.throttle > 0.5 || this.groundSpeed > 20 ? 0.5 : 0;
+    else if (this.ias < full) this.flapTarget = 1;
+    else if (this.ias < half) this.flapTarget = Math.max(this.flapTarget, 0.5);
+    else if (this.ias > up) this.flapTarget = 0;
+    if (!sp.retract) return;
+    if (this.onGround) this.gearTarget = 1;
+    else if (this.gearTarget === 1) { if ((this.vel.y > 2.5 && this.agl > 15) || this.ias > sp.gearSpeed * 1.08 || this.agl > 700) this.gearTarget = 0; }
+    else if (this.agl < 500 && this.ias < sp.gearSpeed && this.vel.y < 1) this.gearTarget = 1;
   }
 
   get heading() { fwd.set(0, 0, -1).applyQuaternion(this.quat); return (Math.atan2(fwd.x, -fwd.z) / D2R + 360) % 360; }
@@ -108,7 +137,8 @@ export class Aircraft {
     // Slew actuators and engine
     this.flap += clamp(this.flapTarget - this.flap, -dt * 0.22, dt * 0.22);
     const thrTarget = this.fuel > 0 ? this.throttle : 0;
-    this.thrustLevel += (thrTarget - this.thrustLevel) * Math.min(1, dt / 0.9);
+    this.thrustLevel += (thrTarget - this.thrustLevel) * Math.min(1, dt / S.spool);
+    if (S.retract) this.gear += clamp(this.gearTarget - this.gear, -dt / S.retract, dt / S.retract);
     this.fuel = Math.max(0, this.fuel - S.fuelFlow * (0.12 + 0.88 * this.thrustLevel) * dt);
 
     // --- Air data
@@ -119,13 +149,15 @@ export class Aircraft {
     const beta = V > 1 ? Math.atan2(vb.x, Math.hypot(u, vb.y)) : 0;
     const qbar = 0.5 * rho * V * V, qn = Math.min(qbar / QREF, 3), sqn = Math.sqrt(qn);
     this.alpha = alpha; this.beta = beta; this.tas = V; this.ias = V * Math.sqrt(rho / RHO0);
+    const mach = V / speedOfSound(this.pos.y);
+    this.mach = mach;
 
     // --- Lift, drag, side force
     const ice = this.ice, flap = this.flap;
     const aStall = (S.aStall - 2.5 * flap - 5 * ice) * D2R;
     const sig = Math.max(smoothstep(aStall, aStall + 7 * D2R, alpha), smoothstep(11 * D2R, 17 * D2R, -alpha));
     this.stall = sig;
-    const CLlin = S.CL0 + 0.7 * flap + S.CLa * alpha;
+    const CLlin = S.CL0 + S.flapLift * flap + S.CLa * alpha;
     const CLflat = 1.05 * Math.sin(2 * alpha);
     const CL = (CLlin + (CLflat - CLlin) * sig) * (1 - 0.25 * ice);
     // Ground effect trims induced drag within a wingspan of the surface.
@@ -133,6 +165,13 @@ export class Aircraft {
     const s2 = Math.sin(alpha);
     let CD = S.CD0 + 0.012 + (0.055 * flap * flap + 0.02 * flap) * S.flapDrag + S.K * ge * CLlin * CLlin;
     CD = CD + (0.12 + 1.7 * s2 * s2 - CD) * sig;
+    if (S.jet) {
+      // Near the speed of sound the drag climbs steeply (and eases a little once well past it); open airbrakes
+      // add their own. The airbrakes come out by themselves as the lever reaches idle. (Legs in the airflow: below.)
+      this.airbrake += ((1 - smoothstep(0.02, 0.12, this.throttle)) - this.airbrake) * Math.min(1, dt * 2.5);
+      CD += S.waveDrag * smoothstep(S.mCrit, S.mCrit + 0.18, mach) * (1 - 0.35 * smoothstep(1.1, 2.0, mach)) + S.brakeDrag * this.airbrake;
+    }
+    if (S.retract) CD += S.gearDrag * this.gear;
     CD = CD * (1 + 1.6 * ice) + 0.35 * Math.sin(beta) * Math.sin(beta);
     const CY = -0.95 * clamp(beta, -0.5, 0.5);
 
@@ -145,14 +184,27 @@ export class Aircraft {
       F.x += qS * CY;
     }
     // Thrust: fixed-pitch prop. Strongest standing still, fading with airspeed; thinner air, less power.
-    const dens = Math.pow(rho / RHO0, 0.75);
-    const full = Math.min(S.staticThrust * Math.max(0, 1 - V / S.propZero), (S.power * S.propEff) / Math.max(V, 1));
-    // The lever sets power more than thrust, so the first part of its travel does the most.
-    const tl = this.thrustLevel, pull = tl * (1.55 - 0.55 * tl);
-    const thrust = pull * full * dens
-      - (1 - tl) * 0.012 * qbar * S.S * 0.3;                     // windmilling drag at idle
-    // Engine speed for the tachometer: a fixed-pitch prop unloads and spins up as the aircraft accelerates.
-    const rpmT = this.fuel > 0 ? Math.min(S.rpmMax, S.rpmIdle + (S.rpmStatic - S.rpmIdle) * Math.pow(tl, 0.8) + S.rpmWind * u * (0.25 + 0.75 * tl)) : clamp(u * 22, 0, 1100);
+    const tl = this.thrustLevel;
+    let thrust, rpmT;
+    if (S.jet) {
+      // Jet: thrust falls off a little with speed (a fighter's grows again with ram pressure) and thins with the air.
+      // Idle still pushes a little. With an afterburner, the last part of the lever's travel lights it.
+      const ab = S.reheat ? smoothstep(0.86, 1, tl) : 0, dry = S.reheat ? Math.min(tl / 0.86, 1) : tl;
+      this.reheat = this.fuel > 0 ? ab : 0;
+      const lapse = Math.max(0.3, 1 - S.thrustLapse * mach + S.thrustRam * mach * mach * ab);       // (ram pressure only pays with the afterburner lit)
+      thrust = this.fuel > 0 ? (S.idleThrust + (1 - S.idleThrust) * dry) * (1 + (S.reheat - 1) * ab) * S.staticThrust * lapse * Math.pow(rho / RHO0, 0.7) : 0;
+      // "rpm" is the fan speed in percent, for the panel and the sound
+      rpmT = this.fuel > 0 ? S.rpmIdle + (S.rpmMax - S.rpmIdle) * Math.pow(dry, 0.75) : clamp(u * 0.12, 0, 18);
+    } else {
+      const dens = Math.pow(rho / RHO0, 0.75);
+      const full = Math.min(S.staticThrust * Math.max(0, 1 - V / S.propZero), (S.power * S.propEff) / Math.max(V, 1));
+      // The lever sets power more than thrust, so the first part of its travel does the most.
+      const pull = tl * (1.55 - 0.55 * tl);
+      thrust = pull * full * dens
+        - (1 - tl) * 0.012 * qbar * S.S * 0.3;                     // windmilling drag at idle
+      // Engine speed for the tachometer: a fixed-pitch prop unloads and spins up as the aircraft accelerates.
+      rpmT = this.fuel > 0 ? Math.min(S.rpmMax, S.rpmIdle + (S.rpmStatic - S.rpmIdle) * Math.pow(tl, 0.8) + S.rpmWind * u * (0.25 + 0.75 * tl)) : clamp(u * 22, 0, 1100);
+    }
     this.rpm += (rpmT - this.rpm) * Math.min(1, dt * 4);
     F.z -= thrust;
     const Faero = v4.copy(F);
@@ -198,7 +250,7 @@ export class Aircraft {
     const bk = this.bank;
     const rTurn = wow ? 0 : (G / Math.max(V, 20)) * Math.sin(clamp(bk, -0.9, 0.9)) * (1 - sig) * (1 - smoothstep(1.2, 1.7, Math.abs(bk)));
     const rErr = -om.y - rTurn;
-    let aPitch = qt * S.pitchPower * this.elev * auth - qn * (9.5 * (alpha - 2 * D2R) + 2.2 * sig) - S.pitchDamp * sqn * om.x;
+    let aPitch = qt * S.pitchPower * this.elev * auth - qn * (S.pitchStiff * (alpha - 2 * D2R) + 2.2 * sig) - S.pitchDamp * sqn * om.x;
     // (the last term is a trace of spiral stability: left alone, a banked aircraft very slowly rolls level)
     let aRollR = qn * (S.rollPower * this.ail * auth - 2.2 * beta) - S.rollDamp * sqn * -om.z + 0.35 * sqn * rErr - (wow ? 0 : 0.045 * sqn * Math.sin(bk));
     let aYawR = qt * S.yawPower * this.rud + qn * (6.5 * beta - 0.22 * this.ail) - 2.6 * sqn * rErr;
@@ -217,8 +269,9 @@ export class Aircraft {
     if (this.agl > this.maxAgl) this.maxAgl = this.agl;
     if (this.agl < 25) {
       fwd.set(0, 0, -1).applyQuaternion(q); right.set(1, 0, 0).applyQuaternion(q);
-      const steer = input.yaw * 0.34 * clamp(1.1 - this.groundSpeed / 22, 0.08, 1);
+      const steer = input.yaw * 0.34 * clamp(1.1 - this.groundSpeed / S.steerFade, 0.08, 1);
       for (const w of S.wheels) {
+        if (this.gear < 0.9) break;                                  // legs not down and locked: the hull meets the ground instead
         const r = v1.set(w.x, w.y, w.z).applyQuaternion(q);
         const px = this.pos.x + r.x, py = this.pos.y + r.y, pz = this.pos.z + r.z;
         const gy = env.ground(px, pz);
@@ -240,7 +293,7 @@ export class Aircraft {
         down++;
         // Wheel heading on the ground plane (nose wheel steers).
         let hx = fwd.x, hz = fwd.z;
-        if (!w.main) { const cs = Math.cos(steer), sn = Math.sin(steer); const nx = hx * cs - hz * sn; hz = hx * sn + hz * cs; hx = nx; }
+        if (!w.main) { const cs = Math.cos(steer), sn = Math.sin(w.z > 0 ? -steer : steer); /* (a tail wheel steers the other way) */ const nx = hx * cs - hz * sn; hz = hx * sn + hz * cs; hx = nx; }
         const hl = Math.hypot(hx, hz) || 1; hx /= hl; hz /= hl;
         const sx = -hz, sz = hx;                                     // wheel's right-hand side
         const vLong = pv.x * hx + pv.z * hz, vLat = pv.x * sx + pv.z * sz;
@@ -251,7 +304,12 @@ export class Aircraft {
         const fx = fLat * sx + fLong * hx, fz = fLat * sz + fLong * hz;
         F.x += fx; F.y += Nf; F.z += fz;
         // Torque: normal force at the wheel, friction applied at CG height (yaw only).
-        v3.set(r.z * -Nf, r.z * fx - r.x * fz, r.x * Nf);           // r x (0,Nf,0) + (rx,0,rz) x (fx,0,fz)
+        // (A tail-dragger's main wheels are ahead of its center of gravity, where their grip would swing it round the
+        // moment the tail came up. No one wants to fight that here: their grip turns the aircraft as if they sat a
+        // little behind it, as a nose-wheel aircraft's do.)
+        let ax = r.x, az = r.z;
+        if (w.main && S.tailSteady) { ax -= fwd.x * S.tailSteady; az -= fwd.z * S.tailSteady; }
+        v3.set(r.z * -Nf, az * fx - ax * fz, r.x * Nf);             // r x (0,Nf,0) + (rx,0,rz) x (fx,0,fz)
         TQ.add(v3.applyQuaternion(qInv));
         this.surface = surf;
       }

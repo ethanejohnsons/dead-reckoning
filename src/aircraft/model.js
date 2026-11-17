@@ -18,6 +18,8 @@ import { buildPanel, animatePanel } from './panel.js';
 
 /** Pilot's eye point (left seat) in body coordinates, for the cockpit camera. Set for the variant on build. */
 export const PILOT_EYE = new THREE.Vector3(-0.27, 0.42, -0.23);
+/** How the pilot's gaze rests: `down` radians below the horizon (onto the instruments here; an aircraft without a panel looks ahead). */
+export const PILOT_VIEW = { down: 0.31 };
 
 // Livery of the variant being built (set by buildAircraft): base paint, accent, pinstripe.
 let CSS = { white: '#f2f1ec', red: '#b0151b', dark: '#22252b', black: '#141516' };
@@ -625,7 +627,7 @@ export function buildAircraft(variant) {
     top: (z) => fTop(unwarpZ(g, z)), bot: (z) => fBot(unwarpZ(g, z)),
     zW: (z) => Wp([0, 0, z])[2], post: POST, paintMask: ft.paintMask,
   };
-  PILOT_EYE.set(-0.27 * g.width, 0.42, -0.23);
+  PILOT_EYE.set(-0.27 * g.width, 0.42, -0.23); PILOT_VIEW.down = 0.31;
   parts.eye = PILOT_EYE.clone();
   const cab = buildInterior(A, { root, cabin, body, pit });
   const pan = buildPanel(A, { root, cabin, body, pit });
@@ -700,6 +702,7 @@ export function buildShadow(variant) {
  *   wet    0..1 optional: rain on the airframe, as a sheen on the paint
  */
 export function animateAircraft(parts, ac, dt, time, night, wet = 0) {
+  if (parts.animate) { parts.animate(parts, ac, dt, time, night, wet); return; }      // an aircraft from a model file moves its own parts (gltfmodel.js)
   // control surfaces: positive rotation about a hinge lowers the trailing edge
   parts.ailL.rotation.x = ac.ail * 0.35; parts.ailR.rotation.x = -ac.ail * 0.35;
   parts.elevL.rotation.x = parts.elevR.rotation.x = -ac.elev * 0.44;

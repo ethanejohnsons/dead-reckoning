@@ -1,13 +1,21 @@
 #!/usr/bin/env node
-// Bakes the towns and cities of the game's world (the United States, Canada and their near neighbors) from OpenStreetMap into
-// public/data/towns.json: name, latitude, longitude, population, biggest first. The game turns them into
-// the built-up tint of the regional map and the lights at night (src/world/towns.js).
+// Bakes the towns and cities of the game's world into public/data/towns.json: name, latitude, longitude,
+// population, biggest first. The game turns them into the built-up tint of the regional map and the lights
+// at night (src/world/towns.js). North America (BOXES) comes from OpenStreetMap, places of 1,500 people and
+// more; the rest of the world from GeoNames (--world), places of 5,000 and more.
 //
 //   node tools/fetch-towns.mjs [--cache DIR] [--offline] [--skip-missing] [--endpoint URL]
 //                                             (--skip-missing: an interim bake from the boxes already in the cache, when the server is down)
 //   node tools/fetch-towns.mjs --geonames FILE          (a second source, for when no Overpass server answers: fills the boxes
 //                                                        the file in public/data has no towns in from GeoNames' cities1000.txt,
 //                                                        download.geonames.org/export/dump, CC BY 4.0; no network; the rest is kept)
+//   node tools/fetch-towns.mjs --world FILE             (the rest of the world: adds the places of GeoNames' cities5000.txt, same
+//                                                        site and license, that lie outside the boxes; no network; what is baked
+//                                                        inside the boxes is kept, and places added by an earlier run are replaced.
+//                                                        The smaller of them, under WORLD_NAMED people, whose names the game
+//                                                        never writes, go without a name into a list of their own, "small":
+//                                                        latitude and longitude in thousandths of a degree and population in
+//                                                        hundreds, three whole numbers a place, which keeps the file short)
 //   node tools/fetch-towns.mjs --natural-earth FILE     (fallback: Natural Earth's populated places, public domain;
 //                                                        ne_10m_populated_places_simple.geojson; far fewer places, no suburbs)
 //
@@ -38,13 +46,30 @@ const BOXES = [
   // Mexico below the Tropic, Central America and the Caribbean
   [14, -118, 24, -106], [14, -106, 24, -97], [14, -97, 24, -86], [14, -86, 24, -73], [10, -73, 24, -59], [7, -93, 14, -77],
 ];
-const MIN_POP = 1500;
+const MIN_POP = 1500, WORLD_MIN_POP = 5000, WORLD_NAMED = 30000;
 
-const NE = opt('--natural-earth', null), GEONAMES = opt('--geonames', null);
+const NE = opt('--natural-earth', null), GEONAMES = opt('--geonames', null), WORLD = opt('--world', null);
 const inBoxes = (lat, lon) => BOXES.some(([s, w, n, e]) => lat > s && lat <= n && lon > w && lon <= e);
-const towns = [];
+const towns = [], small = [];
 let defaulted = 0, credit = '© OpenStreetMap contributors, ODbL 1.0 (openstreetmap.org/copyright)';
-if (GEONAMES) {
+if (WORLD) {
+  // Keep what is baked inside the boxes; everywhere else, GeoNames' places (the columns as below; sections of a
+  // city, PPLX, and places that are no more are left out: their people are counted in the city's own entry).
+  const have = JSON.parse(await readFile(OUT, 'utf8'));
+  towns.push(...have.towns.filter((t) => inBoxes(t[1], t[2])));
+  let added = 0;
+  for (const line of (await readFile(WORLD, 'utf8')).split('\n')) {
+    const c = line.split('\t');
+    if (c.length < 15 || c[6] !== 'P' || /^PPL[XHQW]$/.test(c[7])) continue;
+    const lat = +c[4], lon = +c[5], pop = +c[14];
+    if (!(pop >= WORLD_MIN_POP) || !(Math.abs(lat) < 85) || inBoxes(lat, lon)) continue;
+    if (pop >= WORLD_NAMED) towns.push([c[1].slice(0, 40), +lat.toFixed(3), +lon.toFixed(3), pop]);
+    else small.push([Math.round(lat * 1000), Math.round(lon * 1000), Math.round(pop / 100)]);
+    added++;
+  }
+  process.stderr.write(`GeoNames: ${added} places of ${WORLD_MIN_POP} people or more outside the boxes\n`);
+  credit = `${have.credit.split('; ')[0]}; beyond the United States, Canada and northern Mexico: GeoNames (geonames.org), CC BY 4.0`;
+} else if (GEONAMES) {
   // Keep what is baked; where a box has nothing in it, take GeoNames' places there (tab-separated: id, name, ascii name,
   // other names, latitude, longitude, feature class, feature code, country, ..., population in the fifteenth column).
   const have = JSON.parse(await readFile(OUT, 'utf8'));
@@ -112,7 +137,8 @@ for (const el of json.elements) {
 if (!towns.length) throw new Error('no towns found: nothing written');
 towns.sort((a, b) => b[3] - a[3]);
 await mkdir(dirname(OUT), { recursive: true });
-const text = `{"credit":"${credit}","towns":[\n${towns.map((t) => JSON.stringify(t)).join(',\n')}\n]}\n`;
+small.sort((a, b) => b[2] - a[2]);
+const text = `{"credit":"${credit}","towns":[\n${towns.map((t) => JSON.stringify(t)).join(',\n')}\n]${small.length ? `,"small":[\n${small.map((t) => t.join(',')).join(',\n')}\n]` : ''}}\n`;
 await writeFile(OUT, text);
-console.log(`${towns.length} towns of ${MIN_POP} people or more (${defaulted} places had no population and took a default) written to ${OUT} (${(text.length / 1024).toFixed(0)} kB)`);
+console.log(`${towns.length + small.length} towns of ${MIN_POP} people or more (${WORLD_MIN_POP} beyond North America) (${defaulted} places had no population and took a default) written to ${OUT} (${(text.length / 1024).toFixed(0)} kB)`);
 console.log('largest:', towns.slice(0, 12).map((t) => `${t[0]} ${t[3]}`).join(', '));

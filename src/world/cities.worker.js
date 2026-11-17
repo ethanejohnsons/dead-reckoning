@@ -47,7 +47,8 @@ async function tileUrl(z, x, y) {
     templateAt = performance.now();
     template.catch(() => { template = null; });
   }
-  return (await template).replace('{z}', z).replace('{x}', x).replace('{y}', y);
+  const n = 2 ** z;          // (a window across the 180th meridian asks for columns beyond the grid: world/geo.js)
+  return (await template).replace('{z}', z).replace('{x}', ((x % n) + n) % n).replace('{y}', y);
 }
 
 function getTile(job) {

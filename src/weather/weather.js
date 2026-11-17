@@ -269,6 +269,9 @@ export class Weather {
     this.tAnom = 0; this.humidity = 0.5; this.haze = 120000; this.cirrus = 0.12;
     this.gust = 0; this.blowing = 0; this.invDT = 0; this.invH = 1100; this.invD = 600; this.hazeCap = 0; this.hazeTop = 3000; this.dry = 0;
     this.flowX = 3 + R() * 3; this.flowZ = (R() - 0.5) * 3;
+    // The middle latitudes' westerlies; in the tropics the trade winds blow the other way, with the calms of the
+    // horse latitudes between. (A situation that sets its own flow below keeps it.)
+    this.flowX *= 1 - 2 * smoothstep(31, 19, Math.abs(REGION.lat0));
     const r0 = route || ROUTE0, r = { ax: r0.ax, az: hs * r0.az, bx: r0.bx, bz: hs * r0.bz };
     const mx = (r.ax + r.bx) / 2, mz = (r.az + r.bz) / 2;
     const dist = Math.hypot(r.bx - r.ax, r.bz - r.az);

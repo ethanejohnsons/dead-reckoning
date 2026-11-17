@@ -1,0 +1,21 @@
+<!doctype html>
+<!-- Standalone viewer for the space models (src/space/vehicles.js, plume.js, pad.js, satmodels.js).
+     Open it through the dev server: /tools/space-viewer.html?v=saturnv&pad=1&light=day -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Space model viewer</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #101214; overflow: hidden; font: 12px/1.45 ui-monospace, Menlo, monospace; color: #cfd3d8; }
+    canvas { display: block; width: 100%; height: 100%; }
+    #hud { position: fixed; left: 10px; top: 8px; white-space: pre; pointer-events: none; text-shadow: 0 0 4px #000, 0 0 2px #000; }
+    #err { position: fixed; left: 10px; bottom: 8px; right: 10px; white-space: pre-wrap; color: #ff8d7a; }
+  </style>
+</head>
+<body>
+  <canvas id="view"></canvas>
+  <div id="hud"></div>
+  <div id="err"></div>
+  <script type="module" src="./space-viewer.js"></script>
+</body>
+</html>

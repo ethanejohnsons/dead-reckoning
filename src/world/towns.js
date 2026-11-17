@@ -1,6 +1,8 @@
 // Towns and cities: a soft "built-up" tint in the terrain by day and a scatter of lights by night.
-// The places come from OpenStreetMap, baked into public/data/towns.json by tools/fetch-towns.mjs (name,
-// latitude, longitude, population); a town's size on the ground is worked out from how many live there.
+// The places are baked into public/data/towns.json by tools/fetch-towns.mjs (name, latitude, longitude,
+// population): from OpenStreetMap in the United States, Canada and northern Mexico, places of 1,500 people
+// and more, and from GeoNames in the rest of the world, places of 5,000 and more. A town's size on the ground
+// is worked out from how many live there and how closely that part of the world builds (density).
 // Only the towns inside the game's window of the world are kept, and they are laid out again when it moves.
 
 import * as THREE from 'three';
@@ -11,7 +13,7 @@ import { mulberry32 } from '../core/noise.js';
 
 const DATA_URL = `${import.meta.env.BASE_URL}data/towns.json`;
 /** The credit for the towns that are not OpenStreetMap's (tools/fetch-towns.mjs --geonames), for the title screen. */
-export const TOWNS_ATTRIBUTION = 'Towns of Hawaii, Mexico, Central America and the Caribbean: GeoNames (geonames.org), CC BY 4.0';
+export const TOWNS_ATTRIBUTION = 'Towns and cities beyond the United States, Canada and northern Mexico: GeoNames (geonames.org), CC BY 4.0';
 const CN = 128;                       // coarse "is there a town about" grid (4 km cells)
 const MAX_LIGHTS = 170000;
 
@@ -24,8 +26,23 @@ export async function loadTowns() {
   try {
     const r = await fetch(DATA_URL);
     if (!r.ok) throw new Error('HTTP ' + r.status);
-    ALL = (await r.json()).towns || [];
+    const d = await r.json(), small = d.small || [];
+    ALL = d.towns || [];
+    // (the small places of the rest of the world come without names, as whole numbers: see the bake script)
+    for (let i = 0; i + 2 < small.length; i += 3) ALL.push(['', small[i] / 1000, small[i + 1] / 1000, small[i + 2] * 100]);
   } catch (e) { console.warn('Towns could not be loaded:', e.message); ALL = []; }
+}
+
+/**
+ * People to the square kilometer of built-up ground, by the part of the world: the suburbs of North America
+ * (and of Australia and New Zealand) are the thinnest on earth, Europe builds more than twice as close, and
+ * most of the rest of the world closer still.
+ */
+function density(lat, lon) {
+  if (lon < -52 && lat >= 7) return 1100;
+  if (lon > 110 && lat < -10) return 1400;
+  if (lon > -30 && lon < 45 && lat > 35) return 2600;
+  return 4200;
 }
 
 /**
@@ -38,8 +55,8 @@ export function placeTowns() {
   const H = WORLD_HALF, cell = (2 * H) / (BN - 1);
   for (const [name, lat, lon, pop] of ALL) {
     const p = toWorld(lat, lon);
-    // About 1,100 people to the square kilometer, American suburbs and all.
-    const r = Math.min(22000, Math.max(450, Math.sqrt(pop / (1100 * Math.PI)) * 1000));
+    // (about 1,100 people to the square kilometer in North America, suburbs and all)
+    const r = Math.min(22000, Math.max(450, Math.sqrt(pop / (density(lat, lon) * Math.PI)) * 1000));
     if (Math.abs(p.x) > H + 2 * r || Math.abs(p.z) > H + 2 * r) continue;
     TOWNS.push({ name, x: p.x, z: p.z, r, pop, lights: 0, start: 0 });
     const rr = r * 1.15, reach = rr * 2, k2 = 1 / (0.5 * rr * rr);
@@ -77,7 +94,7 @@ export function townsIn(x0, z0, x1, z1) {
 
 /** The towns of the window (for the chart). */
 export const townList = () => TOWNS;
-/** Every town of the data, biggest first: [name, lat, lon, population] (for the map of the continent). */
+/** Every town of the data: [name, lat, lon, population], biggest first down to 30,000 people (for the map, which names no smaller ones). */
 export const allTowns = () => ALL;
 
 export class TownLights {

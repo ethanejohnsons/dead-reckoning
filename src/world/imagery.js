@@ -2,10 +2,12 @@
 //
 // Two sources work together:
 //  - Sentinel-2 cloudless 2016 by EOX (CC BY 4.0), about 10 m per pixel: one even, cloud-free picture of
-//    the whole country. It gives the ground its COLOR everywhere, and it is what imagery() returns, so the
+//    the whole earth. It gives the ground its COLOR everywhere, and it is what imagery() returns, so the
 //    trees and the water read the same picture they always have.
 //  - Aerial photography from the USGS National Map (NAIP, public domain), 0.6 to 1 m per pixel: it gives the
-//    ground its DETAIL near the aircraft. Aerial surveys are flown county by county and year by year and do
+//    ground its DETAIL near the aircraft, in the United States and its territories only (COVERAGE: nothing is
+//    asked of those servers anywhere else, and the ground there is the satellite's picture with the terrain
+//    shader's own fine grain). Aerial surveys are flown county by county and year by year and do
 //    not match in tone (a river is brown in one and blue-black in the next), so they are never shown as they
 //    are: the survey is divided by its own blur at the satellite's resolution, and that ratio (roofs, roads,
 //    furrows, crowns of trees) multiplies the satellite's color. Tone stays the satellite's from the nose
@@ -23,7 +25,7 @@
 // Tiles are fetched, decoded and reduced to their mip chains in a worker; the frame only pays for the upload.
 
 import * as THREE from 'three';
-import { pixelX, pixelY, metersPerPixel, REGION } from './geo.js';
+import { pixelX, pixelY, metersPerPixel, toLatLon, REGION } from './geo.js';
 import { groundHeight } from './terrain.js';
 import { uploads } from '../render/budget.js';
 import { ENV } from '../core/env.js';
@@ -35,6 +37,7 @@ export const IMG_LEVELS = 7;          // satellite levels: zoom 14 (about 7 m pe
 export const IMG_FINE_Z = 14;
 const FINE_MAX = 3;                   // aerial levels at most: zoom 17, 16, 15
 const TILE = 256, MIPS = 6;           // each tile carries mips down to 8 x 8
+const XOFF = 262144;                  // see Imagery.key
 const PYRAMID = (() => { let n = 0; for (let k = 0; k < MIPS; k++) n += (TILE >> k) ** 2 * 4; return n; })();
 const LOW_M = 27;                     // meters: the scale at which the satellite's color and the survey's detail are joined
 const FADE_S = 0.6;                   // seconds a tile takes to appear
@@ -43,17 +46,27 @@ const LEAD_S = 6, LEAD_MAX = 0.3;     // the aerial levels are centered this man
 const MAX_UPLOADS = 8, UPLOAD_MS = 3; // tiles a frame, and the time they may take
 const MERC = 2 * Math.PI * 6378137;
 
+// Where the aerial surveys reach: the United States and its territories, as boxes [south, north, west, east]
+// (generous at the borders: the servers answer "no such tile" just beyond them, and that is remembered).
+// The contiguous states, Alaska (and the Aleutians beyond the 180th meridian), Hawaii, Puerto Rico and the
+// Virgin Islands, Guam and the Northern Marianas, American Samoa.
+const COVERAGE = [[24.3, 49.6, -125.5, -66.5], [51, 71.8, -180, -129.5], [51, 54, 172, 180], [18.5, 22.6, -161, -154.5], [17.5, 18.8, -67.6, -64.3], [13, 20.8, 144.4, 146.3], [-14.7, -10.9, -171.3, -168]];
+/** Is this place where the aerial surveys have pictures? */
+export const aerialCovers = (lat, lon) => COVERAGE.some((b) => lat > b[0] && lat < b[1] && lon > b[2] && lon < b[3]);
+/** A tile's column in its zoom's grid: the columns of a window across the 180th meridian run on round the earth (geo.js). */
+const col = (x, z) => { const n = 2 ** z; return ((x % n) + n) % n; };
+
 // One entry per server. `max` caps the requests in flight; `n` is tiles per side of one request.
 const SOURCES = {
-  s2: { max: 6, timeout: 20000, n: 1, url: (z, x, y) => `https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless_3857/default/g/${z}/${y}/${x}.jpg` },
+  s2: { max: 6, timeout: 20000, n: 1, url: (z, x, y) => `https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless_3857/default/g/${z}/${y}/${col(x, z)}.jpg` },
   // The National Map's cached base map: fast, but it stops at zoom 16 (1.7 m per pixel at 45 N).
-  usgs: { max: 6, timeout: 20000, n: 1, url: (z, x, y) => `https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/${z}/${y}/${x}` },
+  usgs: { max: 6, timeout: 20000, n: 1, url: (z, x, y) => `https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/${z}/${y}/${col(x, z)}` },
   // Zoom 17 only exists as a dynamic service: slow (2 to 30 s a request), so it is asked for a block of 4 x 4
   // tiles at a time, two requests at once at the most, and the game never waits for it.
   naip: {
     max: 2, timeout: 40000, n: 4,
     url: (z, x, y) => {
-      const w = MERC / 2 ** z, x0 = -MERC / 2 + x * w, y1 = MERC / 2 - y * w;
+      const w = MERC / 2 ** z, x0 = -MERC / 2 + col(x, z) * w, y1 = MERC / 2 - y * w;
       return 'https://imagery.nationalmap.gov/arcgis/rest/services/USGSNAIPPlus/ImageServer/exportImage'
         + `?bbox=${x0.toFixed(3)},${(y1 - 4 * w).toFixed(3)},${(x0 + 4 * w).toFixed(3)},${y1.toFixed(3)}`
         + '&bboxSR=3857&imageSR=3857&size=1024,1024&format=jpg&interpolation=RSP_BilinearInterpolation&f=image';
@@ -182,7 +195,7 @@ export class Imagery {
     for (const s of Object.values(SOURCES)) { s.active = 0; s.streak = 0; s.pauses = 0; s.pauseUntil = 0; }
     for (const L of this.levels) { L.key.fill(-1); L.state.fill(0); L.arrive.fill(-1); L.tx0 = L.ty0 = null; L.want = true; }
     this.fade.fill(0);
-    this.lat0 = REGION.lat0; this.lon0 = REGION.lon0; this.fadeDirty = true;
+    this.lat0 = REGION.lat0; this.lon0 = REGION.lon0; this.fadeDirty = true; this.coverT = 0;
     const shape = this.S * 100 + this.levels.length;
     if (this.stale !== false || shape !== this.shape) this.alloc();        // (textures nothing has been written to are as good as new)
     this.stale = false; this.shape = shape;
@@ -214,7 +227,8 @@ export class Imagery {
     r.state.bindTexture(A, null);
   }
 
-  key(layer, x, y) { return layer * 1099511627776 + x * 1048576 + y; }
+  // (a tile's column may lie beyond either end of the grid, across the 180th meridian: it is kept with XOFF added, so the key stays positive)
+  key(layer, x, y) { return layer * 1099511627776 + (x + XOFF) * 1048576 + y; }
   slot(x, y) { const T = this.T; return (((y % T) + T) % T) * T + (((x % T) + T) % T); }
 
   /** Recenter every level, ask for what is missing, upload what has arrived, and move the fades on. */
@@ -234,6 +248,8 @@ export class Imagery {
     this.prev = { x: cam.x, z: cam.z, t };
     // An aerial level is only worth its download while its texels are no smaller than a pixel straight down.
     const foot = Math.max(cam.y - groundHeight(cam.x, cam.z), 0) * pix;
+    // ... and where there is a survey at all (asked a few times a minute: the camera crosses a border slowly).
+    if (!(t < this.coverT)) { const ll = toLatLon(cam.x, cam.z); this.covered = aerialCovers(ll.lat, ll.lon); this.coverT = t + 5; }
 
     for (const L of this.levels) {
       const z = L.z, mpp = metersPerPixel(z), n = 2 ** z, half = (T / 2) * TILE * mpp;
@@ -241,7 +257,7 @@ export class Imagery {
       if (L.fine >= 0) {
         const lead = Math.min(LEAD_S, (LEAD_MAX * half) / Math.max(this.vel.length(), 1e-3));
         cx += this.vel.x * lead; cz += this.vel.y * lead;
-        L.want = foot < mpp * (L.want ? 2.8 : 2.2);
+        L.want = this.covered && foot < mpp * (L.want ? 2.8 : 2.2);
       }
       const px = pixelX(cx, z), py = pixelY(cz, z);
       const tx0 = Math.round(px / TILE - T / 2), ty0 = Math.round(py / TILE - T / 2);
@@ -249,7 +265,7 @@ export class Imagery {
         // Tiles that slid out of the window give up their slots: each is blanked for the newcomer.
         for (let j = 0; j < T; j++) for (let i = 0; i < T; i++) {
           const x = tx0 + i, y = ty0 + j, s = this.slot(x, y);
-          const k = x < 0 || y < 0 || x >= n || y >= n ? -1 : this.key(L.layer, x, y);
+          const k = y < 0 || y >= n ? -1 : this.key(L.layer, x, y);
           if (L.key[s] === k) continue;
           if (L.state[s] === 2) this.upload(L, s, null);
           L.key[s] = k; L.state[s] = 0; L.arrive[s] = -1;
@@ -261,10 +277,10 @@ export class Imagery {
       if (L.want && t >= L.src.pauseUntil) {
         for (let s = 0; s < T * T; s++) {
           if (L.state[s] !== 0 || L.key[s] < 0) continue;
-          const y = L.key[s] % 1048576, x = Math.floor(L.key[s] / 1048576) % 1048576;
+          const y = L.key[s] % 1048576, x = (Math.floor(L.key[s] / 1048576) % 1048576) - XOFF;
           const sp = this.spare.get(L.key[s]);
           if (sp) { this.spare.delete(L.key[s]); this.ready.push({ L, x, y, key: L.key[s], buf: sp }); L.state[s] = 1; continue; }
-          const bx = x - (x % N), by = y - (y % N), rk = this.key(L.layer, bx, by);
+          const bx = Math.floor(x / N) * N, by = y - (y % N), rk = this.key(L.layer, bx, by);
           if (this.queue.has(rk)) continue;
           const f = this.fails.get(rk);
           if (f && t < f.until) continue;

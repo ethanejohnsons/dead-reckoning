@@ -3,6 +3,13 @@
 // physics, rendering, weather and the chart agree. buildWorld is run again
 // whenever the game's window of the world moves.
 // Coordinates: +X east, +Z south, +Y up, meters.
+//
+// The climate is for anywhere on earth. North America's is drawn by hand below
+// (how wet the lowlands are, the tree line, the swing of the seasons); the rest
+// of the world's is broader: its moisture is read off a half-degree grid baked
+// from the satellite picture (public/data/climate.bin, tools/bake-climate.py:
+// loadClimate), its tree line and seasons follow latitude, hemisphere and how
+// far the sea rules the weather. northAmerica() says which of the two a place gets.
 
 import * as THREE from 'three';
 import * as dem from './dem.js';
@@ -22,7 +29,8 @@ export const world = { base: null, water: null, moist: null, tsea: null, snow: n
 //
 // The world's "ordinary day" (seaTempAt) is a mild flying day. A season moves it: by latitude, the mean of the
 // daily highs over the year and how far they swing either side of it (deg C, lowlands of the interior), coldest
-// about 22 January and warmest about 23 July. The Pacific coast swings less. The temperature then decides the
+// about 22 January and warmest about 23 July (half a year on south of the equator). The Pacific coast swings less,
+// and so does everywhere else the weather comes off the sea (seaRuled). The temperature then decides the
 // rest: the snow line (so a northern winter lies white), and what the leaves are doing, in the shaders (SEASON_GLSL):
 // they come out as the days warm through the teens, turn as the highs fall through the low twenties and are down by
 // about 8 C, so the fall starts in Canada and the mountains and moves south, and the tropics hardly change at all.
@@ -62,12 +70,28 @@ function seasonDayAt(key, lat, lon, tlow = 0) {
   }
   return ((err < 1.5 ? best : fixed) + s) % 365;
 }
-/** How much warmer than its ordinary day a place is on a day of the year (deg C). */
-export function seasonShift(lat, lon, day = seasonDay) {
-  const a = Math.abs(lat), pacific = lon < -116 && a > 30 ? smoothstep(-117, -122.5, lon) : 0;
+/** How much warmer than its ordinary day a place is on a day of the year (deg C). high: the height of the ground there (m), where it matters. */
+export function seasonShift(lat, lon, day = seasonDay, high = 0) {
+  const a = Math.abs(lat), na = northAmerica(lat, lon), pacific = na > 0 && lon < -116 && a > 30 ? na * smoothstep(-117, -122.5, lon) : 0;
   const ph = (2 * Math.PI * (day - COLDEST)) / 365.2422 + (lat < 0 ? Math.PI : 0);
-  return along(SEASON_MEAN, a) + 2 * pacific - seaTempAt(lat) - along(SEASON_SWING, a) * (1 - 0.55 * pacific) * Math.cos(ph);
+  // Beyond North America: sea air keeps the year's mean up in the higher latitudes and takes most of its swing away
+  // (London's highs run from 8 C to 23 C where Winnipeg's, two degrees south of it, run from -12 C to 26 C), and the
+  // hot deserts of the subtropics are hotter than their latitude and swing more (Dubai: 24 C to 41 C). (The low ones:
+  // the pale rock and snow of a high range also read as dry in the climate grid, and are not hot.)
+  const sea = seaRuled(lat, lon) * (1 - na), dry = na < 1 && a < 40 ? (1 - na) * smoothstep(0.3, 0.12, gridMoisture(lat, lon)) * smoothstep(40, 30, a) * (1 - smoothstep(1200, 2500, high)) : 0;
+  const mean = along(SEASON_MEAN, a) + 2 * pacific + sea * (7 + 3 * smoothstep(55, 65, a)) * smoothstep(35, 55, a) + 4 * dry;
+  return mean - seaTempAt(lat) - along(SEASON_SWING, a) * (1 - 0.55 * pacific) * (1 - 0.62 * sea) * (1 + 0.6 * dry) * Math.cos(ph);
 }
+/**
+ * How far a place's seasons are the sea's (0 the inside of a continent .. 0.9), outside North America: the whole of
+ * the southern hemisphere, which is mostly water; western Europe, less and less eastward to the Urals; not eastern
+ * Asia, whose winters come off Siberia.
+ */
+function seaRuled(lat, lon) {
+  if (lat < 0) return 0.9 * smoothstep(0, 12, -lat);
+  return lon < 60 ? along(SEA_EUROPE, lon) : 0;
+}
+const SEA_EUROPE = [[0, 0.9], [15, 0.55], [40, 0.2], [60, 0]];
 /** Set the time of the season (a key of SEASONS), and rebuild the maps that depend on it (when there is a world yet). */
 export function setSeason(key) {
   seasonKey = SEASONS[key] !== undefined ? key : 'summer';
@@ -149,6 +173,35 @@ function along(table, x) {
   for (let i = 1; i < table.length; i++) if (x <= table[i][0]) { const a = table[i - 1], b = table[i]; return a[1] + ((b[1] - a[1]) * (x - a[0])) / (b[0] - a[0]); }
   return table[table.length - 1][1];
 }
+/**
+ * How far a place is North America's (1: the hand-drawn maps of this file describe it) or the rest of the world's (0),
+ * with a few degrees between: north of Panama, from the Bering Sea to Newfoundland.
+ */
+export function northAmerica(lat, lon) {
+  return smoothstep(5, 9, lat) * smoothstep(-50, -54, lon) * smoothstep(-172, -168, lon);
+}
+
+// How wet the lowlands are all over the earth (0..255), half a degree to the cell: see tools/bake-climate.py.
+const CLIMATE_URL = `${import.meta.env?.BASE_URL ?? '/'}data/climate.bin`, CW = 720, CH = 290, CLAT = 80;
+let climate = null;
+/** Fetch the climate grid (once, before the first world is built). Without it the rest of the world is middling everywhere. */
+export async function loadClimate() {
+  try {
+    const r = await fetch(CLIMATE_URL);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const b = new Uint8Array(await r.arrayBuffer());
+    if (b.length !== CW * CH) throw new Error('not the size expected');
+    climate = b;
+  } catch (e) { console.warn('The climate grid could not be loaded:', e.message); }
+}
+/** The grid's moisture at a place (0..1), between its cells; round the earth east and west. */
+function gridMoisture(lat, lon) {
+  if (!climate) return 0.5;
+  const fx = (lon + 180) * 2 - 0.5, fy = clamp((CLAT - lat) * 2 - 0.5, 0, CH - 1.001);
+  const i = Math.floor(fx), j = fy | 0, u = fx - i, v = fy - j, i0 = ((i % CW) + CW) % CW, i1 = (i0 + 1) % CW;
+  return ((climate[j * CW + i0] * (1 - u) + climate[j * CW + i1] * u) * (1 - v) + (climate[(j + 1) * CW + i0] * (1 - u) + climate[(j + 1) * CW + i1] * u) * v) / 255;
+}
+
 // The latitude at which the forest gives out into tundra, by longitude: the Aleutians and the Bering Sea coast
 // are treeless far to the south, the Mackenzie carries the trees nearly to the Arctic Ocean, and Hudson Bay
 // and the Labrador Sea push the line south again.
@@ -173,6 +226,32 @@ const crestLon = (lat) => (lat < 49 ? -121.4 : -121.4 - (lat - 49) * 1.35);
  * lower in the East (1,400 m in New Hampshire); toward the Arctic it comes down to the ground where the forest ends.
  */
 export function treelineAt(lat, lon = -100) {
+  const na = northAmerica(lat, lon);
+  return na >= 1 ? treelineNA(lat, lon) : na <= 0 ? treelineWorld(lat, lon) : treelineWorld(lat, lon) + (treelineNA(lat, lon) - treelineWorld(lat, lon)) * na;
+}
+// The latitude at which the forest gives out into tundra in the rest of the northern hemisphere, by longitude: Greenland
+// and Iceland all but treeless, the Gulf Stream carrying the birches past 70 N in Norway, the larch reaching 72 N on
+// the Taymyr, the cold coasts of the Bering Sea bare from the Anadyr on.
+const ARCTIC_WORLD = [[-180, 64], [-172, 62], [-50, 60], [-30, 61], [-24, 64.5], [-12, 64.8], [-5, 66], [5, 69.5], [15, 70.5], [30, 70], [45, 67.5], [70, 67], [90, 70], [105, 72], [120, 71.5], [140, 70.5], [160, 69], [170, 66.5], [180, 64]];
+/**
+ * The tree line beyond North America: by latitude as in the interior there (which serves the Himalaya, the Tien Shan
+ * and the Altai as it stands: 4,000 m in Nepal), lower where the sea rules the mountains' weather: by a quarter in
+ * Europe and Japan (2,000 m in the Alps), by nearly half again in the British Isles and Iceland (700 m in Scotland),
+ * and by half in the southern hemisphere outside the tropics, whose beeches and gums stop far below where northern
+ * conifers would (1,400 m in New Zealand, 400 m above the Beagle Channel). South of 51.5 S only Tierra del Fuego has trees.
+ */
+function treelineWorld(lat, lon) {
+  const a = Math.abs(lat);
+  let tl = along(TREELINE, a), edge;
+  if (lat < 0) { tl *= 1 - 0.5 * smoothstep(25, 40, a); edge = lon > -77 && lon < -62 ? 56.5 : 51.5; }
+  else {
+    const sea = Math.min(1, smoothstep(42, 30, lon) + smoothstep(128, 132, lon) * smoothstep(150, 146, lon));
+    tl *= (1 - 0.24 * sea * smoothstep(30, 38, a)) * (1 - 0.45 * smoothstep(52, 58, a) * smoothstep(4, -2, lon));
+    edge = along(ARCTIC_WORLD, lon);
+  }
+  return Math.max(-200, Math.min(tl, (edge - a) * 220));
+}
+function treelineNA(lat, lon) {
   const a = Math.abs(lat), crest = crestLon(a);
   let tl = along(TREELINE, a);
   if (a < 24 && lon < -150) tl = Math.min(tl, 3000);       // (the Hawaiian volcanoes stand in the dry air above the trade-wind clouds)
@@ -190,6 +269,14 @@ export const oceanWoods = () => ENV.uRegion.value.w;
 const EAST = [[-104, 0.28], [-100, 0.33], [-97, 0.4], [-94, 0.52], [-90, 0.66], [-84, 0.72], [-70, 0.74]];
 
 /**
+ * How wet the lowlands are at a place anywhere on earth (0 desert .. 1 wet forest): North America's from the map
+ * drawn by hand below, the rest of the world's from the climate grid, a few degrees of both where they meet.
+ */
+export function lowlandMoisture(lat, lon) {
+  const na = northAmerica(lat, lon);
+  return na >= 1 ? moistureNA(lat, lon) : na <= 0 ? gridMoisture(lat, lon) : gridMoisture(lat, lon) + (moistureNA(lat, lon) - gridMoisture(lat, lon)) * na;
+}
+/**
  * How wet the lowlands are at a place (0 desert .. 1 wet forest), from the map of North America. Under about
  * 0.42 nothing grows wild but grass and brush; from 0.6 up the country is forest. East of the Rockies the
  * humid East dries steadily westward across the plains; the corn belt from Iowa to Ohio, forest once, is
@@ -200,7 +287,7 @@ const EAST = [[-104, 0.28], [-100, 0.33], [-97, 0.4], [-94, 0.52], [-90, 0.66], 
  * forest; California is dry but for its north coast. South of the Mexican plateau the tropics are forest
  * again, through Central America and the Caribbean. The relief adds the rest (see buildWorld).
  */
-export function lowlandMoisture(lat, lon) {
+function moistureNA(lat, lon) {
   let m;
   if (lon > -104) {
     m = along(EAST, lon);
@@ -262,10 +349,14 @@ export function buildWorld(base, urban) {
   }
   // The level of the plains and valley floors around each point: the lowest ground within about 12 km, smoothed.
   const low = boxBlur(minFilter(terr, MN, 6), MN, 5, 2);
+  // And the lowest ground within about 150 km: a valley floor far above that is a cleft in a range, not a plateau (see tsea below).
+  const deep = boxBlur(minFilter(terr, MN, 73), MN, 8, 1);
+  // The height up to which the ground is as warm as the lowlands (see tsea below): na: how far the place is North America's.
+  const warmTo = (k, na) => { const plateau = Math.min(low[k], 2000), broad = Math.min(plateau, deep[k] + 400); return broad + (plateau - broad) * na; };
   boxBlur(open, MN, 2);                                    // 1 only well out on big water
   const c0 = toLatLon(0, 0), tl0 = treelineAt(c0.lat, c0.lon), tl1 = treelineAt(toLatLon(0, LAND_HALF).lat, c0.lon);
   // The day of the season, for the ground at the middle of the window (as the leaves there read it: see tsea below).
-  { const kc = (MN >> 1) * MN + (MN >> 1); setSeasonDay(seasonDayAt(seasonKey, c0.lat, c0.lon, 0.0065 * (Math.min(low[kc], 2000) - terr[kc]))); }
+  { const kc = (MN >> 1) * MN + (MN >> 1); setSeasonDay(seasonDayAt(seasonKey, c0.lat, c0.lon, 0.0065 * (warmTo(kc, northAmerica(c0.lat, c0.lon)) - terr[kc]))); }
   // w: how far the region's climate is an ocean's (the wet coasts of the Northwest and Alaska), where conifers hold
   // the lowlands too. (Not the moisture itself, which the ranges raise everywhere: the hills of New England are wet
   // but their woods are maple, beech and birch.)
@@ -277,8 +368,11 @@ export function buildWorld(base, urban) {
     // The plains and plateaux are as warm as the lowlands (the ground heats the air wherever it lies), up to
     // a point; only what stands above them is colder. So an ordinary day at an airfield's door is as warm as its
     // latitude makes the lowlands: about 15 C in Minnesota or Colorado, 27 C in the tropics, a few degrees on the Arctic coast.
-    const shift = cold[k] = seasonShift(ll.lat, ll.lon);
-    tsea[k] = seaTempAt(ll.lat) + shift + 0.0065 * Math.min(low[k], 2000);
+    // (Beyond North America, whose high country is all plateau and basin, only as far as the high ground is broad: the
+    // valley floors of the Himalaya stand two kilometers above plains a few dozen kilometers off, and are not as warm as those;
+    // Tibet and the Altiplano, high for hundreds of kilometers, are warm for their height as Colorado is.)
+    const shift = cold[k] = seasonShift(ll.lat, ll.lon, undefined, terr[k]);
+    tsea[k] = seaTempAt(ll.lat) + shift + 0.0065 * warmTo(k, northAmerica(ll.lat, ll.lon));
     // Snow lies where the air is under about 2 C, and never lower than 650 m above the tree line on an ordinary day.
     // (In the tropics the snow line stands higher than the cold alone would put it, near 4,800 m: the volcanoes of Mexico
     // carry snow, Mauna Kea on an ordinary day does not.)

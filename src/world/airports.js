@@ -1,8 +1,13 @@
-// The real airfields. The index of all of them (airfield-index.js) is what the menu lists; the geometry
-// of each (every runway, taxiway, apron and building footprint, from OpenStreetMap) is a file of its own in
-// public/airfields/, fetched for the fields that lie inside the game's window of the world. Elevations are
-// read from the terrain data, and the ground under each field is graded to one gently tilted plane fitted
-// through it, so pavement lies on the ground and buildings neither float nor sink.
+// The real airfields. The index of all of them is what the menu lists. It has two parts:
+//  - the detailed fields (airfield-index.js): the geometry of each (every runway, taxiway, apron and building
+//    footprint, from OpenStreetMap) is a file of its own in public/airfields/, fetched for the fields that
+//    lie inside the game's window of the world;
+//  - the rest of the world's large and medium airports (public/data/world-airfields.json, from OurAirports,
+//    fetched once at start-up: loadWorldFields): only their runways are known, and a field's data is made
+//    from those on the spot (worldData), in the form of a detailed field's file, so everything downstream is
+//    the same. Their buildings are whatever the map has there (world/cities.js), their aprons the picture's.
+// Elevations are read from the terrain data, and the ground under each field is graded to one gently tilted
+// plane fitted through it, so pavement lies on the ground and buildings neither float nor sink.
 
 import * as dem from './dem.js';
 import { toWorld, scaleAt, LAND_HALF } from './geo.js';
@@ -12,12 +17,18 @@ import { setFlats, gradeHeight } from './terrain.js';
 export { DEFAULT_FIELD };
 /** Every airfield of the game (for the menu): { id, name, city, state, lat, lon, blurb, ... }. */
 export const FIELDS = AIRFIELD_INDEX;
-export const fieldById = (id) => FIELDS.find((f) => f.id === id);
+const byId = new Map(FIELDS.map((f, i) => [f.id, Object.assign(f, { order: i })]));
+export const fieldById = (id) => byId.get(id);
 /** The airfields inside the window of the world, loaded and graded. The same array for the life of the game. */
 export const AIRPORTS = [];
 export const airportById = (id) => AIRPORTS.find((a) => a.id === id);
 
 const DATA_URL = `${import.meta.env.BASE_URL}airfields/`;
+const WORLD_URL = `${import.meta.env.BASE_URL}data/world-airfields.json`;
+/** The credit for the airfields of the rest of the world, for the title screen. */
+export const WORLD_FIELDS_ATTRIBUTION = 'Airports and runways beyond the detailed airfields: OurAirports (ourairports.com), public domain';
+const EARTH = 6378137;      // the radius the game's plane is drawn with (world/geo.js)
+const SURFACES = { a: 'asphalt', c: 'concrete', g: 'grass', v: 'gravel' };
 const FIT_Z = 11;           // elevation zoom the grading plane is fitted to (a tile or two a field)
 const raw = new Map();      // id -> the field's file, as fetched
 
@@ -62,6 +73,58 @@ function makeRunway(r, flip) {
   };
 }
 
+/**
+ * Add the airfields of the rest of the world to the index (once, at start-up; the game runs without them).
+ * The file is tools/bake-world-airfields.mjs's: each field's place and names and the ends of its runways. An
+ * index entry is made for each, like the detailed fields' (the midpoint, heading and length of its main runway),
+ * with its runways kept on it as `world`.
+ */
+export async function loadWorldFields() {
+  let d;
+  try {
+    const r = await fetch(WORLD_URL);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    d = await r.json();
+  } catch (e) { console.warn('The airfields of the rest of the world could not be loaded:', e.message); return; }
+  const feet = (m) => (Math.round((m * 3.28084) / 10) * 10).toLocaleString('en-US');
+  for (const [id, name, city, region, cc, big, rws] of d.fields || []) {
+    if (byId.has(id) || !rws?.length) continue;               // (a field baked in detail since the file was made wins)
+    const country = d.countries?.[cc] || cc, m = rws[0];
+    const dl = m[5] - m[3] - 360 * Math.round((m[5] - m[3]) / 360), lat = (m[2] + m[4]) / 2, lon = m[3] + dl / 2;
+    const kx = EARTH * D2R * Math.cos(lat * D2R), kz = EARTH * D2R, ex = dl * kx, ez = -(m[4] - m[2]) * kz, len = Math.hypot(ex, ez);
+    let reach = len / 2;
+    for (const r of rws) for (const k of [2, 4]) { const dx = (r[k + 1] - lon - 360 * Math.round((r[k + 1] - lon) / 360)) * kx, dz = (r[k] - lat) * kz; reach = Math.max(reach, Math.hypot(dx, dz)); }
+    const surface = m[7] === 'g' ? 'grass' : m[7] === 'v' ? 'gravel' : 'paved';
+    const where = [city, region, country].filter((s, i, a) => s && a.indexOf(s) === i).join(', ');
+    const f = {
+      id, name, city: city || name, state: region || country, country, lat, lon,
+      // The menu's group: the state or province in the United States and Canada, a region where the game has them, else the country.
+      group: cc === 'US' || cc === 'CA' ? undefined : d.groups?.[cc] || country,
+      numbers: [m[0], m[1]], hdg: Math.round((Math.atan2(ex, -ez) / D2R + 360) % 360), len: Math.round(len), surface,
+      traffic: big ? 0.6 : 0.25, big: big ? 1 : 0, reach: Math.round(reach + 300),
+      blurb: `${where}. ${rws.length === 1 ? 'One runway' : `${rws.length} runways, the longest`}, ${feet(len)} feet${surface === 'paved' ? '' : ` of ${surface}`}.`,
+      world: rws, order: FIELDS.length,
+    };
+    FIELDS.push(f); byId.set(id, f);
+  }
+  // The menu's order: North America as the list has it (states and provinces, then its regions), then the countries of
+  // the rest of the world by name, each with its detailed fields first.
+  const regional = new Set(Object.values(d.groups || {})), abroad = (f) => !!f.group && f.group === f.country && !regional.has(f.group);
+  const sorted = [...FIELDS.filter((f) => !abroad(f)), ...FIELDS.filter(abroad).sort((p, q) => p.group.localeCompare(q.group) || p.order - q.order)];
+  FIELDS.length = 0;
+  for (const f of sorted) { f.order = FIELDS.length; FIELDS.push(f); }
+}
+/** A field's data from its runways alone (a field of the world file), in the form of a detailed field's file. */
+function worldData(f) {
+  const kx = EARTH * D2R * Math.cos(f.lat * D2R), kz = EARTH * D2R;
+  const at = (lat, lon) => [(lon - f.lon - 360 * Math.round((lon - f.lon) / 360)) * kx, -(lat - f.lat) * kz];
+  return {
+    ll: [f.lat, f.lon],
+    rw: f.world.map((r) => ({ n: [r[0], r[1]], a: at(r[2], r[3]), b: at(r[4], r[5]), w: r[6], s: SURFACES[r[7]] || 'asphalt', dt: [r[8] || 0, r[9] || 0] })),
+    tw: [], ap: [], bd: [], hp: [], ws: [], hold: [], papi: [], als: [], park: [], fence: [],
+  };
+}
+
 /** A field from the index alone (its file could not be fetched): one runway and nothing else. */
 function fallbackData(f) {
   const th = f.hdg * D2R, ux = Math.sin(th), uz = -Math.cos(th), h = f.len / 2;
@@ -69,6 +132,7 @@ function fallbackData(f) {
 }
 async function fetchData(f) {
   if (raw.has(f.id)) return raw.get(f.id);
+  if (f.world) return worldData(f);                 // (made again each time: cheap, and there are thousands)
   let d;
   try {
     const r = await fetch(`${DATA_URL}${f.id}.json`);
@@ -245,7 +309,7 @@ export async function loadAirports(onProgress) {
       id: f.id, name: f.name, city: f.city, state: f.state, blurb: f.blurb, lat: f.lat, lon: f.lon, ox, oz,
       // The fields the rest of the game reads describe the main runway, in world coordinates.
       x: ox + main.lx, z: oz + main.lz, elev: 0, hdg: main.hdg, ux: main.ux, uz: main.uz, len: main.len, width: main.width, surface: main.surface, numbers: main.numbers,
-      traffic: f.traffic ?? 0.15, big: !!f.big,
+      traffic: f.traffic ?? 0.15, big: !!f.big, plain: !!f.world,          // plain: runways alone (a field of the world file)
       runways,
       taxiways: data.tw.map((t) => ({ p: t.p, w: t.w, kind: t.s, surface: SURFACE(t.s), lane: !!t.lane, stop: !!t.stop, box: bounds(t.p, t.w / 2) })),
       aprons: data.ap.map((p) => ({ p: p.p, kind: p.s, surface: SURFACE(p.s), box: bounds(p.p) })),
@@ -266,7 +330,7 @@ export async function loadAirports(onProgress) {
     onProgress?.(++done / wanted.length);
   }));
   if (mine !== generation) return AIRPORTS;
-  list.sort((p, q) => FIELDS.findIndex((f) => f.id === p.id) - FIELDS.findIndex((f) => f.id === q.id));
+  list.sort((p, q) => byId.get(p.id).order - byId.get(q.id).order);
   AIRPORTS.length = 0; AIRPORTS.push(...list);
   setFlats(flats);
   return AIRPORTS;

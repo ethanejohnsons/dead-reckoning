@@ -124,7 +124,8 @@ class Archive {
   async tile(z, x, y, info = null) {
     const A = await this.open();
     if (z < A.H.minz || z > A.H.maxz) return null;
-    const id = tileId(z, x, y);
+    const n = 2 ** z;
+    const id = tileId(z, ((x % n) + n) % n, y);          // (a window across the 180th meridian asks for columns beyond the grid: world/geo.js)
     let dir = A.root;
     try {
       for (let depth = 0; depth < 4; depth++) {

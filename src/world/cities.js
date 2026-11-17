@@ -786,9 +786,19 @@ export class Cities {
     return { n, x0: lx, z0: lz, step, h };
   }
 
-  /** Where buildings must not stand in a tile: inside an airport's boundary (the airfield draws its own). */
+  /** Squares of ground to keep free of buildings and roads besides the airports: [x0, z0, x1, z1] in world meters each
+   *  (a launch pad, which brings its own structures: space/mission.js). Tiles already built are built again. */
+  setKeepClear(list) {
+    const key = JSON.stringify(list.map((b) => b.map(Math.round)));
+    if (key === this.keepKey) return;
+    this.keepKey = key; this.keepClear = list;
+    this.reset();
+  }
+
+  /** Where buildings must not stand in a tile: inside an airport's boundary (the airfield draws its own), or on ground asked to be kept clear. */
   skipFor(t) {
     const rings = [], boxes = [], s = this.size;
+    for (const b of this.keepClear || []) if (!(b[0] > t.x0 + s || b[2] < t.x0 || b[1] > t.z0 + s || b[3] < t.z0)) boxes.push(b[0] - t.x0, b[1] - t.z0, b[2] - t.x0, b[3] - t.z0);
     for (const a of AIRPORTS) {
       const b = a.box;
       if (!b || b[0] > t.x0 + s || b[2] < t.x0 || b[1] > t.z0 + s || b[3] < t.z0) continue;

@@ -13,14 +13,30 @@ how that file does it. This document sits between the two.
 | Rendering | [three.js](https://threejs.org) 0.187 on WebGL2: the only runtime dependency. Mostly custom `ShaderMaterial`s; three.js supplies the scene graph, render targets, buffers and math |
 | Build | [Vite](https://vite.dev) 8, with no config file: `npm run dev` serves, `npm run build` writes a static site to `dist/`. Workers are bundled from `new Worker(new URL('./x.worker.js', import.meta.url), { type: 'module' })` |
 | UI | Plain HTML (`index.html`) and CSS (`src/ui/style.css`), driven from `src/main.js` by element id. No UI library |
-| Offline tools | Node scripts (`tools/*.mjs`: airfield and town bakes from OpenStreetMap and GeoNames) and Python 3 with NumPy and Pillow (`tools/*.py`: wall materials, stars, Milky Way) |
+| Offline tools | Node scripts (`tools/*.mjs`: airfield and town bakes from OpenStreetMap, OurAirports and GeoNames; the magnetic model's table) and Python 3 with NumPy and Pillow (`tools/*.py`: climate grid, wall materials, stars, Milky Way) |
 | Hosting | A static site. `Dockerfile` builds it with Node 22 and serves it with nginx (`deploy/nginx.conf`); `compose.yaml` wraps that |
 | Tests, lint | None |
 
 Two pieces of three.js are imported by path rather than from the package root:
 `three/src/extras/lib/earcut.js` (polygon triangulation, in the city and land
 cover workers) and `three/addons/utils/BufferGeometryUtils.js` (merging the
-aircraft's parts, `src/aircraft/kit.js`).
+aircraft's parts, `src/aircraft/kit.js` and `gltfmodel.js`). `gltfmodel.js` also
+uses `three/addons/loaders/GLTFLoader.js`.
+
+### Adding an aircraft
+
+An aircraft is one entry in `AIRCRAFT` (`src/aircraft/variants.js`). For one
+that comes as a model file: convert it with `tools/ac2glb.py` (or supply any
+`.glb` already in the game's axes: meters, +X right wing, +Y up, -Z out the
+nose), put it in `public/models/`, and give the entry a `model` block (where
+the file's center of gravity and wheels are, lights, nozzles: the fields are
+listed at the top of `gltfmodel.js`), a `spec` from `jetSpec` or `pistonSpec`
+(the flight model's numbers, the wheels and the points of the hull that can
+meet the ground), an `eye` point, a `view.scale` (how far back the cameras
+stand) and a `frame` (its shape for the rain and hail). The menu, the cameras,
+the autopilot, the sound and the weather read everything else from the spec.
+Flight-model changes can be tried without the browser: `physics.js` and
+`variants.js` import nothing but three's math classes, so Node can fly them.
 
 ## What runs where
 
@@ -44,7 +60,12 @@ uploads what comes back to the GPU a little at a time under a shared byte budget
 
 The game world is a 524 km square window of the earth on a Web Mercator plane,
 scaled to true meters at its center: +X east, +Z south, +Y up, origin at the
-window's center (`src/world/geo.js`). In flight, 150 km from the center the window
+window's center (`src/world/geo.js`). The window can be anywhere on earth short
+of the poles: its center goes no nearer one than 80 degrees (`LAT_MAX`; the
+plane and its tiles end at 85), nothing starts beyond 81 (`PIN_LAT_MAX`), and
+an aircraft that flies on poleward is turned back (`strayed` in `main.js`).
+Longitudes are taken the short way round from the window's center (`toWorld`),
+so a window across the 180th meridian is like any other. In flight, 150 km from the center the window
 is moved to lie ahead of the aircraft (`loadWorld` in `main.js`) and everything
 laid out in the old window's meters is reset: terrain, cities, land cover,
 airfields, weather grids. Streaming modules guard against answers that arrive
@@ -53,7 +74,17 @@ their worker.
 
 Map tiles are addressed in the usual slippy-map grid (zoom, x, y); each streaming
 module converts a tile's corner to world meters with `pixelX`/`pixelY`/
-`metersPerPixel` from `geo.js`.
+`metersPerPixel` from `geo.js`. Those are not wrapped: in a window across the
+180th meridian the columns run on past the end of the grid (or below zero), and
+every module that fetches or looks up a tile brings the column round first
+(`wrapTile`, or the same arithmetic where a worker cannot import it: `dem.js`'s
+`KEY`, `imagery.js`'s `col`, `overture.js`'s `tile`, the two map-tile workers).
+
+Three things differ by place and are decided in one spot each: which hemisphere
+(`hemisphere()` in `geo.js`: the sun's side, the seasons' half year, the turn of
+the weather), whether a place has North America's hand-drawn climate or the
+world's (`northAmerica()` in `terrain.js`), and whether the aerial surveys reach
+it (`aerialCovers()` in `imagery.js`).
 
 ## Shared GPU state
 
@@ -80,12 +111,15 @@ Nothing is fetched with a key, and no request carries cookies or a referrer.
 |---|---|---|
 | Elevation | AWS Terrain Tiles (Mapzen terrarium PNGs), `s3.amazonaws.com/elevation-tiles-prod` | `dem.js`, terrain workers |
 | Ground color | Sentinel-2 cloudless 2016 by EOX, `tiles.maps.eox.at` | `imagery.js` |
-| Ground detail | USGS National Map imagery and NAIP, `basemap.nationalmap.gov`, `imagery.nationalmap.gov` | `imagery.js` |
+| Ground detail | USGS National Map imagery and NAIP, `basemap.nationalmap.gov`, `imagery.nationalmap.gov`: the United States and its territories only | `imagery.js` |
 | Roads, bridges, water; map screen | OpenFreeMap vector tiles (OpenMapTiles schema, OpenStreetMap data), `tiles.openfreemap.org` | `cities.worker.js`, `maptiles.worker.js` |
 | Buildings | Overture Maps building PMTiles (OpenStreetMap plus Microsoft, Google and Esri footprints), `overturemaps-extras-us-west-2` bucket; OpenFreeMap's `building` layer if Overture cannot be reached | `overture.js`, `cities.worker.js` |
 | Land cover | Overture Maps base PMTiles (ESA WorldCover, plus OpenStreetMap woods and farmland) | `overture.js`, `landcover.worker.js` |
-| Airfields | Baked from OpenStreetMap into `public/airfields/*.json` (565 files, fetched as they come into view) | `airfield-index.js`, `airfield.js` |
-| Towns | Baked from OpenStreetMap and GeoNames into `public/data/towns.json` | `towns.js` |
+| Airfields, detailed | Baked from OpenStreetMap into `public/airfields/*.json` (606 files, fetched as they come into view): North America and some forty flagship airports elsewhere | `airfield-index.js`, `airports.js`, `airfield.js` |
+| Airfields, the rest of the world | The runways of about 4,500 large and medium airports, baked from OurAirports (public domain) into `public/data/world-airfields.json`, fetched at start-up | `airports.js` |
+| Towns | Baked into `public/data/towns.json` from OpenStreetMap (the United States, Canada, northern Mexico) and GeoNames (everywhere else) | `towns.js` |
+| Climate | How wet the lowlands are, half a degree to the cell, baked from the Sentinel-2 picture's colors into `public/data/climate.bin`; North America's is drawn by hand in the code | `terrain.js` |
+| Magnetic variation | The World Magnetic Model 2025 (NOAA NCEI and BGS, public domain): its coefficients, in the code | `geo.js` |
 | Stars, Milky Way | Baked into `public/data/stars.bin`, `milkyway.jpg` | `stars.js` |
 | Wall materials | ambientCG photographs (CC0), baked into `public/facades/` | `cities.js` |
 | Sounds | Freesound recordings (CC0), `public/audio/` with a manifest | `core/audio.js` |
@@ -100,7 +134,7 @@ settings), `DR.ac` (the aircraft), `DR.terrain`, `DR.cities`, `DR.landCover`,
 `DR.imagery`, `DR.weather`, `DR.camera`, `DR.renderer`, `DR.ENV`, and helpers:
 `DR.tick(dt)` runs one frame, `DR.sim(dt)` one step of simulation without
 drawing, `DR.fly({...})` and `DR.flyAt(lat, lon)` start a flight,
-`DR.toWorld(lat, lon)` / `DR.toLatLon(x, z)` convert coordinates. The backquote
+`DR.toWorld(lat, lon)` / `DR.toLatLon(x, z)` convert coordinates. `DR.launch({ plane: 'saturnv', site: 'ksc39a', rstart: 'pad' | 'orbit' | 'moon' })` starts a rocket flight and `DR.mission` is its controller (`DR.mission.rk` the rocket, `.cosmos` the view from space, `.forceMix` to pin the ground/space blend in a test). The backquote
 key opens a debug panel in flight.
 
 ## A frame
@@ -147,9 +181,10 @@ Each file opens with a comment that says what it does and how; this is the index
 
 | File | What it is |
 |---|---|
-| `physics.js` | The flight model: forces from lift, drag and thrust; stalls, slips, wind and ground effect follow from them |
-| `variants.js` | The three aircraft (152, 172, 182): proportions, paint, V-speeds and flight-model numbers |
-| `model.js` | The airframe, generated in code: fuselage, wings, tail, gear, glazing, prop; moving surfaces |
+| `physics.js` | The flight model: forces from lift, drag and thrust; stalls, slips, wind and ground effect follow from them. Propeller or jet thrust, drag near the speed of sound, legs that fold, a tail wheel: all by the numbers of the aircraft flown |
+| `variants.js` | The fleet. Three Cessnas (152, 172, 182: proportions that reshape one generated airframe, paint, V-speeds, flight-model numbers) and the aircraft that come as model files (P-51D, F-16, 737-800): flight-model numbers, where the wheels and hull meet the ground, and how the file is fitted (`model`) |
+| `model.js` | The Cessna airframe, generated in code: fuselage, wings, tail, gear, glazing, prop; moving surfaces |
+| `gltfmodel.js` | Aircraft from model files (`public/models/*.glb`): loading, standing them on their wheels, merging what never moves, moving what does (the `rig` each file carries: landing gear, control surfaces), propeller, lights, nozzle, afterburner flame |
 | `kit.js` | Building blocks for the model: lofts, airfoils, merged primitives, canvas textures |
 | `panel.js` | The instrument panel and its working instruments |
 | `interior.js` | The cabin: seats, lining, door cards, headliner |
@@ -162,8 +197,8 @@ Where the game is and how it maps to meters:
 
 | File | What it is |
 |---|---|
-| `geo.js` | The 524 km window on a Web Mercator plane; lat/lon to world meters and back; tile coordinates |
-| `terrain.js` | The world model: ground height, water and climate (moisture, temperature, snow line, season) for the window, read by physics, shaders and the chart |
+| `geo.js` | The 524 km window on a Web Mercator plane; lat/lon to world meters and back, round the earth; tile coordinates; magnetic variation (the World Magnetic Model) |
+| `terrain.js` | The world model: ground height, water and climate (moisture, temperature, snow line, season) for the window, read by physics, shaders and the chart; the climate of North America by hand and of the rest of the world from the climate grid |
 | `dem.js` | Elevation tiles: fetch, decode, cache, sample |
 | `demwindow.js` | A cut of the elevation cache to hand to a worker |
 | `water.js` | Which pixels of an elevation tile are water, found from the heights alone |
@@ -194,8 +229,8 @@ Built things:
 | `overture.js` | A reader for Overture Maps' PMTiles archives by HTTP range |
 | `traffic.js` | Cars and trucks on the roads near the aircraft |
 | `towns.js` | Towns: the built-up tint in the terrain and the scatter of lights at night |
-| `airports.js` | The airfields: the index for the menu, and each field's geometry, fetched as it comes into the window |
-| `airfield-index.js` | Generated by `tools/fetch-airfields.mjs`: every field's place and main runway |
+| `airports.js` | The airfields: the index for the menu (the detailed fields, and the world's other airports added at start-up), and each field's geometry, fetched as it comes into the window or made from its runways alone |
+| `airfield-index.js` | Generated by `tools/fetch-airfields.mjs`: every detailed field's place and main runway |
 | `airfield.js` | Airfield scenery: pavement, markings, buildings, lights, windsock |
 
 Light and sky:
@@ -236,18 +271,56 @@ Light and sky:
 | File | What it is |
 |---|---|
 | `hud.js` | The flight panel, weather wording, the frame-time meter |
-| `chart.js` | The map: relief of the continent and of the window, airfields, labels, the weather |
+| `chart.js` | The map, of the whole earth: relief of the world, of the region and of the window, airfields, labels, the pin, the weather |
 | `maptiles.js`, `maptiles.worker.js` | The map's street-map tiles, painted to bitmaps in a worker |
 | `picker.js` | The searchable drop-down that stands in for `<select>` |
 | `style.css` | All of the interface's styles |
+
+### `src/space/`: rockets, orbit and the view from space
+
+A rocket flight is run by `mission.js` in place of the airplane (`tick` in `main.js` asks `mission.active`).
+The craft is simulated in an Earth-centered inertial frame in double precision; the game's flat window of
+the world is only where it is *shown* while it is low. Between 24 and 36 km up the view from space is
+cross-faded over the ground view (`clouds.mixIn`, a hook in `weather/clouds.js`); above that only the view
+from space is drawn, through the same post-processing chain, and the window of the world stays where it was
+until the craft comes back down (`arriveFromSpace` in `main.js` fetches it again under the craft).
+
+| File | What it is |
+|---|---|
+| `frames.js` | The inertial frame (the equatorial frame of `world/celestial.js`), the mission clock, where the Earth's turn, the sun and the Moon are at a time, and the conversions to latitude/longitude/height and to the flat world's axes |
+| `orbit.js` | Gravity of the Earth and the Moon, the coasting integrator (RK4), orbital elements for the readouts, and the predicted path the map draws |
+| `rocket.js` | The vehicle as a point with a nose: thrust per stage (no fuel to run out), drag, attitude against the local horizon, ground contact, and the autopilot that flies to a parking orbit |
+| `mission.js` | The flight itself: start on a pad (or in orbit), keys, staging, time acceleration, which view shows (`mix`), the cameras, the stand-in that makes the rest of the game follow the rocket, the rocket's HUD panel |
+| `cosmos.js` | The view from space: one full-screen pass that ray-traces the Earth (ground from the clip levels, clouds, marched atmosphere), the Moon (NASA's color and relief maps, with generated craters below their resolution), sun and Milky Way; then the things with shape, lit by sun and Earthshine |
+| `globetiles.js` | The Earth's picture for that pass: Sentinel-2 cloudless tiles as clip levels in one array texture, zoom 2 to 12, streamed around the point under the camera |
+| `orbitmap.js` | The orbit map (`M` in a rocket): the path ahead, the Moon's orbit, labels |
+| `satellites.js` | The space stations and satellites on their orbits, as points far off and models near |
+| `sites.js` | The world's launch sites (only places with real pads; a pin on the map makes a pad anywhere) |
+| `transfer.js` | The way to the Moon (`L`): plans the burn by flying it ahead, then flies it: wait for the Moon, burn, coast, trim, brake into lunar orbit |
+| `rocketsound.js` | The rocket's sound: three recordings through filters that follow the air's pressure, the view and the thrust |
+| `reentry.js` | The glow of reentry: a shell of shocked air around the craft, by the flight model's heating |
+| `vehicles.js`, `model-saturnv.js`, `model-starship.js`, `model-kit.js` | The Saturn V and Starship as procedural models, stage by stage |
+| `plume.js` | The flame (widening as the air thins), and `ExhaustTrail`, the door to the smoke below |
+| `fx-smoke.js` | The smoke itself: a particle field simulated on the CPU (drag, buoyancy, wind, eddies, riding the ground), sorted and shadowed puff against puff, drawn as one instanced call plus a depth-only one so the weather's clouds and the lens treat it as solid |
+| `fx-launch.js` | What a launch puts into that field: the two jets out of Launch Complex 39's flame trench, the ring of steam and dust under Starship's mount, the column on the way up, ice off the tanks, vent wisps, the vapor collar at Mach 1 |
+| `pad.js` | The launch pads: a Launch Complex 39 pad with its tower, and an orbital launch mount with its tower |
+| `satmodels.js` | Models of the satellites |
+
+`tools/space-viewer.html` shows the models on their own (through the dev server). `tools/bake-moon.py` bakes NASA's Moon maps into `public/data/moon_*.jpg` and `tools/bake-rocket-sounds.py` cuts the rocket recordings in `public/audio/`.
+
+Shadows: the vehicle is handed to `world/sunshadow.js` as "the aircraft" (its shadow on the ground) and the pad as a caster of structures; three.js's own shadow map, widened to the stack, gives the vehicle's shadow on itself, and a second one does the same in the view from space.
 
 ### `tools/`: offline bakes (not part of the build)
 
 | File | What it is |
 |---|---|
-| `airfield-list.mjs` | The game's airfields, by hand |
-| `fetch-airfields.mjs` | Bakes each field's geometry from OpenStreetMap into `public/airfields/` and writes `src/world/airfield-index.js` |
+| `ac2glb.py` | Turns FlightGear aircraft (AC3D `.ac` files and the hinges in their model `.xml`) into the `.glb` files in `public/models/` (`CREDITS.md` there has the command for each) |
+| `airfield-list.mjs` | The game's detailed airfields, by hand |
+| `fetch-airfields.mjs` | Bakes each of those fields' geometry from OpenStreetMap into `public/airfields/` and writes `src/world/airfield-index.js` |
+| `bake-world-airfields.mjs` | Bakes the runways of the world's other large and medium airports from OurAirports into `public/data/world-airfields.json` |
 | `fetch-towns.mjs` | Bakes `public/data/towns.json` from OpenStreetMap and GeoNames |
+| `bake-climate.py` | Bakes the world's lowland moisture, `public/data/climate.bin`, from the satellite picture |
+| `bake-magvar.mjs` | Prints the World Magnetic Model's coefficients as `geo.js` carries them, and checks its evaluator against the model's test values |
 | `bake-facades.py` | Bakes the wall materials in `public/facades/` from ambientCG sets |
 | `bake-stars.py`, `bake-milkyway.py` | Bake the star catalogue and the Milky Way image in `public/data/` |
 

@@ -1537,8 +1537,18 @@ void main() { outColor = vec4(cloudShadowDepth(texelFetch(tPts, ivec2(gl_FragCoo
     this.quad.draw(r, this.compMat, this.hdrRT);
     perf.end();
 
+    // Leaving the atmosphere, the view from space (space/mission.js sets mixIn: { texture, f }) is faded in over this picture.
+    let hdr = this.hdrRT.textures[0];
+    if (this.mixIn && this.mixIn.f > 0) {
+      const w = this.hdrRT.width, h = this.hdrRT.height;
+      if (!this.mixRT || this.mixRT.width !== w || this.mixRT.height !== h) { this.mixRT?.dispose(); this.mixRT = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, depthBuffer: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter }); }
+      const mm = this.mixMat || (this.mixMat = fsMaterial('precision highp float; in vec2 vUv; out vec4 o; uniform sampler2D tA, tB; uniform float uMix; void main() { o = mix(texture(tA, vUv), texture(tB, vUv), uMix); }', { tA: { value: null }, tB: { value: null }, uMix: { value: 0 } }));
+      mm.uniforms.tA.value = hdr; mm.uniforms.tB.value = this.mixIn.texture; mm.uniforms.uMix.value = Math.min(this.mixIn.f, 1);
+      this.quad.draw(r, mm, this.mixRT);
+      hdr = this.mixRT.texture;
+    }
     this.post.flashExtra = this.uFlashScreen.value;
-    this.post.render(this.hdrRT.textures[0], camera, null, { depth: this.sceneRT.depthTexture, scene: this.sceneRT.texture, cloud: this.hdrRT.textures[1] });
+    this.post.render(hdr, camera, null, { depth: this.sceneRT.depthTexture, scene: this.sceneRT.texture, cloud: this.hdrRT.textures[1] });
 
     // Remember this camera for next frame's reprojection (rotation only; translation goes in uCamDelta).
     tmpM.copy(camera.matrixWorldInverse).setPosition(0, 0, 0);
