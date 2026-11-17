@@ -1163,6 +1163,17 @@ export class CloudRenderer {
     this.cellsBaked = -1;
     this.bakeCells();
     (ENV.tWxC || (ENV.tWxC = { value: null })).value = this.wxC;
+    // What the shaders read is not these maps themselves but a blend, made on the GPU each frame, from the maps as they
+    // were shown when the weather last finished a refresh toward the newest, as far as the weather has got with the next
+    // one (blendMaps). The clouds then change shape smoothly instead of in a step at every refresh, which shows most
+    // with the clock sped up. A change made at once (a new situation, the window moving) is shown at once.
+    const rt = (type) => new THREE.WebGLRenderTarget(N, N, { type, depthBuffer: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: false });
+    this.blend = [[this.wxA, 'tWxA', THREE.UnsignedByteType], [this.wxB, 'tWxB', THREE.UnsignedByteType], [this.wxC, 'tWxC', THREE.HalfFloatType]]
+      .map(([next, env, type]) => ({ next, env: ENV[env], rt: [rt(type), rt(type)], out: 0 }));
+    this.blendMat = fsMaterial(`precision highp float; uniform sampler2D tPrev, tNext; uniform float uT; out vec4 outColor;
+      void main() { ivec2 p = ivec2(gl_FragCoord.xy); outColor = mix(texelFetch(tPrev, p, 0), texelFetch(tNext, p, 0), uT); }`,
+      { tPrev: { value: null }, tNext: { value: null }, uT: { value: 0 } });
+    this.blendT = -1;
     const vol = (data, size) => {
       const t = new THREE.Data3DTexture(data, size, size, size);
       t.format = THREE.RGBAFormat; t.wrapS = t.wrapT = t.wrapR = THREE.RepeatWrapping;
@@ -1218,6 +1229,31 @@ export class CloudRenderer {
   defines() {
     const t = TIERS[this.tier];
     return { STEPS: t.steps, KC: t.kc.toFixed(3), LIGHT_STEPS: t.light, LIGHT_TIER: t.lightTier, LIGHT_NEAR: t.lightNear, LIGHT_SITE: t.lightSite, CELLS: this.cellsBaked > 0 ? 1 : 0, SKY_STEPS: t.sky, FAR_SHADOW: t.far, RAINBOW: t.bow, FOG: this.fogOn ? 1 : 0 };
+  }
+
+  /**
+   * Move the maps the shaders read (ENV.tWxA, tWxB, tWxC) on toward the newest: the share of the way is how far the
+   * weather has got with baking the next refresh, so the blend arrives just as that refresh does. When one arrives,
+   * what was being shown becomes the start of the next blend; when the weather was rebaked at once (Weather.snap), the
+   * newest maps are shown as they are.
+   */
+  blendMaps() {
+    const wx = this.weather, r = this.renderer, u = this.blendMat.uniforms;
+    if (wx.dirty) {
+      this.wxA.needsUpdate = true; this.wxB.needsUpdate = true; this.bakeCells();
+      for (const b of this.blend) b.out ^= 1;
+      wx.dirty = false;
+    } else if (!wx.snap && wx.row / WX_N === this.blendT) return;   // (nothing has moved: paused)
+    const snap = wx.snap || this.blendT < 0, t = snap ? 1 : wx.row / WX_N;
+    wx.snap = false; this.blendT = wx.row / WX_N;
+    const was = r.getRenderTarget();
+    for (const b of this.blend) {
+      const out = b.rt[b.out];
+      u.tPrev.value = snap ? b.next : b.rt[b.out ^ 1].texture; u.tNext.value = b.next; u.uT.value = t;
+      this.quad.draw(r, this.blendMat, out);
+      b.env.value = out.texture;
+    }
+    r.setRenderTarget(was);
   }
 
   /** Refresh the storm-cell map from the weather (cells drift, grow and die). */
@@ -1404,7 +1440,7 @@ void main() { outColor = vec4(cloudShadowDepth(texelFetch(tPts, ivec2(gl_FragCoo
 
   render(scene, camera) {
     const r = this.renderer, wx = this.weather, tier = TIERS[this.tier];
-    if (wx.dirty) { this.wxA.needsUpdate = true; this.wxB.needsUpdate = true; wx.dirty = false; this.bakeCells(); }
+    this.blendMaps();
     // Terrain cloud shadows read this; 138700 m is a common period of the scales they use.
     ENV.uCloudDrift.value.set(wx.drift.x % 138700, 0, wx.drift.z % 138700);
     const cu = this.cloudMat.uniforms, wrap = (u, s, k = 1) => u.value.set((wx.drift.x * k) % s, (wx.drift.z * k) % s);

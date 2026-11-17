@@ -57,7 +57,7 @@ const S = {
   mode: 'loading', paused: false, timeAccel: 1, view: 'chase', chartOpen: false, time: 0, busy: false, frost: 0, moving: false,
   flight: null, field: null,
   opts: { field: DEFAULT_FIELD, wx: 'fair', hour: 7.5, air: false, plane: 'c172', season: 'summer' },
-  settings: { sound: true, invert: false, quality: 'auto', autoTier: '', imagery: true, exposure: 1, fx: {}, wxOver: 0, resolution: 'auto' },   // wxOver: seconds a weather change takes (0 = at once); resolution: 'auto' (follows the frame rate) or 'fixed'
+  settings: { sound: true, invert: false, quality: 'auto', autoTier: '', imagery: true, exposure: 1, fx: {}, wxOver: 0, wxEvolve: true, resolution: 'auto' },   // wxOver: seconds a weather change takes (0 = at once); wxEvolve: the weather drifts into related situations by itself; resolution: 'auto' (follows the frame rate) or 'fixed'
 };
 try {
   const raw = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null');
@@ -320,6 +320,7 @@ function applySettings() {
   { const o = $('sQuality').querySelector('option[value="auto"]'), text = s.quality === 'auto' ? `Automatic (${TIER_NAMES[q]})` : 'Automatic'; if (o && o.textContent !== text) { o.textContent = text; syncPickers(); } }
   imagery.enabled = s.imagery;
   sound.setEnabled(s.sound);
+  weather.evolve = s.wxEvolve !== false;
   // The tier only when it changes: some of these redraw maps or rebuild materials (any toggle comes through here).
   if (q !== appliedTier) {
     appliedTier = q;
@@ -640,6 +641,10 @@ function setWeather(kind, seconds = S.settings.wxOver || 0) {
 // the change takes and the time of day, and read what the weather is doing where you are. Everything else,
 // the overrides, the effect sliders and the frame times, lives in the debug tools (the backquote key).
 
+// The time of year on the Weather panel's slider: the seasons' stages (SEASON_LIST) in calendar order, from January.
+const YEAR = ['winter', 'winter-late', 'spring-early', 'spring', 'spring-late', 'summer-early', 'summer', 'summer-late', 'fall-early', 'fall', 'fall-late', 'winter-early'];
+const SEASON_NAME = Object.fromEntries(SEASON_LIST);
+
 let wxChange = null;          // a weather change in progress: { to, secs, left, flight }. The panel keeps its own clock for it.
 const wxKind = () => (wxChange ? wxChange.to : SITUATIONS[weather.kind] ? weather.kind : S.opts.wx);
 
@@ -670,15 +675,19 @@ function syncWeatherPanel() {
   const kind = wxKind(), over = S.settings.wxOver || 0;
   for (const b of $('wxPresets').children) { const on = b.dataset.kind === kind; b.classList.toggle('on', on); b.setAttribute('aria-checked', on); }
   for (const b of $('wxOver').children) { const on = +b.dataset.secs === over; b.classList.toggle('on', on); b.setAttribute('aria-checked', on); }
+  for (const b of $('wxEvolve').children) { const on = b.dataset.on === (S.settings.wxEvolve !== false ? '1' : '0'); b.classList.toggle('on', on); b.setAttribute('aria-checked', on); }
   $('wxBlurb').textContent = SITUATIONS[kind]?.blurb || '';
   $('wxProgress').hidden = !wxChange;
-  $('wHour').value = weather.hour; $('wCover').value = weather.ctl.cover; $('wPrecip').value = weather.ctl.precip;
+  $('wHour').value = weather.hour; $('wCover').value = weather.ctl.cover; $('wPrecip').value = weather.ctl.precip; $('wLift').value = Math.round(weather.ctl.lift / 0.3048 / 250) * 250;
+  $('wSeason').value = Math.max(0, YEAR.indexOf(S.opts.season));
   $('wVis').value = Math.round(weather.haze / 1000); $('wTemp').value = weather.tAnom;
   $('wWindOn').checked = !!weather.ctl.wind;
   labelWeatherPanel();
 }
 function labelWeatherPanel() {
   $('wHourV').textContent = fmtHour(+$('wHour').value); $('wCoverV').textContent = `${Math.round($('wCover').value * 100)}%`;
+  $('wSeasonV').textContent = SEASON_NAME[YEAR[+$('wSeason').value]];
+  { const f = +$('wLift').value; $('wLiftV').textContent = f ? `${f > 0 ? '+' : '−'}${Math.abs(f).toLocaleString('en-US')} ft` : 'as the weather has it'; }
   $('wPrecipV').textContent = `${Math.round($('wPrecip').value * 100)}%`; $('wVisV').textContent = visibilityWords($('wVis').value * 1000);
   $('wTempV').textContent = `${$('wTemp').value > 0 ? '+' : ''}${Math.round($('wTemp').value * 1.8)}°F`;
   $('wWindV').textContent = $('wWindOn').checked ? `${String($('wDir').value).padStart(3, '0')}° / ${$('wSpd').value} kt` : 'from the weather';
@@ -689,12 +698,23 @@ function bindWeatherPanel() {
   $('wxPresets').innerHTML = Object.entries(SITUATIONS).map(([k, v]) => `<button role="radio" data-kind="${k}">${v.title}</button>`).join('');
   $('wxPresets').addEventListener('click', (e) => { const k = e.target.closest('button')?.dataset.kind; if (k) chooseWeather(k); });
   $('wxOver').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { S.settings.wxOver = +b.dataset.secs; persist(); syncWeatherPanel(); } });
+  $('wxEvolve').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { S.settings.wxEvolve = b.dataset.on === '1'; weather.evolve = S.settings.wxEvolve; persist(); syncWeatherPanel(); } });
   let bakeT = 0;
   const rebake = () => { clearTimeout(bakeT); bakeT = setTimeout(() => { weather.bakeAll(); clouds.resetHistory?.(); }, 120); };
   $('wHour').addEventListener('input', () => { weather.hour = +$('wHour').value; labelWeatherPanel(); rebake(); });
+  // The time of year, live: the climate maps, the leaves and snow, the sun's path and the weather's temperatures follow it.
+  let seasonT = 0;
+  $('wSeason').addEventListener('input', () => {
+    labelWeatherPanel(); clearTimeout(seasonT);
+    seasonT = setTimeout(() => {
+      S.opts.season = YEAR[+$('wSeason').value]; applySeason(); persist(); clouds.resetHistory?.();
+      for (const p of ['o', 'p']) $(p + 'Season').value = S.opts.season;
+      syncPickers();
+    }, 200);
+  });
   // Debug overrides.
   const apply = () => {
-    weather.ctl.cover = +$('wCover').value; weather.ctl.precip = +$('wPrecip').value;
+    weather.ctl.cover = +$('wCover').value; weather.ctl.precip = +$('wPrecip').value; weather.ctl.lift = +$('wLift').value * 0.3048;
     weather.haze = +$('wVis').value * 1000; weather.tAnom = +$('wTemp').value;
     if ($('wWindOn').checked) {
       // Direction is where the wind comes from; the vector is where the air goes.
@@ -703,7 +723,7 @@ function bindWeatherPanel() {
     } else weather.ctl.wind = null;
     labelWeatherPanel(); rebake();
   };
-  for (const id of ['wCover', 'wPrecip', 'wVis', 'wTemp', 'wDir', 'wSpd', 'wWindOn']) $(id).addEventListener('input', apply);
+  for (const id of ['wCover', 'wPrecip', 'wLift', 'wVis', 'wTemp', 'wDir', 'wSpd', 'wWindOn']) $(id).addEventListener('input', apply);
   $('wStrike').addEventListener('click', () => {
     const h = ac.heading * D2R, d = 2500 + Math.random() * 3500, a = h + (Math.random() - 0.5) * 1.2;
     weather.flashes.push({ x: ac.pos.x + Math.sin(a) * d, z: ac.pos.z - Math.cos(a) * d, y: Math.max(wx.col?.base || 1200, ac.pos.y - 300), ground: true });
@@ -912,7 +932,10 @@ function updateHud(dt) {
   let nav = null;
   if (chart.pin) { const p = toWorld(chart.pin.lat, chart.pin.lon); nav = { x: p.x, z: p.z, label: chart.pin.field || 'Pin' }; }
   panel.update(dt, { ac, wx, ap, accel: S.timeAccel, magVar: REGION.magVar, hour: weather.hour, flight: S.flight, running: !S.paused && !S.busy, pit, nav });
-  if (weather.trans && !wxChange) wxChange = { to: weather.kind, secs: weather.trans.seconds, left: weather.trans.remaining, flight: S.flight };   // a change started elsewhere (debug handle, evolving weather)
+  if (weather.trans && !wxChange) {   // a change started elsewhere (debug handle, the weather developing on its own)
+    wxChange = { to: weather.kind, secs: weather.trans.seconds, left: weather.trans.remaining, flight: S.flight };
+    if (!$('wxPanel').hidden) syncWeatherPanel();
+  }
   if (wxChange && !S.paused) {
     wxChange.left = weather.trans ? weather.trans.remaining : wxChange.left - dt * S.timeAccel;        // the weather model's own clock when it has one
     if (wxChange.left <= 0 || wxChange.flight !== S.flight || (weather.transitionTo && !weather.trans)) { wxChange = null; syncWeatherPanel(); }

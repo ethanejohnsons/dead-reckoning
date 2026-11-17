@@ -11,6 +11,7 @@ import { REGION } from '../world/geo.js';
 import { makeSimplex2, fbm, clamp, lerp, smoothstep, mulberry32 } from '../core/noise.js';
 import { baseHeight, moisture, seaLevelTemp, WORLD_HALF, LAND_HALF } from '../world/terrain.js';
 import { makeCloudNoise, sampleNoise } from './cloudnoise.js';
+import { Moisture } from './moisture.js';
 
 export const WX_N = 256;
 export const TEX_ALT = 12800;
@@ -83,6 +84,14 @@ export const EVOLUTION = {
   blizzard: ['snow', 'lakeeffect'], lakeeffect: ['snow', 'blizzard', 'overcast'], icestorm: ['rain', 'snow', 'overcast'], derecho: ['rain', 'scattered'], heat: ['scattered', 'storms', 'derecho', 'fair'],
   chinook: ['gale', 'fair', 'clear'], virga: ['scattered', 'fair'],
 };
+// When a situation can develop on its own (evolve): fog forms in the night and early morning, storms build from midday
+// through the evening. A situation not listed can come at any hour.
+const AFTERNOON = (h) => h >= 12 && h < 21;
+const WHEN = { fog: (h) => h >= 20 || h < 8, heat: (h) => h >= 10 && h < 19, storms: AFTERNOON, scattered: AFTERNOON, hail: AFTERNOON, derecho: AFTERNOON, monsoon: (h) => h >= 11 };
+// A low's life (p: its age as a share of its life): it deepens to its deepest a third of the way through, then fills
+// (its pressure, and so its wind, falls back toward half), and as it ages its cold front wraps further round it (occludes).
+const lowDepth = (p) => (p < 0.35 ? lerp(0.8, 1, smoothstep(0, 0.35, p)) : lerp(1, 0.45, smoothstep(0.35, 1, p)));
+const occlusion = (p) => 0.35 * smoothstep(0.45, 1, p);
 // Air-mass numbers a transition carries from the old situation to the new (haze goes the same way, as extinction).
 const AIR = ['tAnom', 'humidity', 'cirrus', 'flowX', 'flowZ', 'gust', 'blowing', 'invDT', 'invH', 'invD', 'hazeCap', 'hazeTop', 'dry'];
 const ease = (t) => smoothstep(0, 1, t);
@@ -137,7 +146,7 @@ export class Weather {
     this.dry = 0;                                        // dryness of the air under the cloud (0..1): rain evaporates on the way down (virga)
     this.wet = 0; this.snowpack = 0;                     // the ground around the aircraft: wetness, and snow lying on it (0..1)
     this.trans = null;                                   // the transition under way: { from, to, seconds, t, progress, remaining }
-    this.evolve = false; this.evolveEvery = 900; this.evolveOver = 900;   // slow drift between related situations: on/off, seconds settled, seconds changing
+    this.evolve = false; this.evolveEvery = 2400; this.evolveOver = 900;   // slow drift between related situations: on/off, seconds settled, seconds changing
     this.at = { x: 0, z: 0, hx: 0, hz: -1, rx: 0, rz: 0 };   // where the aircraft was last sampled, and which way it was going
     this.hemi = 0;                                       // +1 north of the equator, -1 south (read from REGION when a situation is staged)
     this.cellAreas = [];
@@ -149,12 +158,13 @@ export class Weather {
     // Coarse terrain, moisture and sea-level temperature grids (2 km).
     const N = WX_N, H = WORLD_HALF;
     this.terr = new Float32Array(N * N); this.moist = new Float32Array(N * N); this.tsea = new Float32Array(N * N);
+    this.mo = new Moisture(N);           // the moisture the wind carries (moisture.js)
     this.readTerrain();
     // Wind grid (16 km) refreshed every bake, used for terrain-forced cloud.
     this.WG = 33; this.windGrid = new Float32Array(this.WG * this.WG * 2);
     this.A = new Uint8Array(N * N * 4); this.B = new Uint8Array(N * N * 4);
     this.A2 = new Uint8Array(N * N * 4); this.B2 = new Uint8Array(N * N * 4);
-    this.row = 0; this.dirty = false;
+    this.row = 0; this.dirty = false; this.snap = false;   // (dirty: a refresh of the map is complete; snap: show it at once, see CloudRenderer.blendMaps)
     // How much of each texel's cover has been there long enough to be grown cloud (see FORM_TIME), and when each row
     // was last baked. What is more than that is cloud still forming: the renderer draws it thin and wispy.
     this.M = new Float32Array(N * N); this.rowT = new Float64Array(N); this.mature = true;
@@ -182,6 +192,7 @@ export class Weather {
       this.terr[k] = Math.max(0, baseHeight(x, z));
       this.moist[k] = moisture(x, z); this.tsea[k] = seaLevelTemp(x, z);
     }
+    this.mo.readSurface();
   }
 
   /**
@@ -202,6 +213,7 @@ export class Weather {
       const si = i - di, sj = j - dj;
       this.M[j * N + i] = si >= 0 && si < N && sj >= 0 && sj < N ? M[sj * N + si] : 1;
     }
+    this.mo.shift(di, dj);
     this.org.x += dx; this.org.z += dz;
     this.drift.x -= dx; this.drift.z -= dz;             // the noise is read at position + drift
   }
@@ -219,7 +231,7 @@ export class Weather {
   setup(kind, route, hour, seed = 1) {
     this.kind = kind; this.hour = hour; this.time = 0;
     this.flashes = []; this.trans = null;
-    this.ctl = { cover: 1, precip: 1, wind: null };   // live overrides from the debug panel
+    this.ctl = { cover: 1, precip: 1, wind: null, lift: this.ctl?.lift || 0 };   // live overrides from the debug panel (lift: m the cloud is raised, kept across situations)
     const d = this._stage(kind, route, seed);
     for (const k of STATE) this[k] = d[k];
     this._dwell = 0; this._dwellFor = this.evolveEvery * (0.6 + 0.8 * this.rng());
@@ -262,7 +274,9 @@ export class Weather {
     const dist = Math.hypot(r.bx - r.ax, r.bz - r.az);
     const eta = dist / 72;                                       // seconds to fly the route
     const low = (x, z, amp, sig, vx, vz, fronts = true) => {
-      const l = { x, z, amp, sig, vx, vz, fronts, trough: fronts ? 3 : 0, thC: -115 * D2R, thW: -12 * D2R, curlC: -0.3, curlW: -0.25, s: 1, hs: 1 };
+      const l = { x, z, amp, sig, vx, vz, fronts, trough: fronts ? 3 : 0, thC: -115 * D2R, thW: -12 * D2R, curlC: -0.3, curlW: -0.25, s: 1, hs: 1,
+        life: 21600 + R() * 10800, p0: 0.45 };                    // (staged near its deepest, already filling: see lowDepth)
+      l.age = l.p0 * l.life;
       this.lows.push(l); return l;
     };
     const high = (x, z, amp, sig, vx = 3, vz = 0) => this.highs.push({ x, z, amp, sig, vx, vz, s: 1 });
@@ -441,10 +455,15 @@ export class Weather {
     }
   }
 
+  /** A storm cell for area `a`, at the most humid of a few places in it (`phase`: how far through its life it starts). */
   spawnCell(a, phase = 0) {
     const R = this.rng;
-    const ang = R() * Math.PI * 2, rad = Math.sqrt(R()) * a.r;
-    const c = { area: a, x: a.x + Math.cos(ang) * rad, z: a.z + Math.sin(ang) * rad,
+    let x = a.x, z = a.z, best = -1e9;
+    for (let n = 0; n < 3; n++) {
+      const ang = R() * Math.PI * 2, rad = Math.sqrt(R()) * a.r, cx = a.x + Math.cos(ang) * rad, cz = a.z + Math.sin(ang) * rad, q = this.moistureAt(cx, cz);
+      if (q > best) { best = q; x = cx; z = cz; }
+    }
+    const c = { area: a, x, z,
       r: 5200 + R() * 4200, life: 2000 + R() * 1400, age: 0, vx: 0, vz: 0, flashT: 2 + R() * 6, rate: 1 };
     if (a.cap) { c.cap = a.cap; c.r *= 0.55; phase *= a.cap / 0.7; }   // an area of towers that never mature
     c.age = phase * c.life;
@@ -501,6 +520,7 @@ export class Weather {
     for (const l of d.lows) {
       const sl = along(l, d.flowX, d.flowZ, l.fronts ? 150e3 : 0.5 * l.sig);
       l.x -= sl[0] + l.vx * seconds; l.z -= sl[1] + l.vz * seconds; l.s = 0;
+      if (l.life) l.age = 0.15 * l.life;                          // (a low on its way in is young, and deepens as it comes)
       this.lows.push(l); tw(l, this.lows, 0.2, 1, { s: 1 }, { slide: sl });
     }
     for (const h of d.highs) {
@@ -575,9 +595,9 @@ export class Weather {
   /** With `evolve` on: after a settled spell, drift into one of the situations this one tends to turn into. */
   _drift(dt) {
     if ((this._dwell += dt) < this._dwellFor) return;
-    const next = EVOLUTION[this.kind];
+    const all = EVOLUTION[this.kind], h = this.hour, next = all && all.filter((k) => !WHEN[k] || WHEN[k](h));
     this._dwell = 0;
-    if (!next || !next.length) return;
+    if (!next || !next.length) { this._dwell = 0.8 * this._dwellFor; return; }   // (nothing it turns into comes at this hour: look again in a while)
     const a = this.at, far = 100000;
     this.transitionTo(next[Math.floor(this.rng() * next.length) % next.length], { ax: a.x, az: a.z, bx: a.x + a.hx * far, bz: a.z + a.hz * far }, this.evolveOver * (0.7 + 0.6 * this.rng()));
   }
@@ -605,12 +625,92 @@ export class Weather {
     if (ENV.uWet) ENV.uWet.value = this.wet;
   }
 
+  /** A low ages (lowDepth, occlusion). Its depth and its cold front's curl as staged are taken as those at age p0. */
+  _ageLow(l, dt) {
+    if (l.amp0 == null) { l.amp0 = l.amp; l.curl0 = l.curlC; }
+    l.age = Math.min(l.age + dt, l.life);
+    const p = l.age / l.life;
+    l.amp = (l.amp0 * lowDepth(p)) / lowDepth(l.p0);
+    l.curlC = l.curl0 - l.hs * (occlusion(p) - occlusion(l.p0));
+  }
+
+  /** The moisture of the air over a point: the air mass's own and what the wind and the ground have made of it (moisture.js). */
+  moistureAt(x, z) {
+    return this.humidity * (0.55 + 0.75 * this.grid(this.moist, x, z)) * (this.grid(this.terr, x, z) > 1 ? 1 : 0.55) + this.mo.at(x, z);
+  }
+
+  /**
+   * Storms that build on their own in the heat of the day, whatever the situation: now and then, somewhere around the
+   * aircraft (8 to 53 km off) where the air is warm and humid and the sun reaches the ground, a cumulus tower climbs and
+   * subsides again or, in very humid air in the afternoon, grows into a storm cell. They drift with the wind.
+   */
+  _convect(dt) {
+    if ((this._popT = (this._popT ?? 20) - dt) > 0) return;
+    const R = this.rng, heat = this.heat();
+    this._popT = 30 + 20 * R();
+    if (heat < 0.25) return;
+    let n = 0;
+    for (const c of this.cells) if (c.popup) n++;
+    if (n >= 6) return;
+    const a = this.at, o = this._pc || (this._pc = {});
+    let best = null, score = 0;
+    for (let t = 0; t < 3; t++) {
+      const ang = R() * 6.283, d = 8e3 + R() * 45e3, x = a.x + Math.cos(ang) * d, z = a.z + Math.sin(ang) * d, terr = this.grid(this.terr, x, z);
+      if (terr <= 1) continue;                                                       // (not over the water: it is cooler than the land by day)
+      const q = this.moistureAt(x, z), T = this.grid(this.tsea, x, z) + this.tAnom - 0.0065 * terr;
+      this.column(x, z, o);
+      if (o.cell > 0.05 || o.line > 0.05) continue;
+      const s = heat * smoothstep(0.42, 0.85, q) * smoothstep(8, 20, T) * (1 - smoothstep(0.55, 0.95, o.cov)) * (1 - o.fog);
+      if (s > score) { score = s; best = { x, z, q, base: o.cuBase }; }
+    }
+    if (!best || R() > score) return;
+    const deep = best.q > 0.62 && heat > 0.55 && R() < 0.15 + 0.6 * smoothstep(0.62, 1.0, best.q);
+    const c = { area: null, popup: true, x: best.x, z: best.z, r: deep ? 4500 + R() * 3000 : 2900 + R() * 2300, life: deep ? 2600 + R() * 1200 : 1800 + R() * 900,
+      age: 0, vx: 0, vz: 0, flashT: 2 + R() * 6, rate: 1, base: Math.max(820, best.base) };
+    if (!deep) c.cap = 0.2;
+    this.cells.push(c);
+  }
+
+  /**
+   * Radiation fog. On a clear night with little wind the ground cools and the air over it, in the hollows and valleys where
+   * the moist ground is, fills with fog (up to three banks around the aircraft), which thickens over the small hours and
+   * burns off in the morning (fogAmount). Fog that is not the lasting kind is gone by midday; a bank far behind is dropped.
+   */
+  _nightFog(dt) {
+    for (let i = this.fogs.length - 1; i >= 0; i--) {
+      const f = this.fogs[i], h = this.hour;
+      if (f.tw) continue;
+      if (f.auto && f.s < 1 && (h >= 20 || h < 8.5)) f.s = Math.min(1, f.s + dt / 2400);
+      if ((!f.persist && h >= 11.5 && h < 14) || (f.auto && Math.hypot(f.x - this.at.x, f.z - this.at.z) > 90e3)) this.fogs.splice(i, 1);   // (or left far behind)
+    }
+    if ((this._fogT = (this._fogT ?? 30) - dt) > 0) return;
+    const R = this.rng, h = this.hour;
+    this._fogT = 50 + 30 * R();
+    if (!(h >= 21 || h < 6.5)) return;
+    let n = 0;
+    for (const f of this.fogs) if (f.auto) n++;
+    if (n >= 3) return;
+    const a = this.at, ang = R() * 6.283, d = 4e3 + R() * 36e3, x = a.x + Math.cos(ang) * d, z = a.z + Math.sin(ang) * d, terr = this.grid(this.terr, x, z);
+    if (terr <= 1 || this.mo.at(x, z, this.mo.water) > 0.5) return;                // (on land)
+    let around = 0;
+    for (const [ox, oz] of [[6000, 0], [-6000, 0], [0, 6000], [0, -6000]]) around += this.grid(this.terr, x + ox, z + oz) / 4;
+    if (terr > around - 10) return;                                                  // (a hollow: the cold air drains into it)
+    const W = this.wind(x, z, terr + 10, terr, this._fw || (this._fw = { x: 0, z: 0 }));
+    if (Math.hypot(W.x, W.z) > 3.5) return;
+    const o = this._pc || (this._pc = {});
+    this.column(x, z, o);
+    if (o.cov - o.fog > 0.35) return;                                                // (under cloud the ground does not cool)
+    const q = this.moistureAt(x, z);
+    if (this.grid(this.moist, x, z) < 0.3 || R() > smoothstep(0.2, 0.55, q)) return;
+    this.fogs.push({ x, z, r: 5000 + R() * 9000, top: terr + 90 + R() * 160, persist: false, auto: true, s: 0 });
+  }
+
   // ---------------------------------------------------------------- dynamics
 
   update(dt) {
     this.time += dt; this.hour = (this.hour + dt / 3600) % 24;
     if (this.trans) this._step(dt); else if (this.evolve) this._drift(dt);
-    for (const s of this.lows) { s.x += s.vx * dt; s.z += s.vz * dt; }
+    for (const s of this.lows) { s.x += s.vx * dt; s.z += s.vz * dt; if (s.life) this._ageLow(s, dt); }
     for (const s of this.highs) { s.x += s.vx * dt; s.z += s.vz * dt; }
     for (const q of this.lines) { q.x += q.nx * q.speed * dt; q.z += q.nz * q.speed * dt; }
     const W = this._w || (this._w = { x: 0, z: 0 });
@@ -624,9 +724,10 @@ export class Weather {
       c.x += c.vx * dt; c.z += c.vz * dt;
       const ph = c.age / c.life;
       if (ph >= 1 || (c.age <= 0 && c.rate < 0)) {
-        // Gone, with nothing left of it to see. One that belongs to an area is replaced somewhere else in it; one placed
-        // by hand builds again where it stands (from nothing: it used to reappear mature).
-        if (c.out || c.area) { this.cells.splice(i, 1); if (!c.out && !c.area.off) this.spawnCell(c.area, 0); continue; }
+        // Gone, with nothing left of it to see. One that belongs to an area is replaced somewhere else in it, in a while
+        // (sooner in the heat of the afternoon); one that built up on its own is gone; one placed by hand builds again
+        // where it stands (from nothing: it used to reappear mature).
+        if (c.out || c.area || c.popup) { this.cells.splice(i, 1); if (c.area && !c.out && !c.area.off) c.area.owed = (c.area.owed || 0) + 1; continue; }
         c.age = 0; c.rate = 1;
         continue;
       }
@@ -640,6 +741,9 @@ export class Weather {
         }
       }
     }
+    const heat = this.heat();
+    for (const a of this.cellAreas) if (a.owed > 0 && !a.off && this.rng() < (dt * (0.2 + 0.8 * heat)) / 90) { a.owed--; this.spawnCell(a, 0); }
+    this._convect(dt); this._nightFog(dt);
     // Squall-line lightning along active cold fronts.
     for (const l of this.lows) {
       if (!l.fronts || l.s < 0.3) continue;
@@ -714,6 +818,16 @@ export class Weather {
     const a = this.hemi * (1 - f) * 0.42, cs = Math.cos(a), sn = Math.sin(a);
     out.x = (wx * cs + wz * sn) * sp; out.z = (-wx * sn + wz * cs) * sp;
     if (this.ctl.wind) return out;
+    // The sea breeze: on a sunny afternoon with little wind of its own, the low air near big water blows in off it,
+    // strongest at the shore and dying out some 40 km inland, where it meets the land's air (and lifts it: moisture.js).
+    const heat = agl < 1200 ? this.heat() : 0;
+    if (heat > 0) {
+      const sh = this.mo.shoreAt(x, z);
+      if (sh) {
+        const v = 4.5 * heat * (1 - smoothstep(5, 12, Math.hypot(wx, wz))) * Math.exp(-Math.pow((sh.d - 3000) / 22e3, 2)) * (1 - smoothstep(400, 1200, agl));
+        out.x += sh.nx * v; out.z += sh.nz * v;
+      }
+    }
     // A squall line's own wind: a light draw in toward it ahead, and behind its gust front the cold outflow, about as fast as
     // the line itself moves, strongest in the lowest kilometer and dying away under the trailing rain.
     for (const q of this.lines) {
@@ -761,16 +875,16 @@ export class Weather {
     const n = fbm(this.cu, (x + this.drift.x * 0.5) / 46e3, (z + this.drift.z * 0.5) / 46e3, 2);
     const n2 = this.cu((x - this.org.x) / 17e3 + 40, (z - this.org.z) / 17e3 - 9);
 
-    let sub = 0;
-    for (const h of this.highs) { const dx = x - h.x, dz = z - h.z; sub += h.s * Math.exp(-(dx * dx + dz * dz) / (2 * h.sig * h.sig)); }
-    sub = Math.min(sub, 1);
+    const sub = this.subsidence(x, z);
 
-    // Fair-weather cumulus field, deeper where the air is humid.
-    const hum = this.humidity * (0.55 + 0.75 * moist) * (terr > 1 ? 1 : 0.55);
-    let cu = smoothstep(-0.15, 0.55, n) * hum * diurnal * (1 - 0.45 * sub) * 0.9;
+    // Fair-weather cumulus field, deeper where the air is humid: the air mass's own moisture, and what the wind has
+    // brought or the ground has done to it (moisture.js).
+    const wet = this.mo.at(x, z), eq = this.humidity * (0.55 + 0.75 * moist) * (terr > 1 ? 1 : 0.55), hum = Math.max(0, eq + wet);
+    const humA = clamp(this.humidity + 0.6 * wet, 0, 1);                 // (the air mass's humidity as the wind has changed it)
+    let cu = smoothstep(-0.15, 0.55, n) * Math.min(hum, 1.1) * diurnal * (1 - 0.45 * sub) * 0.9;
     const cuBase = 950 + 1250 * (1 - moist) + 150 * smoothstep(0, 2, this.tAnom) + 0.5 * terr;   // bases sit higher over the inland basins
     out.cu = cu; out.cuBase = cuBase;
-    let cuTop = cuBase + 500 + 2300 * this.humidity * this.humidity * smoothstep(-0.2, 0.7, n2 + n * 0.5) * diurnal;
+    let cuTop = cuBase + 500 + 2300 * humA * humA * smoothstep(-0.2, 0.7, n2 + n * 0.5) * diurnal;
 
     for (const l of this.lows) {
       const g = this.fronts(l, x, z);
@@ -804,7 +918,7 @@ export class Weather {
       const s = smoothstep(0, 0.25, ph) * (1 - smoothstep(0.8, 1, ph));
       const mature = smoothstep(0.2, 0.35, ph) * (1 - smoothstep(0.82, 1, ph));
       const cov = s * (1 - smoothstep(0.7 * c.r, 1.45 * c.r, d));
-      const cb = c.base || 820;                                       // hand-placed cells sit clear of the local ground
+      const cb = this.cellBase(c);                                    // hand-placed cells sit clear of the local ground
       add(cov, cb, cb + 2980 + 7600 * smoothstep(0, 0.42, ph), 1, mature * (1 - smoothstep(0.3 * c.r, 0.95 * c.r, d)));
       cellS = Math.max(cellS, cov);
       const ax = dx - c.vx * 90, az = dz - c.vz * 90;                // anvil streams downwind
@@ -838,13 +952,19 @@ export class Weather {
       bandS = Math.max(bandS, cov);
     }
 
-    // Terrain forcing: upslope flow builds cloud on windward slopes, lee slopes dry out.
-    const U = this.upslope(x, z);
+    // Air brought to saturation: where it is forced up a windward slope, has crossed a lake under cold air, or rises at
+    // the sea-breeze front, it holds more than the air mass does, and makes cloud of its own that drifts on with the wind
+    // and dissolves as it dries (moisture.js); the lee slopes and the air under a high are dry, and the cumulus thin there.
     // (In the lee of a range under a chinook the air is sinking and dry: no cloud forms on the foothills there.)
     let lee = 0;
     for (const A of this.arches) { const d = (x - A.x) * A.nx + (z - A.z) * A.nz; lee = Math.max(lee, A.s * smoothstep(-A.slot - 6000, -A.slot + 6000, d) * (1 - smoothstep(120e3, 200e3, d))); }
-    if (U > 0.25 && terr > 150 && lee < 0.999) add((1 - lee) * smoothstep(0.25, 1.6, U) * (0.35 + 0.6 * moist) * Math.min(1, this.humidity * 1.6 + 0.2), Math.max(800, terr * 0.55), terr + 1300, 0.3, smoothstep(1.2, 2.6, U) * 0.35 * moist);
-    if (U < 0) cu *= 1 - 0.75 * smoothstep(0.2, 1.4, -U);
+    const sat = (1 - lee) * smoothstep(0.12, 0.5, wet) * smoothstep(0.62, 0.98, hum);
+    if (sat > 0.003) {
+      const chill = smoothstep(2, -10, this.grid(this.tsea, x, z) + this.tAnom);   // over-water air this cold makes towering lake-effect showers
+      // (over the lowlands a line of cumulus at the usual base; on the mountains a cap down over the summits)
+      const lift = smoothstep(0.3, 0.9, wet), hill = smoothstep(300, 1200, terr), top = Math.max(terr, 0) + 1300 + (1100 + 1700 * chill) * lift;
+      add(sat * (0.75 + 0.25 * moist), Math.max(650, lerp(cuBase, terr * 0.55, hill)), top, clamp(lerp(0.55, 0.3, hill) + 0.45 * chill * lift, 0, 1), smoothstep(0.95, 1.3, hum) * (0.35 + 0.35 * chill));
+    }
 
     // The lee of a range in a strong flow: the sinking air leaves a clear slot along the foot of the mountains, lens
     // clouds stand in the crests of the wave downwind, and beyond the slot the high cloud begins at a hard edge (the arch).
@@ -880,7 +1000,7 @@ export class Weather {
     for (const f of this.fogs) {
       const d = Math.hypot(x - f.x, z - f.z);
       if (d > f.r * 1.3) continue;
-      const burn = (f.s ?? 1) * (f.persist ? 1 : 1 - smoothstep(8.5, 11.5, hr));   // (f.s: a bank forming or burning off during a transition)
+      const burn = this.fogAmount(f);
       const s = burn * (1 - smoothstep(0.65 * f.r, f.r * (1.05 + 0.2 * n2), d));
       if (s > 0.01 && terr < f.top) {
         // Fog hugs the surface: it wins the blend outright where present.
@@ -893,6 +1013,9 @@ export class Weather {
     out.cov = cov;
     if (ws > 0.001) { out.base = wb / ws; out.top = Math.max(wt / ws, out.base + 120); out.conv = clamp(wc / ws, 0, 1); }
     else { out.base = 1200; out.top = 2000; out.conv = 0.5; }
+    // The debug panel's cloud height: every cloud raised or lowered (not the fog, which lies on the ground).
+    const lift = this.ctl.lift * (1 - fogS);
+    if (lift) { out.base = Math.max(out.base + lift, 30); out.top = Math.max(out.top + lift, out.base + 120); out.cuBase = Math.max(out.cuBase + lift, 30); }
     out.precip = clamp(precip * this.ctl.precip, 0, 1) * smoothstep(0.05, 0.4, cov);
     out.cirrus = clamp(cirrus, 0, 1);
     out.front = front; out.cell = cellS; out.fog = fogS; out.cold = cold; out.warm = warm;
@@ -903,15 +1026,24 @@ export class Weather {
     return out;
   }
 
-  /** Vertical air speed forced at the surface by wind blowing over sloping terrain. */
-  upslope(x, z) {
+  /** The wind that carries the weather along (m/s at 1500 m, from the wind grid refreshed every bake). */
+  steer(x, z, out) {
     const G = this.WG, H = WORLD_HALF;
     const fx = clamp(((x + H) / (2 * H)) * (G - 1), 0, G - 1.001), fz = clamp(((z + H) / (2 * H)) * (G - 1), 0, G - 1.001);
     const i = fx | 0, j = fz | 0, u = fx - i, v = fz - j, k = (j * G + i) * 2, g = this.windGrid;
-    const wx = (g[k] * (1 - u) + g[k + 2] * u) * (1 - v) + (g[k + G * 2] * (1 - u) + g[k + G * 2 + 2] * u) * v;
-    const wz = (g[k + 1] * (1 - u) + g[k + 3] * u) * (1 - v) + (g[k + G * 2 + 1] * (1 - u) + g[k + G * 2 + 3] * u) * v;
-    return this.slopeFlow(x, z, wx, wz);
+    out.x = (g[k] * (1 - u) + g[k + 2] * u) * (1 - v) + (g[k + G * 2] * (1 - u) + g[k + G * 2 + 2] * u) * v;
+    out.z = (g[k + 1] * (1 - u) + g[k + 3] * u) * (1 - v) + (g[k + G * 2 + 1] * (1 - u) + g[k + G * 2 + 3] * u) * v;
+    return out;
   }
+  /** How much the air over a point is sinking under the highs (0..1). */
+  subsidence(x, z) {
+    let sub = 0;
+    for (const h of this.highs) { const dx = x - h.x, dz = z - h.z; sub += h.s * Math.exp(-(dx * dx + dz * dz) / (2 * h.sig * h.sig)); }
+    return Math.min(sub, 1);
+  }
+  /** The afternoon's heating of the ground (0..1): nothing before 9, most at 15, nothing after 21. */
+  heat() { return clamp(Math.sin((Math.PI * (this.hour - 9)) / 12), 0, 1); }
+  /** Vertical air speed forced at the surface by wind (wx, wz) blowing over sloping terrain. */
   slopeFlow(x, z, wx, wz) {
     const e = 3000;
     const gx = (this.grid(this.terr, x + e, z) - this.grid(this.terr, x - e, z)) / (2 * e);
@@ -936,6 +1068,7 @@ export class Weather {
       const j = this.row, z = ((j + 0.5) / N) * 2 * H - H;
       const grow = this.mature ? 1 : 1 - Math.exp(-Math.max(this.time - this.rowT[j], 0) / FORM_TIME);
       this.rowT[j] = this.time;
+      this.mo.stepRow(this, j, this.time);
       for (let i = 0; i < N; i++) {
         const x = ((i + 0.5) / N) * 2 * H - H, o = (j * N + i) * 4, k = j * N + i;
         this.column(x, z, c);
@@ -948,12 +1081,13 @@ export class Weather {
       }
     }
     if (this.row >= N) {
-      this.A.set(this.A2); this.B.set(this.B2);
+      this.A.set(this.A2); this.B.set(this.B2); this.mo.swap();
       this.row = 0; this.dirty = true; this.refreshWindGrid();
     }
   }
   bakeSome(rows) { this.bakeRows(rows); }
-  bakeAll() { this.refreshWindGrid(); this.row = 0; this.bakeRows(WX_N); }
+  /** Bake the whole map now; the renderer shows it at once instead of blending toward it (snap). */
+  bakeAll() { this.refreshWindGrid(); if (this.mature) this.mo.spinUp(this); this.row = 0; this.bakeRows(WX_N); this.snap = true; }
 
   // ---------------------------------------------------------------- point sample for the flight model
 
@@ -975,11 +1109,14 @@ export class Weather {
       const d = Math.hypot(dx, dz), da = anvilDist(dx, dz, sx, sz), m = Math.min(d, da);
       if (d < rho) rho = d;
       if (da < rhoA) rhoA = da;
-      if (m < best) { best = m; ph = c.age / c.life; base = c.base || 820; }
+      if (m < best) { best = m; ph = c.age / c.life; base = this.cellBase(c); }
     }
     o.rho = rho; o.rhoA = rhoA; o.ph = ph; o.base = base;
     return o;
   }
+
+  /** The height of a storm cell's base (m), with the debug panel's cloud height. */
+  cellBase(c) { return Math.max((c.base || 820) + (this.ctl?.lift || 0), 30); }
 
   /** cellAt() over the weather map's grid, for the renderer: rho, rhoA, ph, base / TEX_ALT in each texel of `out`. */
   bakeCells(out) {
@@ -989,7 +1126,7 @@ export class Weather {
     for (let o = 0; o < out.length; o += 4) { out[o] = out[o + 1] = CELL_RMAX; out[o + 2] = 0; out[o + 3] = 820 / TEX_ALT; }
     const fl = Math.hypot(this.flowX, this.flowZ), sx = fl > 0.2 ? this.flowX / fl : 1, sz = fl > 0.2 ? this.flowZ / fl : 0;
     for (const c of this.cells) {
-      const R = c.r * 6.8, ph = c.age / c.life, base = (c.base || 820) / TEX_ALT;
+      const R = c.r * 6.8, ph = c.age / c.life, base = this.cellBase(c) / TEX_ALT;
       const i0 = Math.max(0, Math.floor((c.x - R + H) / step - 0.5)), i1 = Math.min(N - 1, Math.ceil((c.x + R + H) / step - 0.5));
       const j0 = Math.max(0, Math.floor((c.z - R + H) / step - 0.5)), j1 = Math.min(N - 1, Math.ceil((c.z + R + H) / step - 0.5));
       for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
@@ -1052,7 +1189,9 @@ export class Weather {
   }
 
   /** How much of a fog bank there is at this hour (1: all of it; radiation fog that does not persist burns off through the morning). */
-  fogAmount(f) { return (f.s ?? 1) * (f.persist ? 1 : 1 - smoothstep(8.5, 11.5, this.hour)); }   // f.s: a bank forming or burning off during a transition
+  /** How much of a fog bank is there (0..1): f.s is a bank forming (in the night, or in a transition) or going, and fog that
+   *  is not the lasting kind burns off in the morning sun. */
+  fogAmount(f) { const h = this.hour; return (f.s ?? 1) * (f.persist || h < 8.5 || h >= 14 ? 1 : 1 - smoothstep(8.5, 11.5, h)); }
 
   /**
    * The fog over a point, from the banks' own outlines: how far inside a bank it is (fog, 0..1), the bank's top (ftop, m),

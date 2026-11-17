@@ -214,7 +214,8 @@ Light and sky:
 
 | File | What it is |
 |---|---|
-| `weather.js` | The weather simulation: highs, lows, fronts, cloud layers, wind, turbulence, precipitation, icing; the weather situations the menu offers |
+| `weather.js` | The weather simulation: highs, lows, fronts, cloud layers, wind, turbulence, precipitation, icing; the weather situations the menu offers, and how they develop (lows deepening and filling, storms building in the afternoon heat, night fog, one situation drifting into the next) |
+| `moisture.js` | The moisture the wind carries over the weather map: lifted up slopes, dried in the lee and under highs, picked up over lakes, raised at the sea-breeze front; cloud forms where it saturates and drifts on with the wind |
 | `clouds.js` | Volumetric clouds ray-marched at reduced resolution and accumulated over time; also runs the frame's draw order (scene, clouds, post) |
 | `cloudnoise.js` | The tiling 3D noise volumes the clouds are shaped from |
 | `precip.js` | Rain, snow, hail, cloud vapor, wingtip trails and lightning, as particles |

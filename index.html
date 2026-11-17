@@ -90,9 +90,14 @@
       <div id="wxOver" class="seg" role="radiogroup" aria-label="How long a weather change takes">
         <button data-secs="0">At once</button><button data-secs="60">1 min</button><button data-secs="300">5 min</button><button data-secs="900">15 min</button>
       </div>
+      <p class="lbl gap">Then it</p>
+      <div id="wxEvolve" class="seg" role="radiogroup" aria-label="Whether the weather develops on its own">
+        <button data-on="1">Develops on its own</button><button data-on="0">Stays as chosen</button>
+      </div>
     </section>
     <section>
       <label class="slider"><span class="lbl">Time of day</span><output id="wHourV"></output><input id="wHour" type="range" min="0" max="23.9" step="0.1" /></label>
+      <label class="slider"><span class="lbl">Time of year</span><output id="wSeasonV"></output><input id="wSeason" type="range" min="0" max="11" step="1" /></label>
     </section>
   </aside>
 
@@ -103,6 +108,7 @@
     <table id="dbgPasses" hidden></table>
     <h3>Weather overrides</h3>
     <label>Cloud amount <output id="wCoverV"></output><input id="wCover" type="range" min="0" max="2" step="0.05" /></label>
+    <label>Cloud height <output id="wLiftV"></output><input id="wLift" type="range" min="-3000" max="6000" step="250" value="0" /></label>
     <label>Rain, snow and hail <output id="wPrecipV"></output><input id="wPrecip" type="range" min="0" max="2" step="0.05" /></label>
     <label>Visibility <output id="wVisV"></output><input id="wVis" type="range" min="2" max="200" step="1" /></label>
     <label>Temperature shift <output id="wTempV"></output><input id="wTemp" type="range" min="-20" max="10" step="1" /></label>
