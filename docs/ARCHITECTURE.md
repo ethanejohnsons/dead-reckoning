@@ -126,6 +126,9 @@ Nothing is fetched with a key, and no request carries cookies or a referrer.
 | Climate | How wet the lowlands are, half a degree to the cell, baked from the Sentinel-2 picture's colors into `public/data/climate.bin`; North America's is drawn by hand in the code | `terrain.js` |
 | Magnetic variation | The World Magnetic Model 2025 (NOAA NCEI and BGS, public domain): its coefficients, in the code | `geo.js` |
 | Stars, Milky Way | Baked into `public/data/stars.bin`, `milkyway.jpg` | `stars.js` |
+| The Moon | NASA's CGI Moon Kit (public domain), baked into `public/data/moon_*.jpg` | `space/cosmos.js` |
+| The planets | Solar System Scope's textures (CC BY 4.0, from NASA imagery), baked into `public/data/planets/`; their positions from the Jet Propulsion Laboratory's approximate elements, in the code | `space/solar.js` |
+| The moons of Jupiter and Saturn | The surface maps of NASA's 3D models of them (NASA VTAD, public domain), baked into `public/data/planets/`; their orbits' sizes and periods in the code | `space/solar.js` |
 | Wall materials | ambientCG photographs (CC0), baked into `public/facades/` | `cities.js` |
 | Sounds | Freesound recordings (CC0), `public/audio/` with a manifest | `core/audio.js` |
 
@@ -139,7 +142,7 @@ settings), `DR.ac` (the aircraft), `DR.terrain`, `DR.cities`, `DR.landCover`,
 `DR.imagery`, `DR.weather`, `DR.camera`, `DR.renderer`, `DR.ENV`, and helpers:
 `DR.tick(dt)` runs one frame, `DR.sim(dt)` one step of simulation without
 drawing, `DR.fly({...})` and `DR.flyAt(lat, lon)` start a flight,
-`DR.toWorld(lat, lon)` / `DR.toLatLon(x, z)` convert coordinates. `DR.launch({ plane: 'saturnv', site: 'ksc39a', rstart: 'pad' | 'orbit' | 'moon' })` starts a rocket flight and `DR.mission` is its controller (`DR.mission.rk` the rocket, `.cosmos` the view from space, `.forceMix` to pin the ground/space blend in a test). The backquote
+`DR.toWorld(lat, lon)` / `DR.toLatLon(x, z)` convert coordinates. `DR.launch({ plane: 'enterprise', rstart: 'orbit' | 'low' | 'saturn' ... })` starts a starship flight (`DR.mission.voy` is its controller: `.ref` the world it is at, `.dest`, `.engage()`, `.setWarp(n)`; `DR.mission.cosmos.solar.by.saturn` a planet). `DR.launch({ plane: 'saturnv', site: 'ksc39a', rstart: 'pad' | 'orbit' | 'moon' })` starts a rocket flight and `DR.mission` is its controller (`DR.mission.rk` the rocket, `.cosmos` the view from space, `.forceMix` to pin the ground/space blend in a test). The backquote
 key opens a debug panel in flight.
 
 ## A frame
@@ -303,6 +306,13 @@ until the craft comes back down (`arriveFromSpace` in `main.js` fetches it again
 | `orbitmap.js` | The orbit map (`M` in a rocket): the path ahead, the Moon's orbit, labels |
 | `satellites.js` | The space stations and satellites on their orbits, as points far off and models near |
 | `sites.js` | The world's launch sites (only places with real pads; a pin on the map makes a pad anywhere) |
+| `solar.js` | The solar system: where the sun and the planets are (each on its real ellipse, turning about its real pole) and the big moons of Jupiter and Saturn (round their planets, one face kept to them), and their picture in the view from space: points of light from far off, ray-traced ellipsoids wearing their maps from near, Saturn's rings with the shadows they throw and catch, the sun from wherever the camera is; and the light all that gives a craft (the sun's direction and strength, a planet's shadow, its glow). `cosmos.js` owns one and draws the Earth and the Moon itself while they are near |
+| `voyage.js` | A starship's flight, which `mission.js` hands over to when the craft is the Enterprise: the ship belongs to the world it is nearest and flies by its bow, with no gravity; impulse speed that grows with height, the curve of the world followed when low, warp factors 1 to 9 and coming out of warp near a world, the helm that flies to a destination and takes up a standard orbit, the cameras (chase, the captain's chair on the bridge, fly-by), the starship's HUD panel and the bracket round its destination; it opens the chart (`solarchart.js`) and feeds the sound (`shipsound.js`) |
+| `bridge-enterprise.js` | The Enterprise's bridge, for the view from the captain's chair: the room, its seats, stations and rail, lit by its own baked lighting as the rockets' cabins are (`cabin-kit.js`), its panels drawn on canvases (a few of them live), and its main viewer an opening onto the view ahead |
+| `solarchart.js` | The chart of the solar system (`M` in a starship): the view from space pulled far back, with the planets' orbits, a dot and a name for each world and the ship, and the course drawn over it; a click on a name lays in a course. Its lines are in `cosmos.js`'s `chart` scene, drawn without depth at any distance |
+| `shipsound.js` | The starship's sound: five recordings of real machines (hum, impulse, warp field, the wind-up, the jump) through filters that follow the view, the impulse power and the warp factor |
+| `warpfx.js` | The streaks of warp: a tube of points of light around the ship drawn out into ribbons, one instanced draw |
+| `model-enterprise.js` | The Enterprise (Galaxy class, NCC-1701-D) as a procedural model: saucer, neck, engineering hull, pylons and nacelles, with its paneling, windows, lettering and lights |
 | `catch.js` | Back to the tower (`K`, Starship): the autopilot that turns the booster or the Ship around, lets it fall (steering the fall with the flaps or the grid fins), flies the landing burn and brings it between the tower's arms; the game declares the catch (`Mission.tryCatch`) and moves the arms (`pad.js`) |
 | `transfer.js` | The way to the Moon (`L`): plans the burn by flying it ahead, then flies it: wait for the Moon, burn, coast, trim, brake into lunar orbit |
 | `rocketsound.js` | The rocket's sound: three recordings through filters that follow the air's pressure, the view and the thrust |
@@ -315,7 +325,7 @@ until the craft comes back down (`arriveFromSpace` in `main.js` fetches it again
 | `satmodels.js` | Models of the satellites |
 | `cabin.js`, `cabin-apollo.js`, `cabin-starship.js`, `cabin-kit.js` | The crew's cabins, for the view from the commander's seat (`C`): the Apollo Command Module's main display console with working attitude balls, computer display, timers and meters, and a flight deck for Starship with three live screens. Built in code, lit by their own baked lighting; the outside of the vehicle is hidden while they show |
 
-`tools/space-viewer.html` shows the models on their own (through the dev server). `tools/bake-moon.py` bakes NASA's Moon maps into `public/data/moon_*.jpg` and `tools/bake-rocket-sounds.py` cuts the rocket recordings in `public/audio/`.
+`tools/space-viewer.html` shows the models on their own (through the dev server). `tools/bake-moon.py` bakes NASA's Moon maps into `public/data/moon_*.jpg`, `tools/bake-planets.py` the planets' maps into `public/data/planets/`, `tools/bake-ship-sounds.py` cuts the starship's recordings in `public/audio/`, and `tools/bake-rocket-sounds.py` cuts the rocket recordings in `public/audio/`.
 
 Shadows: the vehicle is handed to `world/sunshadow.js` as "the aircraft" (its shadow on the ground) and the pad as a caster of structures; three.js's own shadow map, widened to the stack, gives the vehicle's shadow on itself, and a second one does the same in the view from space.
 
@@ -332,6 +342,8 @@ Shadows: the vehicle is handed to `world/sunshadow.js` as "the aircraft" (its sh
 | `bake-magvar.mjs` | Prints the World Magnetic Model's coefficients as `geo.js` carries them, and checks its evaluator against the model's test values |
 | `bake-facades.py` | Bakes the wall materials in `public/facades/` from ambientCG sets |
 | `bake-stars.py`, `bake-milkyway.py` | Bake the star catalogue and the Milky Way image in `public/data/` |
+| `bake-planets.py` | Bakes the planets' maps and Saturn's ring strip in `public/data/planets/` from Solar System Scope's textures |
+| `bake-moons.py` | Bakes the maps of ten moons of Jupiter and Saturn in `public/data/planets/` from NASA's 3D models of them (Mimas's is drawn from its mesh, which is not a mapped sphere) |
 
 ### Elsewhere
 

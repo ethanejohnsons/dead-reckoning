@@ -35,6 +35,7 @@ import { REGION } from '../world/geo.js';
 import { air } from '../world/atmosphere.js';
 import { RE, RM, D2R, sunDir, moonPos, earthAngle, eciToGeo, enu, dot, len } from './frames.js';
 import { GlobeTiles, GLOBE_Z0, mercV } from './globetiles.js';
+import { SolarSystem, SUN_GLSL } from './solar.js';
 
 export const MOON_CREDIT = 'The Moon: NASA\'s Scientific Visualization Studio, CGI Moon Kit (Lunar Reconnaissance Orbiter Camera color, laser altimeter elevation)';
 
@@ -51,7 +52,8 @@ in vec2 vUv; out vec4 outColor;
 uniform mat4 uProjInv; uniform mat3 uCamRot;
 uniform vec3 uEarthC, uEarthK;        // the Earth's center from the camera (m); |c|^2 - r^2 for the ground, the cloud shell, the top of the air
 uniform mat3 uEarthRot;               // drawing axes to geographic: x through 0 E on the equator, y through 90 E, z the north pole
-uniform vec3 uSun, uSunCol;           // direction to the sun; its light above the air (irradiance / pi)
+uniform vec3 uSun, uSunCol;           // direction to the sun (from the Earth); its light above the air (irradiance / pi)
+uniform vec4 uSunV;                   // where the sun stands from the camera, and in w how many times smaller it looks than from the Earth (solar.js)
 uniform vec3 uMoonC; uniform float uMoonK; uniform mat3 uMoonRot;      // (moon axes: x toward the Earth, z north)
 uniform sampler2DArray tTiles, tMask; uniform vec4 uLevel[${NL}]; uniform float uTilesW;
 uniform sampler3D tNoise; uniform float uClouds, uFar;        // uFar: 0 close to the Earth .. 1 seen whole
@@ -67,6 +69,8 @@ const float RE = ${RE.toFixed(1)}, RM = ${RM.toFixed(1)}, HR = 8000.0;
 #define BMS (uAer.x * uAer.z)
 const vec3 BR = vec3(5.802e-6, 13.558e-6, 33.1e-6);
 const vec3 BO = vec3(0.65e-6, 1.881e-6, 0.085e-6);
+
+${SUN_GLSL}
 
 // A ray from the origin along d against a sphere centered c, where k = |c|^2 - radius^2 (worked out in double precision).
 bool sphere(vec3 d, vec3 c, float k, out float t0, out float t1) {
@@ -246,12 +250,10 @@ void main() {
   vec3 d = normalize(uCamRot * (vd.xyz / vd.w));
 
   // ---- beyond everything: the Milky Way and the sun's disk
-  float sd = dot(d, uSun);
   vec3 e = vec3(d.x, -d.z, d.y);                                     // back to equatorial axes
   vec3 mw = textureLod(tMilky, vec2(0.5 - atan(e.y, e.x + 1.0e-6) * 0.15915494, 0.5 + asin(clamp(e.z, -1.0, 1.0)) * 0.31830989), 0.0).rgb;
   vec3 col = mw * mw * uMilky;
-  float sun = smoothstep(0.99996, 0.999985, sd) * 60.0 + pow(max(sd, 0.0), 2500.0) * 3.0 + pow(max(sd, 0.0), 180.0) * 0.1;
-  col += uSunCol * sun * uSunDisk;
+  col += uSunCol * sunGlow(d, uSunV) * uSunDisk;
   float cov = 0.0;
 
   float t0, t1, tm0, tm1;
@@ -354,7 +356,7 @@ export class Cosmos {
     const V = () => ({ value: new THREE.Vector3() }), M = () => ({ value: new THREE.Matrix3() });
     this.u = {
       uProjInv: { value: new THREE.Matrix4() }, uCamRot: M(), uEarthC: V(), uEarthK: V(), uEarthRot: M(),
-      uSun: V(), uSunCol: { value: new THREE.Vector3(S0, S0, S0) }, uMoonC: V(), uMoonK: { value: 1 }, uMoonRot: M(),
+      uSun: V(), uSunV: { value: new THREE.Vector4(1, 0, 0, 1) }, uSunCol: { value: new THREE.Vector3(S0, S0, S0) }, uMoonC: V(), uMoonK: { value: 1 }, uMoonRot: M(),
       tTiles: { value: this.tiles.texture }, tMask: { value: this.tiles.maskTexture }, uLevel: { value: this.tiles.uniform }, uTilesW: { value: this.tiles.W },
       tNoise: ENV.tCloudNoise, uClouds: { value: 1 }, uFar: { value: 0 }, tWxA: ENV.tWxA, uWx: { value: new THREE.Vector4(0, 0, 1, 0) },
       tMoon: { value: null }, tMoonRelief: { value: null }, uMoonMap: { value: 0 },
@@ -386,6 +388,7 @@ export class Cosmos {
 
     // Things with shape. `far` is drawn against stand-in spheres for the Earth and the Moon; `near` on top of everything.
     this.far = new THREE.Scene(); this.near = new THREE.Scene();
+    this.chart = new THREE.Scene();          // lines laid over the picture whatever their distance, with no depth: the chart of the solar system (solarchart.js)
     const hide = new THREE.MeshBasicMaterial({ colorWrite: false });
     this.earthBall = new THREE.Mesh(new THREE.SphereGeometry(1, 96, 64), hide); this.earthBall.scale.setScalar(RE);
     this.moonBall = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 48), hide); this.moonBall.scale.setScalar(RM);
@@ -410,6 +413,9 @@ export class Cosmos {
     }));
     envMesh.frustumCulled = false; this.envScene.add(envMesh);
     this.envRT = null; this.envT = 0; this.envKey = '';
+
+    // The sun as it stands from wherever the camera is, the planets, and the light they give (solar.js).
+    this.solar = new SolarSystem(renderer, this.u);
 
     this.sun = [1, 0, 0]; this.moon = [0, 0, 0]; this.cam = [0, 0, 0];
     this.sunlit = 1;                     // 0 in the Earth's shadow
@@ -487,35 +493,37 @@ export class Cosmos {
     this.alt = h;
     u.uFar.value = THREE.MathUtils.smoothstep(h, 4e5, 6e6);
 
-    // Lights for what has shape.
-    const earthLit = Math.max(0, 0.5 + 0.5 * dot(p, this.sun) / dist), big = Math.min(1, (RE / dist) ** 2);
+    // Lights for what has shape: the sun from where it stands here, and the light the nearest world throws back (the
+    // Earth, until the camera is nearer another planet: solar.js).
+    const sol = this.solar.frame(this, clock, t, K_LUM * this.starGain, this.renderer.getPixelRatio()), sh = sol.shine;
+    const earthLit = sh.lit, big = sh.big, sunP = this.sunlit * sol.sunPower, hd = sh.body.dist / sh.body.R;
     for (const L of [this.nearLights, this.farLights]) {
-      L.sun.position.copy(u.uSun.value).multiplyScalar(100); L.sun.target.position.set(0, 0, 0);
-      L.sun.color.setRGB(1, 0.98, 0.95).multiplyScalar(S0 * Math.PI * this.sunlit);
-      L.earth.position.copy(u.uEarthC.value).normalize().multiplyScalar(100); L.earth.target.position.set(0, 0, 0);
-      L.earth.color.setRGB(0.55, 0.72, 1.0).multiplyScalar(S0 * Math.PI * 0.3 * earthLit * big);
+      L.sun.position.copy(sol.sunView).multiplyScalar(100); L.sun.target.position.set(0, 0, 0);
+      L.sun.color.setRGB(1, 0.98, 0.95).multiplyScalar(S0 * Math.PI * sunP);
+      L.earth.position.copy(sh.dir).multiplyScalar(100); L.earth.target.position.set(0, 0, 0);
+      L.earth.color.setRGB(sh.col.x, sh.col.y, sh.col.z).multiplyScalar(S0 * Math.PI * 0.3 * earthLit * big);
       L.sun.updateMatrixWorld(); L.sun.target.updateMatrixWorld(); L.earth.updateMatrixWorld(); L.earth.target.updateMatrixWorld();
     }
     // The reflection map, when the scene has changed enough to see.
     this.envT -= dt;
-    v3.copy(u.uEarthC.value).normalize();
-    const key = `${Math.round(v3.x * 12)}|${Math.round(v3.y * 12)}|${Math.round(v3.z * 12)}|${Math.round(u.uSun.value.x * 12)}|${Math.round(u.uSun.value.z * 12)}|${Math.round(earthLit * 8)}|${Math.round(Math.log2(dist / RE) * 6)}|${Math.round(this.sunlit * 4)}`;
+    v3.copy(sh.dir);
+    const key = `${sh.body.id}|${Math.round(v3.x * 12)}|${Math.round(v3.y * 12)}|${Math.round(v3.z * 12)}|${Math.round(sol.sunView.x * 12)}|${Math.round(sol.sunView.z * 12)}|${Math.round(earthLit * 8)}|${Math.round(Math.log2(hd) * 6)}|${Math.round(sunP * 4)}`;
     if (!this.envRT || (key !== this.envKey && this.envT <= 0)) {
       this.envKey = key; this.envT = 0.7;
       const eu = this.envU;
-      eu.uEarthDir.value.copy(v3); eu.uEarthCos.value = Math.sqrt(Math.max(1 - (RE / dist) ** 2, 0));
-      eu.uEarthCol.value.set(0.32, 0.42, 0.6).multiplyScalar(S0 * earthLit * 1.3);
-      eu.uSun.value.copy(u.uSun.value); eu.uSunCol.value.set(S0, S0, S0).multiplyScalar(this.sunlit);
+      eu.uEarthDir.value.copy(v3); eu.uEarthCos.value = sh.cos;
+      eu.uEarthCol.value.copy(sh.sky).multiplyScalar(S0 * earthLit * 1.3);
+      eu.uSun.value.copy(sol.sunView); eu.uSunCol.value.set(S0, S0, S0).multiplyScalar(sunP);
       const rt = this.pmrem.fromScene(this.envScene, 0, 0.1, 1000);
       this.envRT?.dispose(); this.envRT = rt;
       this.near.environment = rt.texture; this.far.environment = rt.texture;
     }
 
     // How dark is it? Stars come out when neither the sun nor the sunlit Earth fills the view.
-    const ang = Math.acos(THREE.MathUtils.clamp(v3.set(0, 0, -1).applyQuaternion(view.quat).dot(this.u.uEarthC.value) / dist, -1, 1));
-    const er = Math.asin(Math.min(1, RE / dist)), half2 = (view.fov * D2R) * 0.7;
-    const earthIn = THREE.MathUtils.smoothstep(er + half2 - ang, 0, half2 * 1.6) * (0.15 + 0.85 * earthLit) * (dist < 4e7 ? 1 : (4e7 / dist) ** 2);
-    const sunIn = THREE.MathUtils.smoothstep(v3.dot(u.uSun.value), 0.55, 0.95) * this.sunlit;
+    const ang = Math.acos(THREE.MathUtils.clamp(v3.set(0, 0, -1).applyQuaternion(view.quat).dot(sh.dir), -1, 1));
+    const er = sh.ang, half2 = (view.fov * D2R) * 0.7;
+    const earthIn = THREE.MathUtils.smoothstep(er + half2 - ang, 0, half2 * 1.6) * (0.15 + 0.85 * earthLit) * (hd < 6.28 ? 1 : (6.28 / hd) ** 2);
+    const sunIn = THREE.MathUtils.smoothstep(v3.dot(sol.sunView), 0.55, 0.95) * Math.min(sunP, 1);
     const dark = 1 - THREE.MathUtils.clamp(Math.max(earthIn, sunIn * 0.8), 0, 1);
     const want = Math.exp(Math.log(1500) + (Math.log(2.5e5) - Math.log(1500)) * dark);
     this.starGain += (want - this.starGain) * Math.min(1, dt * 1.2 + (dt === 0 ? 1 : 0));
@@ -534,7 +542,7 @@ export class Cosmos {
   /** Fit the near sun's shadow to a thing: center (drawing axes, after begin) and half-size (m). */
   shadowAround(center, half) {
     const L = this.nearLights.sun, c = L.shadow.camera;
-    L.target.position.copy(center); L.position.copy(center).addScaledVector(this.u.uSun.value, half * 3);
+    L.target.position.copy(center); L.position.copy(center).addScaledVector(this.solar.sunView, half * 3);
     if (c.right !== half) { c.left = -half; c.right = half; c.top = half; c.bottom = -half; c.near = 1; c.far = half * 6; c.updateProjectionMatrix(); }
     L.updateMatrixWorld(); L.target.updateMatrixWorld();
   }
@@ -547,13 +555,22 @@ export class Cosmos {
     r.setRenderTarget(this.rt); r.setClearColor(0x000000, 1); r.clear(true, true, false);
     cam.near = 1; cam.far = 1e10; cam.updateProjectionMatrix();
     r.render(this.starScene, cam);
-    this.quad.draw(r, this.mat, this.rt);
+    // The sun and the planets (solar.js): those beyond the Earth before it, those nearer after. Far from the Earth its
+    // own pass is left out, and the Earth and the Moon are two more specks among them.
+    this.solar.draw(this.rt, cam, 'beyond');
+    if (this.solar.earthOn) this.quad.draw(r, this.mat, this.rt);
+    this.solar.draw(this.rt, cam, 'within');
     // Far things: depth from a tenth of the way to the nearest surface out to beyond the Moon.
     const dE = Math.sqrt(this.u.uEarthK.value.x > 0 ? this.u.uEarthK.value.x : 1), dM = Math.sqrt(Math.max(this.u.uMoonK.value, 1));
     if (this.far.children.length > 7) {
       cam.near = Math.max(2000, 0.1 * Math.min(dE, dM)); cam.far = 4e9; cam.updateProjectionMatrix();
       r.setRenderTarget(this.rt); r.clearDepth();
       r.render(this.far, cam);
+    }
+    if (this.chart.children.some((o) => o.visible)) {
+      cam.near = 1e5; cam.far = 1e15; cam.updateProjectionMatrix();
+      r.setRenderTarget(this.rt);
+      r.render(this.chart, cam);
     }
     if (this.near.children.length > 5) {
       cam.near = this.nearClip || 2; cam.far = 80000; cam.updateProjectionMatrix();

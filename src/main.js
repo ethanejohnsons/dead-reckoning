@@ -39,6 +39,8 @@ import { FlightPanel, FrameMeter, weatherWords, passRows, fahrenheit, visibility
 import { enhanceSelect, syncPickers } from './ui/picker.js';
 import { Mission, loadSpaceAssets } from './space/mission.js';
 import { MOON_CREDIT } from './space/cosmos.js';
+import { SOLAR_CREDIT } from './space/solar.js';
+import { STARSHIPS, VOYAGE_STARTS, isStarship } from './space/voyage.js';
 import { SITES, DEFAULT_SITE, siteById, pinSite } from './space/sites.js';
 
 const $ = (id) => document.getElementById(id);
@@ -53,10 +55,16 @@ const fmtHour = (h) => `${String(Math.floor(h)).padStart(2, '0')}:${String(Math.
 const magnetic = (trueDeg) => (trueDeg - REGION.magVar + 720) % 360;
 
 // The launch vehicles (space/): chosen in the same list as the airplanes; a rocket flight is run by space/mission.js.
+// A starship (space/voyage.js) is started and drawn the same way, and flown by its own rules.
 const ROCKET_LIST = [
   { id: 'saturnv', name: 'Saturn V', blurb: 'The Moon rocket: 363 feet tall, three stages and an Apollo spacecraft on top.' },
   { id: 'starship', name: 'Starship', blurb: 'Stainless steel, 33 engines under the booster, and a ship that can land again on its tail.' },
+  ...STARSHIPS,
 ];
+const ROCKET_STARTS = [['pad', 'On the pad'], ['orbit', 'In orbit of the Earth'], ['moon', 'In orbit of the Moon']];
+const startsOf = (id) => (isStarship(id) ? VOYAGE_STARTS : ROCKET_STARTS);
+/** The start chosen, if the craft chosen can start there; else that craft's usual one. */
+const startOf = (id) => (startsOf(id).some(([k]) => k === S.opts.rstart) ? S.opts.rstart : startsOf(id)[0][0]);
 const isRocket = (id) => ROCKET_LIST.some((r) => r.id === id);
 const craftName = (id) => ROCKET_LIST.find((r) => r.id === id)?.name || aircraftById(id).name;
 
@@ -138,7 +146,7 @@ function updateStream(dt) {
 
 async function boot() {
   $('splash').classList.add('loading');
-  $('credit').innerHTML = `${dem.ATTRIBUTION}<br>${IMAGERY_ATTRIBUTION}<br>${OSM_ATTRIBUTION}<br>${WORLD_FIELDS_ATTRIBUTION}<br>${TOWNS_ATTRIBUTION}<br>${CITY_ATTRIBUTION}<br>${OVERTURE_ATTRIBUTION}<br>${STARS_CREDIT}<br>${MOON_CREDIT}`;
+  $('credit').innerHTML = `${dem.ATTRIBUTION}<br>${IMAGERY_ATTRIBUTION}<br>${OSM_ATTRIBUTION}<br>${WORLD_FIELDS_ATTRIBUTION}<br>${TOWNS_ATTRIBUTION}<br>${CITY_ATTRIBUTION}<br>${OVERTURE_ATTRIBUTION}<br>${STARS_CREDIT}<br>${MOON_CREDIT}<br>${SOLAR_CREDIT}`;
   if (SEASONS[S.opts.season] === undefined) S.opts.season = 'summer';
   setSeason(seasonNow = S.opts.season);              // before the world is built: its climate is the season's
   await Promise.all([loadTowns(), loadWorldFields(), loadClimate()]);     // the towns, the airfields and the climate of the whole earth (the game runs without any of them)
@@ -526,7 +534,8 @@ async function enterSplashRocket() {
   S.field = null; ap.on = false;
   model.root.visible = false;
   mission.start(id, site);
-  $('blurb').textContent = `${site.name}: ${site.blurb} ${SITUATIONS[S.opts.wx].blurb}`;
+  if (isStarship(id)) { mission.startAloft(startOf(id)); if (startOf(id) !== 'low' && startOf(id) !== 'orbit') $('where').textContent = startsOf(id).find(([k]) => k === startOf(id))[1]; }
+  $('blurb').textContent = isStarship(id) ? ROCKET_LIST.find((r) => r.id === id).blurb : `${site.name}: ${site.blurb} ${SITUATIONS[S.opts.wx].blurb}`;
   show('splash');
 }
 
@@ -615,17 +624,18 @@ async function startRocket(pin = null) {
   await dem.loadArea(dem.MAX_Z, p.x - 1800, p.z - 1800, p.x + 1800, p.z + 1800, 0);       // the ground the pad stands on, at full detail
   model.root.visible = false; ap.on = false;
   mission.start(S.opts.plane, site);
-  const where = pin ? 'pad' : S.opts.rstart;
-  if (where === 'orbit' || where === 'moon') mission.startAloft(where);
+  const ship = isStarship(S.opts.plane), where = pin ? (ship ? 'low' : 'pad') : startOf(S.opts.plane);
+  if (ship || where === 'orbit' || where === 'moon') mission.startAloft(where);
   S.field = null;
   S.flight = { airborne: false, stopT: 0, endT: 0, lastTd: null, from: null, pin, rocket: true };
   S.mode = 'flying'; S.paused = false; S.timeAccel = 1; S.view = 'chase'; S.frost = 0;
   show(null);
   sound.start();
-  toast('Loading the terrain around the pad…', 30);
+  if (ship && where !== 'low') { toast(mission.voy.hello(where), 12); S.busy = false; return; }
+  toast(ship ? 'Loading the country below…' : 'Loading the terrain around the pad…', 30);
   stream.peak = 0;
   await terrain.warm(camera.position, 8000);
-  toast(where === 'orbit' ? `${craftName(S.opts.plane)} in orbit, 155 miles up. M for the map; 2 and R to burn along your path. Esc for controls.`
+  toast(ship ? mission.voy.hello(where) : where === 'orbit' ? `${craftName(S.opts.plane)} in orbit, 155 miles up. M for the map; 2 and R to burn along your path. Esc for controls.`
     : where === 'moon' ? `${craftName(S.opts.plane)} in orbit of the Moon, 68 miles up. M for the map. Esc for controls.`
       : `${craftName(S.opts.plane)} on ${pin ? 'a pad of its own' : site.name}. Space lights the engines; G flies it to orbit for you. Esc for controls.`, 10);
   S.busy = false;
@@ -667,23 +677,30 @@ function bindUI() {
       for (const a of FIELDS) { const g = a.group || a.state || ''; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(a); }
       $(p + 'Field').innerHTML = [...groups].map(([g, list]) => { const o = list.map((a) => opt(a.id, a.name, a.id === S.opts.field, `${a.city} ${a.state} ${a.country || ''}`)).join(''); return g ? `<optgroup label="${g}">${o}</optgroup>` : o; }).join('');
       $(p + 'Plane').innerHTML = [...new Set(AIRCRAFT.map((a) => a.group))].map((g) => `<optgroup label="${g}">${AIRCRAFT.filter((a) => a.group === g).map((a) => opt(a.id, a.name, a.id === S.opts.plane)).join('')}</optgroup>`).join('');
-      $(p + 'Plane').innerHTML += `<optgroup label="Rockets">${ROCKET_LIST.map((a) => opt(a.id, a.name, a.id === S.opts.plane)).join('')}</optgroup>`;
+      $(p + 'Plane').innerHTML += `<optgroup label="Rockets">${ROCKET_LIST.filter((a) => !isStarship(a.id)).map((a) => opt(a.id, a.name, a.id === S.opts.plane)).join('')}</optgroup>`;
+      $(p + 'Plane').innerHTML += `<optgroup label="Starships">${STARSHIPS.map((a) => opt(a.id, a.name, a.id === S.opts.plane)).join('')}</optgroup>`;
       { const sg = new Map(); for (const s of SITES) { if (!sg.has(s.group)) sg.set(s.group, []); sg.get(s.group).push(s); }
         $(p + 'Site').innerHTML = [...sg].map(([g, list]) => `<optgroup label="${g}">${list.map((s) => opt(s.id, s.name, s.id === S.opts.site, s.place)).join('')}</optgroup>`).join(''); }
       $(p + 'Wx').innerHTML = Object.entries(SITUATIONS).map(([k, v]) => opt(k, v.title, k === S.opts.wx)).join('');
       $(p + 'Hour').innerHTML = HOURS.map(([h, t]) => opt(h, t, h === S.opts.hour)).join('');
       $(p + 'Season').innerHTML = SEASON_LIST.map(([k, t]) => opt(k, t, k === S.opts.season)).join('');
       $(p + 'Start').value = S.opts.air ? 'air' : 'ground';
-      $(p + 'RStart').value = ['pad', 'orbit', 'moon'].includes(S.opts.rstart) ? S.opts.rstart : 'pad';
     }
     craftUI();
   };
   // A rocket is started from a launch site (or a pin), an airplane from an airfield: the menus show the one that applies.
   const craftUI = () => {
-    const r = isRocket(S.opts.plane);
-    for (const p of ['o', 'p']) { $(p + 'FieldL').hidden = r; $(p + 'StartL').hidden = r; $(p + 'SiteL').hidden = !r; $(p + 'RStartL').hidden = !r; }
-    $('btnFly').textContent = r ? 'Launch' : 'Fly';
-    $('btnMap').title = r ? 'Open the map: drop a pin anywhere and stand the rocket up there' : 'Open the map: click an airfield to start there, or drop a pin anywhere and start in the air over it';
+    const r = isRocket(S.opts.plane), ship = isStarship(S.opts.plane);
+    for (const p of ['o', 'p']) {
+      $(p + 'FieldL').hidden = r; $(p + 'StartL').hidden = r; $(p + 'SiteL').hidden = !r; $(p + 'RStartL').hidden = !r;
+      // Where a rocket may start and where a starship may are different lists: the menu shows the craft's own.
+      const sel = $(p + 'RStart'), list = startsOf(S.opts.plane), want = startOf(S.opts.plane);
+      if (sel.dataset.craft !== (ship ? 'ship' : 'rocket')) { sel.dataset.craft = ship ? 'ship' : 'rocket'; sel.innerHTML = list.map(([k, t]) => `<option value="${k}">${t}</option>`).join(''); }
+      if (sel.value !== want) sel.value = want;
+    }
+    syncPickers();
+    $('btnFly').textContent = ship ? 'Engage' : r ? 'Launch' : 'Fly';
+    $('btnMap').title = ship ? 'Open the map: drop a pin anywhere and start low over it' : r ? 'Open the map: drop a pin anywhere and stand the rocket up there' : 'Open the map: click an airfield to start there, or drop a pin anywhere and start in the air over it';
   };
   fill();
   // The flight choices are drop-downs of our own (grouped, searchable when long); the <select>s stay as the values.
@@ -696,7 +713,7 @@ function bindUI() {
   panel = new FlightPanel();
   const read = (p) => { S.opts.field = $(p + 'Field').value; S.opts.wx = $(p + 'Wx').value; S.opts.hour = +$(p + 'Hour').value; S.opts.season = $(p + 'Season').value; applySeason(); S.opts.air = $(p + 'Start').value === 'air'; S.opts.plane = $(p + 'Plane').value; S.opts.site = $(p + 'Site').value || S.opts.site; S.opts.rstart = $(p + 'RStart').value || 'pad'; craftUI(); };
   $('oStart').addEventListener('change', () => read('o'));
-  $('oRStart').addEventListener('change', () => read('o'));
+  $('oRStart').addEventListener('change', () => { read('o'); if (isStarship(S.opts.plane)) enterSplash(); });      // (a starship is shown where it will start)
   for (const id of ['oField', 'oSite', 'oWx', 'oHour', 'oSeason', 'oPlane']) $(id).addEventListener('change', () => { read('o'); enterSplash(); });
   $('pPlane').addEventListener('change', () => { const was = S.opts.plane; S.opts.plane = $('pPlane').value; craftUI(); S.opts.plane = was; });
   click('btnFly', () => { read('o'); startFlight(); });
@@ -791,7 +808,7 @@ function drawChart() {
   else if (!inFlight) say = 'Click an airfield, or anywhere to drop a pin';
   if (say !== chartSaid) { chartSaid = say; $('chartInfo').textContent = say; }
   if ($('chartFly').hidden !== !pin) $('chartFly').hidden = !pin;
-  const go = isRocket(S.opts.plane) ? 'Launch from here' : pin?.field ? `Fly from ${pin.field}` : 'Fly from pin';
+  const go = isStarship(S.opts.plane) ? 'Start low over here' : isRocket(S.opts.plane) ? 'Launch from here' : pin?.field ? `Fly from ${pin.field}` : 'Fly from pin';
   if ($('chartFly').textContent !== go) $('chartFly').textContent = go;
 }
 

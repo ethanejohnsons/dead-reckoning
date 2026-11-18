@@ -26,6 +26,7 @@ import { RocketSound } from './rocketsound.js';
 import { ReentryGlow } from './reentry.js';
 import { plan as planTransfer, planPath, pass as moonPass, TransferPilot } from './transfer.js';
 import { ReturnPilot, offsetTo } from './catch.js';
+import { Voyage, isStarship, loadShip } from './voyage.js';
 
 const MIX_LO = 24000, MIX_HI = 36000;     // the band (m) over which the view from space takes over
 const STEP = 1 / 60;
@@ -37,7 +38,7 @@ const $ = (id) => document.getElementById(id);
 const lazy = import.meta.glob(['./vehicles.js', './plume.js', './pad.js', './satmodels.js', './cabin.js']);
 const mods = {};
 export async function loadSpaceAssets() {
-  await Promise.all(Object.entries(lazy).map(async ([k, f]) => { try { mods[k.slice(2, -3)] = await f(); } catch (e) { console.warn(`${k} did not load:`, e.message); } }));
+  await Promise.all([loadShip(), ...Object.entries(lazy).map(async ([k, f]) => { try { mods[k.slice(2, -3)] = await f(); } catch (e) { console.warn(`${k} did not load:`, e.message); } })]);
   return mods;
 }
 function standIn(id) {
@@ -63,6 +64,7 @@ export class Mission {
   constructor(g) {
     this.g = g;
     this.active = false;
+    this.voy = null;                       // a starship's flight, while one is flown (voyage.js)
     this.rk = new Rocket('saturnv');
     this.clock = makeClock(0, 80, 12, 0.375);
     this.cosmos = new Cosmos(g.renderer, g.tier());
@@ -101,6 +103,8 @@ export class Mission {
 
   /** Stand a vehicle on a pad at a site ({ lat, lon, name, az }). The game's window must already hold the place. */
   start(vehicleId, site) {
+    // A starship is not flown as a rocket: its flight is voyage.js's, which sets what the rest of this class draws from.
+    if (isStarship(vehicleId)) { this.stop(true); this.voy = new Voyage(this); this.voy.start(vehicleId, site); return; }
     const g = this.g, id = ROCKETS[vehicleId] ? vehicleId : 'saturnv';
     this.stop(true);
     this.site = site; this.active = true;
@@ -145,6 +149,7 @@ export class Mission {
 
   /** Skip the climb: put the craft in a low orbit of the Earth over the launch site, or of the Moon, with the stages that got it there gone. */
   startAloft(where) {
+    if (this.voy) { this.voy.place(where); return; }
     const rk = this.rk, n = rk.spec.stages.length, site = this.site;
     if (where === 'moon') rk.placeAtMoon(this.clock, 0, 110000);
     else rk.placeInOrbit(this.clock, 0, 250000, 0, site.lon - 2, site.lat);          // just short of the launch site, so the flight begins over country the player knows
@@ -170,6 +175,7 @@ export class Mission {
   /** Take the rocket and everything of its flight out of the game. */
   stop(restarting = false) {
     const g = this.g;
+    if (this.voy) { this.voy.stop(); this.voy = null; }
     if (this.vehicle) { g.scene.remove(this.vehicle.root); this.vehicle.dispose?.(); this.vehicle = null; }
     if (this.pad) { g.scene.remove(this.pad.root); this.pad.dispose?.(); this.pad = null; }
     if (!restarting) g.cities?.setKeepClear([]);
@@ -194,6 +200,7 @@ export class Mission {
       if (!this.active || g.S.mode !== 'flying' || g.S.paused || e.repeat) return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
       if (e.code === 'Space' && e.target instanceof Element && e.target.closest('button, summary, [role=option], [role=listbox]')) return;
+      if (this.voy) { this.voy.key(e); return; }
       switch (e.code) {
         case 'Space': this.stageKey(); break;
         case 'KeyZ': this.rk.throttle = 1; this.manual(); break;
@@ -241,6 +248,7 @@ export class Mission {
     this.g.toast(`${name} away. ${ROCKETS[rk.id].stages[rk.stage].name} burning.`, 3);
   }
   toggleAutopilot() {
+    if (this.voy) { this.voy.engage(); return; }
     const rk = this.rk;
     if (rk.crashed) return;
     if (this.autopilot) { this.manual(); return; }
@@ -363,8 +371,9 @@ export class Mission {
     if (i > max && !quiet) this.g.toast(rk.landed || rk.throttle > 0 ? 'Time can run faster only with the engines off.' : 'Time can run faster above the air.', 2.5);
     this.warp = n;
   }
-  cycleWarp() { this.setWarp(this.warp >= (this.rk.canCoast ? WARPS.length - 1 : PHYS_WARP) ? 0 : this.warp + 1, true); }
+  cycleWarp() { if (this.voy) { this.voy.warpStep(); return; } this.setWarp(this.warp >= (this.rk.canCoast ? WARPS.length - 1 : PHYS_WARP) ? 0 : this.warp + 1, true); }
   setMap(on) {
+    if (this.voy) { this.voy.setMap(on); return; }
     if (on === this.mapOpen) return;
     this.mapOpen = on; document.body.classList.toggle('orbit-map', on);
     if (on) { this.cam.focus = 'body'; this.map.fit(); }
@@ -373,6 +382,7 @@ export class Mission {
   cycleFocus() { const c = this.cam, order = ['body', 'craft', 'earth', 'moon']; c.focus = order[(order.indexOf(c.focus) + 1) % order.length]; this.map.fit(); this.g.toast(`Map centered on ${c.focus === 'body' ? (this.rk.body === 'moon' ? 'the Moon' : 'the Earth') : c.focus === 'craft' ? 'your craft' : c.focus === 'earth' ? 'the Earth' : 'the Moon'}.`, 2); }
   /** C: the chase view, the commander's seat, the camera on the vehicle's skin, the tracking camera by the pad, and round again. */
   toggleView() {
+    if (this.voy) { this.voy.toggleView(); return; }
     const order = ['chase'];
     if (this.cabin && !this.boosterOnly) order.push('cockpit');
     order.push('onboard');
@@ -410,7 +420,7 @@ export class Mission {
     return f;
   }
   /** Is the picture the one from the commander's seat? */
-  get inCabin() { return this.view === 'cockpit' && !!this.cabin && !this.boosterOnly && !this.mapOpen && this.g.S.mode === 'flying'; }
+  get inCabin() { if (this.voy) return this.voy.inBridge; return this.view === 'cockpit' && !!this.cabin && !this.boosterOnly && !this.mapOpen && this.g.S.mode === 'flying'; }
   /** Show the cabin and hide the outside of the vehicle around it, or the other way about (the windows look straight out). */
   showCabin(on) {
     if (on === this.cabinShown || !this.vehicle) return;
@@ -425,6 +435,7 @@ export class Mission {
   // ------------------------------------------------------------------ simulation
 
   simulate(dt) {
+    if (this.voy) { this.voy.simulate(dt); return; }
     const g = this.g, rk = this.rk, input = g.input, c = this.clock;
     if (rk.crashed) {
       if (!this.endT) { this.endT = 3.5; g.toast(`${rk.crashed}. That one will need a new rocket.`, 4); g.sound?.crash?.(); g.clouds.uFlashScreen.value = 0.5; }
@@ -549,6 +560,7 @@ export class Mission {
 
   /** After the simulation: the craft in the game's world, the model's attitude, the cameras, and which view shows. */
   frame(dt) {
+    if (this.voy) { this.voy.frame(dt); return; }
     const g = this.g, rk = this.rk, ac = g.ac, cam = g.camera, input = g.input;
     this.local();
     const onEarth = rk.body === 'earth';
@@ -728,6 +740,7 @@ export class Mission {
 
   /** Put the vehicle and its debris where the game's scene wants them. */
   groundPose() {
+    if (this.voy) { this.voy.groundPose(); return; }
     const v = this.vehicle;
     v.root.position.copy(this.baseW); v.root.quaternion.copy(this.qLocal);
     v.root.visible = this.groundOK;
@@ -740,6 +753,7 @@ export class Mission {
   }
   /** And where the view from space wants them: relative to its camera, in its axes. */
   spacePose() {
+    if (this.voy) { this.voy.spacePose(); return; }
     const v = this.vehicle, rk = this.rk, cs = this.cosmos;
     worldToRenderQuat(rel, q1, m1);
     v.root.visible = true;
@@ -767,6 +781,7 @@ export class Mission {
     if (v && !hideCraft) { this.spacePose(); cs.shadowAround(v3.set(0, this.rk.pivot, 0).applyQuaternion(v.root.quaternion).add(v.root.position), this.shadowHalf || 70); kids.push(v.root); for (const s of this.spent) kids.push(s.obj); v.root.updateMatrixWorld(true); for (const s of this.spent) s.obj.updateMatrixWorld(true); }
     this.sats.draw(this.eye, kids, this.mapOpen);
     this.map.update(dt);
+    if (this.voy) this.voy.chartFrame(dt);
     const tex = cs.draw();
     kids.length = 5;
     if (this.mix < 1) this.expo = g.sky.exposure;

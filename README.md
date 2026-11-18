@@ -449,6 +449,56 @@ Start can also be "In orbit of the Earth" or "In orbit of the Moon" to skip the 
 slows the craft, the ground is fetched again under wherever it comes down, and a rocket set down upright
 and gently on its engines has landed.
 
+### The starship Enterprise
+
+Choose the U.S.S. Enterprise under Craft and Start says where the flight begins: in orbit of the Earth over
+the launch site chosen, low over that site in the game's own weather, or already at the Moon or a planet. A
+pin on the map starts it low over that spot.
+
+It flies like nothing else here: no fuel and no gravity, the ship goes where its bow points. `W`/`S` and
+`A`/`D` point the bow, `Q`/`E` roll, and `R`/`F` (or `Z`/`X`) set the impulse engines. How fast those take the
+ship depends on its height above the world below: a few hundred miles an hour among the hills, miles a second
+in a low orbit, a quarter of the speed of light out between the planets. Near a world the ship follows its
+curve and rights itself against the horizon, and it cannot be flown into the ground. `.` and `,` are the warp
+factor, 1 to 9, at the speeds the factors always meant: the Moon in a little over a second at warp 1, Neptune
+in ten seconds at warp 9. The ship winds up for a moment, then jumps; it comes out of warp by itself where a
+world's neighborhood is in the way.
+
+`N` lays in a course (the Moon, a planet, the sun) and `G` engages: the helm turns the ship, goes round the
+world it is leaving if that is in the way, jumps to warp, comes out on the destination's sunlit side and takes
+up a standard orbit. `O` takes up a standard orbit of whatever is below. `C` goes from the chase view to the
+captain's chair on the bridge to a camera left in the ship's path, watching it go by.
+
+The bridge is the room itself, built in code (`src/space/bridge-enterprise.js`) after the television set: the
+command seats, ops and conn in front of them, the wooden rail and the tactical console behind, the aft
+stations along the back wall, the door alcoves, the luminous dome and its skylight. Its main viewer is an
+opening onto the real view ahead, so what is in front of the ship is what the viewer shows, warp streaks
+included; conn reads the ship's speed and what the helm is doing, ops the world it is at and the course laid
+in. Drag turns the head, nearly all the way round. The sun's glare reaches the picture only when the sun is
+in the viewer or the skylight.
+
+`M` is the chart of the solar system: the same view pulled far back, with every planet's orbit drawn through
+where the planet is, a dot and a name for each world and for the ship, and the course as a line. Drag turns
+it, the wheel goes nearer and farther (all the way in to the world itself), `Tab` centers it on the sun, the
+ship or the destination, and a click on a world's name lays in a course for it. The ship flies on while the
+chart is open, so a trip at warp can be watched from above.
+
+The planets are where they are this year, each turning about its real pole, so Saturn's rings tilt as they
+do now. Their faces are Solar System Scope's maps (CC BY 4.0, made from NASA imagery); Jupiter and Saturn are
+as flattened as they are; the rings throw their shadow on Saturn and Saturn its own across the rings. The
+big moons are there to visit too: Io, Europa, Ganymede and Callisto round Jupiter, and Mimas, Enceladus,
+Tethys, Dione, Rhea, Titan and Iapetus round Saturn, at their real distances and in their real times, each
+keeping one face to its planet and wearing NASA's map of it (Titan wears only its haze). `N` offers the moons
+of the planet the ship is at; any of them can be clicked on the chart. Come
+down through the Earth's air anywhere and the country below is the game's own: its weather, its cities, its
+hills. The Enterprise is modeled in code (`src/space/model-enterprise.js`); the design is Paramount's, and
+this is a fan's rendition of it.
+
+Its sound is made of recordings of real machines (CC0, credited in `public/audio/CREDITS.md`): the drone of
+refrigeration plant for the ship's own hum, an industrial turbine for the impulse engines, a power transformer
+for the warp field, an electric train's motor climbing for the wind-up, and a returning rocket's sonic boom
+for the jump. It is heard as the crew hears it, from inside, in every view.
+
 Graphics is "Automatic" unless you choose a tier in the menu. The first guess
 comes from the name of the graphics card (`src/render/autoquality.js`); in
 flight the picture's resolution follows the frame rate first

@@ -1,0 +1,50 @@
+{
+ "version": 1,
+ "format": "mp3",
+ "sampleRate": 48000,
+ "note": "The starship's recordings (space/shipsound.js). Loops are played between loop[0] and loop[1].",
+ "sounds": {
+  "ship_hum": {
+   "file": "ship_hum.mp3",
+   "loop": [
+    0.3,
+    14.3
+   ],
+   "duration": 14.6,
+   "lufs": -23,
+   "truePeak": -10.7
+  },
+  "ship_impulse": {
+   "file": "ship_impulse.mp3",
+   "loop": [
+    0.3,
+    10.3
+   ],
+   "duration": 10.6,
+   "lufs": -23,
+   "truePeak": -10.9
+  },
+  "ship_warp": {
+   "file": "ship_warp.mp3",
+   "loop": [
+    0.3,
+    10.3
+   ],
+   "duration": 10.6,
+   "lufs": -23,
+   "truePeak": -11.6
+  },
+  "ship_spool": {
+   "file": "ship_spool.mp3",
+   "duration": 2.95,
+   "lufs": -20,
+   "truePeak": -10.4
+  },
+  "ship_boom": {
+   "file": "ship_boom.mp3",
+   "duration": 6.5941,
+   "lufs": -20,
+   "truePeak": -5.1
+  }
+ }
+}

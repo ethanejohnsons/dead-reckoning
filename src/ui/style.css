@@ -338,6 +338,27 @@ body:not(.rocket) .rocket-keys, body.rocket .plane-keys { display: none; }
 .rp-orb { width: 13.5rem; } .rp-orb .lbl { width: 2.4rem; } .rp-orb small.num { margin-left: auto; min-width: 4.2rem; text-align: right; }
 .rp-orb .fp-line .num:last-child { margin-left: auto; }
 @container hud (max-width: 62rem) { .rp-body, #rp .fp-eng { display: none; } }
+
+/* The starship's panel (space/voyage.js) takes the rocket's place, and its key list the rocket's. */
+#sp { position: absolute; left: 50%; bottom: 0.9rem; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 0.35rem; }
+body:not(.starship) #sp, body.starship #rp { display: none; }
+body:not(.starship) .starship-keys, body.starship .rocket-keys { display: none; }
+.sp-spd { width: 9.4rem; } .sp-alt { width: 11rem; } .sp-dest { width: 12rem; }
+.sp-dest .val small { margin-left: 0.5rem; }
+/* The bracket round the destination: a ring the size of the world it marks, its name beside it. */
+#spMark { position: absolute; left: 0; top: 0; width: 0; height: 0; --s: 24px; color: var(--accent); font-size: var(--t-xs); font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; white-space: nowrap; }
+#spMark[hidden] { display: none; }
+#spMark i { position: absolute; left: calc(var(--s) / -2); top: calc(var(--s) / -2); width: var(--s); height: var(--s); box-sizing: border-box; border: 1.5px solid color-mix(in srgb, var(--accent) 70%, transparent); border-radius: 50%; }
+/* The names on the chart of the solar system (space/solarchart.js): a world's name can be clicked to lay in a course for it. */
+#solLabels { position: fixed; inset: 0; z-index: 3; pointer-events: none; overflow: hidden; font-size: var(--t-xs); font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; }
+#solLabels span { position: absolute; left: 0; top: 0; margin: -0.55rem 0 0 0.55rem; padding: 0.1rem 0.4rem; white-space: nowrap; color: var(--dim); text-shadow: 0 0 4px #000, 0 0 2px #000; }
+#solLabels .body { pointer-events: auto; cursor: pointer; border-radius: 0.25rem; }
+#solLabels .body:hover { color: var(--text); background: color-mix(in srgb, var(--accent) 22%, transparent); }
+#solLabels .dest { color: var(--accent); }
+#solLabels .ship { margin: 0.5rem 0 0 -2.6rem; color: #fff; letter-spacing: 0.08em; }
+#solLabels span[hidden] { display: none; }
+body.title #solLabels, body:not(.starship) #solLabels { display: none; }
+#spMark span { position: absolute; left: calc(var(--s) / 2 + 0.45rem); top: -0.55em; text-shadow: 0 0 4px #000, 0 0 2px #000; }
 /* The orbit map's labels: plain text over the canvas, each placed by its own transform. */
 #orbLabels { position: fixed; inset: 0; z-index: 3; pointer-events: none; overflow: hidden; font-size: var(--t-xs); font-weight: 600; letter-spacing: 0.06em; }
 #orbLabels span { position: absolute; left: 0; top: 0; margin: -0.5rem 0 0 0.6rem; padding: 0.05rem 0.35rem; white-space: nowrap; color: var(--text); text-shadow: 0 0 4px #000, 0 0 2px #000; }

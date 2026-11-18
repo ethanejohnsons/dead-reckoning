@@ -41,6 +41,11 @@ loudness (-23 LUFS for loops, about -20 LUFS for single sounds) and encoded as M
 | `rocket_roar.mp3` | A rocket's roar and crackle (space/rocketsound.js) | [shuttlelaunch.wav](https://freesound.org/people/klangfabrik/sounds/220127/), a re-edit of NASA's public-domain recordings of Space Shuttle launches with the commentary taken out | klangfabrik | CC0 1.0 | Wave, 2:12.423, 22.3 MB | 4.8-12.8 s, the end cross-faded into the beginning to loop |
 | `rocket_rumble.mp3` | A rocket's rumble below 120 Hz, in the ground and through the vehicle | [Rocket Launch Rumble at Canaveral](https://freesound.org/people/felix.blume/sounds/613855/), a night launch recorded 20 km from Kennedy Space Center | felix.blume | CC0 1.0 | Wave, 4:25.483, 146.6 MB | 18-32 s, the end cross-faded into the beginning to loop |
 | `rocket_ignite.mp3` | Engines lighting | [NASA Artemis II Moon Rocket Launch](https://freesound.org/people/qubodup/sounds/849949/), the sound of NASA's 360-degree video of the launch | qubodup | CC0 1.0 | M4a, 1:25.147, 1.3 MB | 7.2-13.7 s: from the last quiet moment to full roar, faded out |
+| `ship_hum.mp3` | The starship's own hum (space/shipsound.js) | [grocery store fridge mechanical sound, spaceship ambient droning](https://freesound.org/people/tlalexander/sounds/609830/), the refrigeration plant of a grocery store | tlalexander | CC0 1.0 | Wave, 1:45.376, 9.6 MB | 20-34 s (14 s loop) |
+| `ship_impulse.mp3` | The starship's impulse engines | [motor industrial turbine hum metal vibrate2.flac](https://freesound.org/people/kyles/sounds/453475/) | kyles | CC0 1.0 | Flac, 0:31.957, 2.8 MB | 8-18 s (10 s loop); played faster the more power is asked |
+| `ship_warp.mp3` | The starship's warp field | [hum electric transformer in large room2.flac](https://freesound.org/people/kyles/sounds/453445/) | kyles | CC0 1.0 | Flac, 0:28.693, 2.9 MB | 6-16 s (10 s loop); played faster the higher the warp factor, and again a fifth above |
+| `ship_spool.mp3` | The starship winding up for warp (and, backward, coming out of it) | [Train Motor Departing passenger (Electric Multiple Unit).wav](https://freesound.org/people/JotrainG/sounds/647669/) | JotrainG | CC0 1.0 | Wave, 0:10.000, 1.7 MB | the motor's first climb, 0.15-3.1 s; played about three times as fast |
+| `ship_boom.mp3` | The jump to warp | [Sonic boom from Falcon 9 rocket landing](https://freesound.org/people/g0ggs/sounds/668561/) | g0ggs | CC0 1.0 | Wave, 0:08.430, 1.4 MB | 1.38-7.98 s: the double boom and its roll, faded out; played with a copy at half speed under it |
 
 The engine recordings by keng-wai-chane-chick-te are four parts of one flight in a Cessna 152 at the Namur aero club,
 recorded in the cabin on 21 October 2017 with an Olympus LS-100. The engine speed of each band was measured from the
@@ -58,3 +63,5 @@ free recording of a Cessna reed horn was found), the buffet of a stalled wing, a
 of the recorded wind in gusts. If a file fails to load, a synthesized stand-in is used for that layer.
 
 The three `rocket_*.mp3` files are cut by `tools/bake-rocket-sounds.py`, which also writes `rocket.json` (their loop points).
+The five `ship_*.mp3` files are cut by `tools/bake-ship-sounds.py`, which also writes `ship.json`. None of them is a recording of
+a starship, there being none: each is a real machine doing what the ship is imagined to do.

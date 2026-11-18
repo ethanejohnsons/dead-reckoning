@@ -66,6 +66,33 @@
       </div>
     </div>
 
+    <!-- The starship's panel (space/voyage.js), and the bracket it puts round the destination in the view. -->
+    <div id="spMark" hidden><i></i><span id="spMarkT"></span></div>
+    <div id="sp" aria-label="Starship panel">
+      <div class="fp-ann">
+        <span id="spAuto" class="ann" hidden>Helm <b id="spAutoV"></b></span>
+        <span id="spOrb" class="ann" hidden>Standard orbit <b id="spOrbV"></b></span>
+      </div>
+      <div class="fp-body">
+        <div class="fp-side fp-eng">
+          <div class="fp-line"><span class="lbl">Impulse</span><span class="bar"><i id="spThrBar"></i></span><b id="spThr" class="num"></b></div>
+          <div class="fp-line"><b id="spDrive"></b></div>
+        </div>
+        <div class="fp-cell sp-spd">
+          <span class="lbl" id="spSpdLbl">Speed</span>
+          <span class="val"><b id="spSpd" class="num"></b><small id="spSpdU">mph</small></span>
+        </div>
+        <div class="fp-cell sp-alt">
+          <span class="lbl" id="spAltLbl">Above the Earth</span>
+          <span class="val"><b id="spAlt" class="num"></b><small id="spAltU">mi</small></span>
+        </div>
+        <div class="fp-cell sp-dest">
+          <span class="lbl">Destination</span>
+          <span class="val"><b id="spTgt"></b><small id="spTgtD" class="num"></small></span>
+        </div>
+      </div>
+    </div>
+
     <!-- The flight panel. In the cockpit it folds down to speed, heading and altitude along the top edge. -->
     <div id="fp" aria-label="Flight panel">
       <div class="fp-ann">
@@ -246,6 +273,20 @@
             <tr><td><kbd>Esc</kbd></td><td>This menu</td></tr>
           </table>
           <p class="muted small rocket-keys">To orbit by hand: lift off, tip the nose east a little at a time (W) so it is on the horizon by 60 miles up, and keep burning until the low point of the orbit is above 90 miles. To the Moon: in orbit, press L and watch; or do it yourself: press 2 and burn until the high point reaches the Moon's path, timed so the Moon is there when you are.</p>
+          <table class="keys starship-keys">
+            <tr><td><kbd>W</kbd> <kbd>S</kbd></td><td>Bow down / up</td></tr>
+            <tr><td><kbd>A</kbd> <kbd>D</kbd></td><td>Turn to port / starboard (<kbd>Q</kbd> <kbd>E</kbd> roll)</td></tr>
+            <tr><td><kbd>R</kbd> <kbd>F</kbd></td><td>More / less impulse (<kbd>Z</kbd> full, <kbd>X</kbd> all stop). How fast that is grows with your height: slow among the hills, a quarter of the speed of light between the planets</td></tr>
+            <tr><td><kbd>.</kbd> <kbd>,</kbd></td><td>Warp factor up / down, 1 to 9 (<kbd>T</kbd> steps up), once clear of the air. The ship comes out of warp by itself near a planet</td></tr>
+            <tr><td><kbd>N</kbd></td><td>Lay in a course: the next destination (<kbd>Shift</kbd>+<kbd>N</kbd> the one before)</td></tr>
+            <tr><td><kbd>G</kbd></td><td>Engage: the helm flies there, at warp, and takes up a standard orbit</td></tr>
+            <tr><td><kbd>O</kbd></td><td>Standard orbit of the world below</td></tr>
+            <tr><td><kbd>M</kbd></td><td>Chart of the solar system: the orbits, where you are, your course. Drag to turn, wheel to zoom, <kbd>Tab</kbd> for the next center; click a world to lay in a course for it</td></tr>
+            <tr><td><kbd>C</kbd></td><td>Chase view / the captain's chair on the bridge / a camera the ship flies past; drag to look around, wheel to zoom</td></tr>
+            <tr><td><kbd>V</kbd></td><td>Weather</td></tr>
+            <tr><td><kbd>Esc</kbd></td><td>This menu</td></tr>
+          </table>
+          <p class="muted small starship-keys">Any control takes the helm back. Come down through the air over the Earth and the country below is the game's own: its weather, its cities, its hills.</p>
           <table class="keys plane-keys">
             <tr><td><kbd>W</kbd> <kbd>S</kbd></td><td>Push down / pull up (the arrow keys also fly)</td></tr>
             <tr><td><kbd>A</kbd> <kbd>D</kbd></td><td>Roll left / right</td></tr>

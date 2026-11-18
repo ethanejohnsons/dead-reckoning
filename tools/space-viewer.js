@@ -2,9 +2,18 @@
 // and a satellite, under three lighting rigs: "studio" (a neutral room), "day" (sun, sky, fog and a ground
 // plane, like the game's ground scene) and "space" (one hard sun, a whisper of ambient, black sky).
 //
-// URL parameters: v=saturnv|starship|none, pad=1|saturnv|starship, sat=iss|hubble|tiangong|gps|comsat|starlink,
+// URL parameters: v=saturnv|starship|enterprise|bridge|none, pad=1|saturnv|starship, sat=iss|hubble|tiangong|gps|comsat|starlink,
 // stage, throttle, pressure, time, t (seconds since liftoff, for the pad), night, light=studio|day|space,
 // bloom=0|1, trail=1, speed, launch=1 (a scripted launch: see V.launch), wind=x,z (m/s), quality=low|med|high|ultra.
+// v=enterprise shows the starship (src/space/model-enterprise.js) by itself: warp, impulse, flash (each 0..1) and night
+// drive its lights (also V.set({ warp: 1 })); in the space rig it gets the game's sunlight and eye and the Earth's light from
+// below (earth=strength), and night takes both away.
+// v=bridge shows the starship's bridge (src/space/bridge-enterprise.js) from the captain's chair, in front of a bright painted
+// sky (the main viewer and the skylight are openings: the sky shows in them). Drag to turn the head, wheel to zoom.
+// yaw, pitch (degrees: to starboard, up), fov, expo (the picture's exposure, as the game gives it) and the flight the displays
+// show: spd (m/s), warp (the factor), spool, impulse, world, height (m), dest, distance (m), helm, orbit=1.
+// From code: V.bridge({ yaw, pitch, fov, zoom, expo, free, data: { speed, warp, spool, impulse, world, height, dest, distance,
+// helm, orbit } }), V.bridgeInfo() (draw calls, triangles, textures), V.B.room (what buildBridge() returned).
 // Keys: V vehicle, P pad, L light, [ ] stage, - = throttle, , . pressure, B bloom, T trail, G launch, F follow the
 // vehicle, space pauses. Drag to orbit, wheel to zoom, right-drag to pan.
 //
@@ -36,6 +45,7 @@ const S = {
   vehicle: q.get('v') || (q.has('sat') ? 'none' : 'saturnv'), pad: q.get('pad') || '', sat: q.get('sat') || '',
   stage: num('stage', 0), throttle: num('throttle', 0), pressure: num('pressure', 1), time: num('time', 0), t: num('t', -10),
   night: num('night', 0), light: q.get('light') || 'studio', bloom: num('bloom', 1), trail: num('trail', 0), speed: num('speed', 0),
+  warp: num('warp', 0), impulse: num('impulse', 0), flash: num('flash', 0), earth: num('earth', 1.1),
   gimbal: { x: 0, y: 0 }, flaps: null, paused: false, altitude: 0, quality: q.get('quality') || 'high',
   wind: (q.get('wind') || '3,1').split(',').map(Number), shade: 0, sunEl: num('sunel', 0), sunAz: num('sunaz', 0),
 };
@@ -79,6 +89,7 @@ sun.castShadow = true; sun.shadow.mapSize.set(4096, 4096); sun.shadow.bias = -0.
 Object.assign(sun.shadow.camera, { left: -180, right: 180, top: 220, bottom: -60, near: 10, far: 1500 });
 const hemi = new THREE.HemisphereLight(0xcfe0ff, 0x5a5850, 0.6), amb = new THREE.AmbientLight(0xffffff, 0.03);
 scene.add(sun, sun.target, hemi, amb);
+const earthshine = new THREE.DirectionalLight(new THREE.Color(0.55, 0.72, 1.0), 0); earthshine.position.set(100, -500, 150); scene.add(earthshine);       // the sunlit Earth under the starship (v=enterprise in the space rig; earth=0 takes it away)
 const ground = new THREE.Mesh(new THREE.CircleGeometry(20000, 64).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x566049, roughness: 1 }));
 ground.receiveShadow = true; ground.position.y = -0.3; scene.add(ground);
 const skyDome = skyScene.children[0].clone(); skyDome.scale.setScalar(300); skyDome.material = skyDome.material.clone(); skyDome.material.fog = false; scene.add(skyDome);
@@ -94,20 +105,31 @@ function applyLight() {
   skyDome.visible = day; skyDome.material.color.setScalar(1 - 0.985 * n);
   ground.visible = day;
   sun.position.copy(SUN_DIR).multiplyScalar(600); sun.intensity = space ? 3.4 : day ? 2.6 * (1 - 0.98 * n) : 1.8;
+  if (ship) {
+    // a 640 m ship: a wider shadow, and in space the game's own sunlight (4.9) and eye (which opens in the dark)
+    sun.position.copy(SUN_DIR).multiplyScalar(1200); Object.assign(sun.shadow.camera, { left: -420, right: 420, top: 420, bottom: -420, near: 100, far: 2400 }); sun.shadow.camera.updateProjectionMatrix();
+    renderer.toneMappingExposure = space ? 0.64 * (1.25 + 1.5 * n * n) : 0.7;
+    if (space) sun.intensity = 4.9 * (1 - n);
+    earthshine.intensity = space ? S.earth * (1 - n) : 0;
+  } else if (sun.shadow.camera.right !== 180) { Object.assign(sun.shadow.camera, { left: -180, right: 180, top: 220, bottom: -60, near: 10, far: 1500 }); sun.shadow.camera.updateProjectionMatrix(); renderer.toneMappingExposure = 0.7; earthshine.intensity = 0; }
   hemi.intensity = space ? 0 : day ? 0.3 * (1 - 0.95 * n) : 0.2; amb.intensity = space ? 0.03 : 0;
 }
 
 // ---------------------------------------------------------------- what is on stage
 let vehicle = null, pad = null, sat = null, plume = null, trail = null, built = {};
+let ship = null, shipMod = S.vehicle === 'enterprise' ? await load('../src/space/model-enterprise.js') : null;          // the starship: not a launch vehicle, so it has a slot of its own
+let bridgeMod = S.vehicle === 'bridge' ? await load('../src/space/bridge-enterprise.js') : null;                          // its bridge: a room, seen from the captain's chair (B, below)
 const spentBits = [];
 function clear(o) { if (!o) return; (o.root || o.group || o.object).removeFromParent(); o.dispose && o.dispose(); }
 function rebuild() {
-  leaveCabin();
-  clear(vehicle); clear(pad); clear(sat); clear(plume); clear(trail);
+  leaveCabin(); leaveBridge();
+  clear(vehicle); clear(pad); clear(sat); clear(plume); clear(trail); clear(ship); ship = null;
   for (const b of spentBits.splice(0)) b.removeFromParent();
   vehicle = pad = sat = plume = trail = null; built = {};
   const time = (name, fn) => { const t0 = performance.now(); try { const r = fn(); built[name] = +(performance.now() - t0).toFixed(1); return r; } catch (e) { fail(name, e); return null; } };
-  if (S.vehicle && S.vehicle !== 'none' && vehMod) { vehicle = time('vehicle', () => vehMod.buildVehicle(S.vehicle)); if (vehicle) scene.add(vehicle.root); }
+  if (S.vehicle === 'enterprise') { if (shipMod) { ship = time('ship', () => shipMod.buildEnterprise()); if (ship) scene.add(ship.root); } }
+  else if (S.vehicle === 'bridge') { if (bridgeMod) enterBridge(time('bridge', () => bridgeMod.buildBridge())); }
+  else if (S.vehicle && S.vehicle !== 'none' && vehMod) { vehicle = time('vehicle', () => vehMod.buildVehicle(S.vehicle)); if (vehicle) scene.add(vehicle.root); }
   const padKind = S.pad === '1' ? S.vehicle : S.pad;
   if (padKind && padKind !== '0' && padMod) { pad = time('pad', () => padMod.buildPad(padKind)); if (pad) scene.add(pad.root); }
   if (S.sat && satMod) { sat = time('sat', () => satMod.buildSatellite(S.sat)); if (sat) scene.add(sat.root); }
@@ -158,6 +180,8 @@ function step(dt) {
     if (A.on && A.follow) { const y = vehicle.root.position.y + vehicle.height * 0.3, d = y - controls.target.y; controls.target.y = y; camera.position.y += d; }
   }
   if (pad) pad.update(dt, { t: S.t, night: S.night });
+  if (ship) ship.update(dt, { time: S.time, impulse: S.impulse, warp: S.warp, night: S.night, flash: S.flash });
+  if (B.room) { try { B.room.update(dt, { time: S.time, exposure: B.expo, ...B.data }); } catch (e) { fail('bridge.update', e); leaveBridge(); } }
   if (C.on && C.cabin) {
     if (C.run) C.t += dt;
     C.s = { ...flight(C.t, S.vehicle), time: S.time, night: S.night, lit: C.lit, sunDir: C.sun || SUN_DIR, ...C.data };
@@ -236,6 +260,53 @@ function cabinCamera() {
   camera.fov = Math.max(12, Math.min(100, (C.fov || cb.fov || 62) * C.zoom)); camera.near = 0.05; camera.far = C.light === 'space' ? 2e7 : 60000; camera.updateProjectionMatrix();
 }
 
+// ---------------------------------------------------------------- the starship's bridge (v=bridge)
+// The room alone, from the captain's chair. Behind it a bright painted sky with a planet dead ahead, so that an opening in the
+// room (the main viewer, the skylight) is plainly an opening. B.data is the flight its displays show.
+const B = {
+  room: null, sky: null, yaw: num('yaw', 0), pitch: num('pitch', 0), zoom: 1, fov: num('fov', 0), expo: num('expo', 1.25), free: false,
+  data: { speed: num('spd', 7660), warp: S.vehicle === 'bridge' ? S.warp : 0, spool: num('spool', 0), impulse: S.vehicle === 'bridge' ? S.impulse : 0, world: q.get('world') || 'Earth', height: num('height', 408000), dest: q.get('dest'), distance: num('distance', 1.28e12), helm: q.get('helm'), orbit: q.has('orbit') },
+};
+function bridgeSky() {
+  const c = document.createElement('canvas'); c.width = 2048; c.height = 1024; const g = c.getContext('2d');
+  const gd = g.createLinearGradient(0, 0, 0, 1024); gd.addColorStop(0, '#2b6fff'); gd.addColorStop(0.35, '#ff5fa8'); gd.addColorStop(0.5, '#ffd24a'); gd.addColorStop(0.65, '#3fd68a'); gd.addColorStop(1, '#15306b'); g.fillStyle = gd; g.fillRect(0, 0, 2048, 1024);
+  let sd = 11; const rnd = () => { sd = (sd * 16807) % 2147483647; return sd / 2147483647; };
+  for (let i = 0; i < 90; i++) { g.fillStyle = `hsla(${Math.floor(rnd() * 360)},90%,60%,0.5)`; g.beginPath(); g.ellipse(rnd() * 2048, rnd() * 1024, 20 + rnd() * 120, 10 + rnd() * 60, rnd() * 3, 0, 7); g.fill(); }
+  g.strokeStyle = 'rgba(255,255,255,0.75)'; g.lineWidth = 3;
+  for (let k = 0; k <= 24; k++) { g.beginPath(); g.moveTo((k * 2048) / 24, 0); g.lineTo((k * 2048) / 24, 1024); g.stroke(); }
+  for (let k = 1; k < 12; k++) { g.beginPath(); g.moveTo(0, (k * 1024) / 12); g.lineTo(2048, (k * 1024) / 12); g.stroke(); }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  const sky = new THREE.Group(), dome = new THREE.Mesh(new THREE.SphereGeometry(20000, 48, 24), new THREE.MeshBasicMaterial({ map: t, side: THREE.BackSide, fog: false }));
+  const pc = document.createElement('canvas'); pc.width = 512; pc.height = 256; const pg = pc.getContext('2d');
+  for (let y = 0; y < 256; y += 8) { pg.fillStyle = `hsl(${28 + 14 * Math.sin(y * 0.11)},${55 + 25 * Math.sin(y * 0.07)}%,${52 + 22 * Math.sin(y * 0.23)}%)`; pg.fillRect(0, y, 512, 8); }
+  const pt = new THREE.CanvasTexture(pc); pt.colorSpace = THREE.SRGBColorSpace;
+  const planet = new THREE.Mesh(new THREE.SphereGeometry(2600, 64, 32), new THREE.MeshBasicMaterial({ map: pt, fog: false })); planet.position.set(900, 500, -9000); planet.rotation.z = 0.4;
+  for (const m of [dome, planet]) m.frustumCulled = false;
+  sky.add(dome, planet);
+  return sky;
+}
+function leaveBridge() {
+  if (!B.room) return;
+  B.room.root.removeFromParent(); try { B.room.dispose(); } catch (e) { fail('bridge.dispose', e); } B.room = null;
+  if (B.sky) B.sky.visible = false;
+  controls.enabled = true; renderer.toneMappingExposure = 0.7; camera.near = 0.5; camera.far = 60000; camera.fov = 35; camera.updateProjectionMatrix();
+}
+function enterBridge(room) {
+  if (!room) return;
+  B.room = room; scene.add(room.root);
+  if (!B.sky) { B.sky = bridgeSky(); scene.add(B.sky); } B.sky.visible = true;
+  controls.enabled = false; if (!q.has('light')) S.light = 'space';
+}
+function bridgeCamera() {
+  const r = B.room, R = r.reach || { yaw: 2.6, up: 1.1, down: 0.9 }, D = Math.PI / 180;
+  if (!B.free) { B.yaw = Math.max(-R.yaw / D, Math.min(R.yaw / D, B.yaw)); B.pitch = Math.max(-R.down / D, Math.min(R.up / D, B.pitch)); }
+  r.root.updateMatrixWorld(true);
+  camera.position.copy(r.eye).applyMatrix4(r.root.matrixWorld);
+  camera.quaternion.setFromEuler(_e1.set(B.pitch * D, -B.yaw * D, 0, 'YXZ')).premultiply(r.root.getWorldQuaternion(_q1));          // the game's own head: pitch, then yaw about the ship's up (turn V.B.room.root to turn the ship)
+  renderer.toneMappingExposure = 0.64 * B.expo;                                         // the game's picture in space (mission.js)
+  camera.fov = Math.max(5, Math.min(110, (B.fov || r.fov || 55) * B.zoom)); camera.near = 0.06; camera.far = 60000; camera.updateProjectionMatrix();
+}
+
 function resize() {
   const w = canvas.clientWidth || innerWidth, h = canvas.clientHeight || innerHeight, pr = renderer.getPixelRatio();
   if (canvas.width !== Math.floor(w * pr) || canvas.height !== Math.floor(h * pr)) {
@@ -243,24 +314,27 @@ function resize() {
   }
 }
 function draw() {
-  resize(); if (C.on && C.cabin) cabinCamera(); else controls.update();
+  resize(); if (C.on && C.cabin) cabinCamera(); else if (B.room) bridgeCamera(); else controls.update();
   renderer.info.reset();
   if (S.bloom) composer.render(); else renderer.render(scene, camera);
   const st = vehicle ? vehicle.stages[Math.min(S.stage, vehicle.stages.length - 1)] : null;
-  hud.textContent = `${S.vehicle}${pad ? ' + pad' : ''}${S.sat ? ' ' + S.sat : ''}  light ${S.light}  night ${S.night}\n` +
+  hud.textContent = `${S.vehicle}${pad ? ' + pad' : ''}${S.sat ? ' ' + S.sat : ''}  light ${S.light}  night ${S.night}${ship ? `  warp ${S.warp}  impulse ${S.impulse}  flash ${S.flash}` : ''}\n` +
     (st ? `stage ${S.stage} ${st.name} (${st.propellant})  throttle ${S.throttle.toFixed(2)}  pressure ${S.pressure.toFixed(3)}  time ${S.time.toFixed(1)}  t ${S.t.toFixed(1)}\n` : '') +
     `build ms ${JSON.stringify(built)}  calls ${renderer.info.render.calls}  tris ${renderer.info.render.triangles}` +
     (trail && trail.count ? `\nsmoke ${trail.count} puffs  overdraw ${trail.overdraw.toFixed(1)} screens  quality ${S.quality}` : '') + (A.on ? `  T${A.lifted ? '+' + A.met.toFixed(1) : '-'}  height ${A.y.toFixed(0)} m  ${A.vy.toFixed(0)} m/s` : '') +
-    (C.on && C.s ? `\ncabin (${C.light})  T${C.t < 0 ? '' : '+'}${C.t.toFixed(1)}  ${C.s.stageName}  alt ${(C.s.alt / 1000).toFixed(1)} km  ${C.s.speedOrb.toFixed(0)} m/s  pitch ${C.s.pitch.toFixed(1)}  g ${C.s.gLoad.toFixed(2)}  head ${(C.yaw * 57.3).toFixed(0)}/${(C.pitch * 57.3).toFixed(0)}  fov ${camera.fov.toFixed(0)}` : '');
+    (C.on && C.s ? `\ncabin (${C.light})  T${C.t < 0 ? '' : '+'}${C.t.toFixed(1)}  ${C.s.stageName}  alt ${(C.s.alt / 1000).toFixed(1)} km  ${C.s.speedOrb.toFixed(0)} m/s  pitch ${C.s.pitch.toFixed(1)}  g ${C.s.gLoad.toFixed(2)}  head ${(C.yaw * 57.3).toFixed(0)}/${(C.pitch * 57.3).toFixed(0)}  fov ${camera.fov.toFixed(0)}` : '') +
+    (B.room ? `\nbridge  head ${B.yaw.toFixed(0)}/${B.pitch.toFixed(0)}  fov ${camera.fov.toFixed(0)}  expo ${B.expo}  warp ${B.data.warp}  spool ${B.data.spool}  impulse ${B.data.impulse}` : '');
 }
 renderer.info.autoReset = false;
 
 const V = (window.V = {
   S, THREE, scene, camera, controls, renderer, sun, SUN_DIR,
-  get vehicle() { return vehicle; }, get pad() { return pad; }, get sat() { return sat; }, get plume() { return plume; }, get trail() { return trail; }, get built() { return built; },
+  get vehicle() { return vehicle; }, get pad() { return pad; }, get sat() { return sat; }, get plume() { return plume; }, get trail() { return trail; }, get built() { return built; }, get ship() { return ship; },
   set(o = {}) {
     const re = ['vehicle', 'pad', 'sat'].some((k) => k in o && o[k] !== S[k]);
     Object.assign(S, o);
+    if (S.vehicle === 'enterprise' && !shipMod) { load('../src/space/model-enterprise.js').then((m) => { shipMod = m; rebuild(); applyLight(); }); return V; }
+    if (S.vehicle === 'bridge' && !bridgeMod) { load('../src/space/bridge-enterprise.js').then((m) => { bridgeMod = m; rebuild(); applyLight(); }); return V; }
     if (re) rebuild();
     if (vehicle && 'stage' in o) vehicle.setStage(S.stage);
     if (trail && 'quality' in o) trail.setQuality(S.quality);
@@ -294,7 +368,7 @@ const V = (window.V = {
   A,
   /** Draw calls of one part alone, in a plain render with no shadows or post-processing. */
   calls(which = 'all') {
-    const parts = { vehicle: vehicle && vehicle.root, pad: pad && pad.root, sat: sat && sat.root, plume: plume && plume.group, trail: trail && trail.object };
+    const parts = { vehicle: vehicle && vehicle.root, pad: pad && pad.root, sat: sat && sat.root, plume: plume && plume.group, trail: trail && trail.object, ship: ship && ship.root };
     const keep = [], hide = (o) => { if (o && o.visible) { keep.push(o); o.visible = false; } };
     if (which !== 'all') { for (const k of Object.keys(parts)) if (k !== which && !(which === 'plume' && k === 'vehicle')) hide(parts[k]); hide(ground); hide(skyDome); }
     if (which === 'plume' && vehicle) vehicle.stages.forEach((s) => hide(s.group));
@@ -310,6 +384,23 @@ const V = (window.V = {
   /** The view from the commander's seat (see the top of the file). */
   cabin(o = {}) { if (o.off) leaveCabin(); else enterCabin(o); return V; },
   get C() { return C; },
+  /** The starship's bridge (v=bridge): turn the head, set the lens and the exposure, give the displays a flight to show. */
+  bridge(o = {}) {
+    for (const k of ['yaw', 'pitch', 'fov', 'zoom', 'expo', 'free']) if (k in o) B[k] = o[k];
+    if (o.data) Object.assign(B.data, o.data);
+    return V;
+  },
+  get B() { return B; },
+  /** Draw calls and triangles of the bridge alone (per mesh too), its textures and how long it took to build. */
+  bridgeInfo() {
+    if (!B.room) return null;
+    const sky = B.sky.visible; B.sky.visible = false; renderer.info.reset(); renderer.render(scene, camera);
+    const calls = renderer.info.render.calls, triangles = renderer.info.render.triangles; B.sky.visible = sky;
+    const tex = new Map(), meshes = {};
+    B.room.root.traverse((x) => { if (x.isMesh) meshes[x.name] = x.geometry.attributes.position.count / 3; for (const m of x.material ? [].concat(x.material) : []) for (const k of Object.keys(m)) { const t = m[k]; if (t && t.isTexture && t.image) tex.set(t.uuid, [t.image.width, t.image.height, t.generateMipmaps ? 1.34 : 1]); } });
+    let bytes = 0; for (const [w, h, k] of tex.values()) bytes += w * h * 4 * k;
+    return { calls, triangles, meshes, textures: tex.size, textureMB: +(bytes / 1048576).toFixed(1), sizes: [...tex.values()].map((x) => x[0] + 'x' + x[1]).join(' '), buildMs: built.bridge, programs: renderer.info.programs.filter((p) => p.diagnostics && !p.diagnostics.runnable).length };
+  },
   flight,
   /** Draw calls and triangles of the cabin alone, its textures and how long it took to build. */
   cabinInfo() {
@@ -326,10 +417,17 @@ const V = (window.V = {
 // the head turns with a drag and the lens zooms with the wheel while in the cabin
 {
   let drag = null;
-  canvas.addEventListener('pointerdown', (e) => { if (C.on) drag = [e.clientX, e.clientY]; });
+  canvas.addEventListener('pointerdown', (e) => { if (C.on || B.room) drag = [e.clientX, e.clientY]; });
   addEventListener('pointerup', () => { drag = null; });
-  addEventListener('pointermove', (e) => { if (!C.on || !drag) return; const k = (camera.fov * Math.PI / 180) / canvas.clientHeight; C.yaw += (e.clientX - drag[0]) * k; C.pitch += (e.clientY - drag[1]) * k; drag = [e.clientX, e.clientY]; });
-  canvas.addEventListener('wheel', (e) => { if (C.on) { C.zoom = Math.max(0.3, Math.min(1.5, C.zoom * (e.deltaY > 0 ? 1.08 : 0.926))); e.preventDefault(); } }, { passive: false });
+  addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    if (B.room) { const k = camera.fov / canvas.clientHeight; B.yaw -= (e.clientX - drag[0]) * k; B.pitch += (e.clientY - drag[1]) * k; drag = [e.clientX, e.clientY]; return; }
+    if (!C.on) return; const k = (camera.fov * Math.PI / 180) / canvas.clientHeight; C.yaw += (e.clientX - drag[0]) * k; C.pitch += (e.clientY - drag[1]) * k; drag = [e.clientX, e.clientY];
+  });
+  canvas.addEventListener('wheel', (e) => {
+    if (B.room) { B.zoom = Math.max(0.15, Math.min(1.6, B.zoom * (e.deltaY > 0 ? 1.08 : 0.926))); e.preventDefault(); }
+    else if (C.on) { C.zoom = Math.max(0.3, Math.min(1.5, C.zoom * (e.deltaY > 0 ? 1.08 : 0.926))); e.preventDefault(); }
+  }, { passive: false });
 }
 
 addEventListener('keydown', (e) => {
@@ -358,7 +456,8 @@ if (num('launch', 0)) V.launch();
 if (q.has('cabin')) V.cabin({ light: q.get('cabin') === '1' ? 'daylight' : q.get('cabin'), t: num('ct', -8) });
 {
   const h = vehicle ? vehicle.height : sat ? sat.radius : 100, base = pad && vehicle ? pad.standY : 0;
-  if (sat && !vehicle) V.view({ target: [0, 0, 0], az: 35, el: 20, dist: sat.radius * 3.4 });
+  if (ship) V.view({ target: [0, -30, 0], az: 145, el: 22, dist: 1050 });
+  else if (sat && !vehicle) V.view({ target: [0, 0, 0], az: 35, el: 20, dist: sat.radius * 3.4 });
   else V.view({ target: [0, base + h * 0.5, 0], az: 35, el: 6, dist: h * 2.1 });
 }
 let last = performance.now();
