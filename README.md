@@ -323,7 +323,8 @@ data comes from, and has a line on every file. In short:
   timing
 - `src/aircraft/` flight model; the fleet (`variants.js`); the Cessna airframe
   and cockpit with working instruments, generated in code; the loader for the
-  aircraft that come as model files (`public/models/`); first-person head camera
+  aircraft that come as model files (`public/models/`), their cockpits and the
+  screens and head-up display drawn for them; first-person head camera
 - `src/core/` input, sound (recordings in `public/audio/`, mixed and pitched
   in `audio.js`), shared uniforms
 - `src/ui/` the flight panel, the map (the world, the window, pin, street-map
@@ -340,20 +341,30 @@ Six aircraft, chosen on the title screen or under Menu:
 
 - **Cessna 172, 152 and 182**: piston singles, generated in code, with a
   modeled cabin and working instruments.
-- **P-51D Mustang**: 1,500 horsepower and a tail wheel.
+- **P-51D Mustang**: 1,500 horsepower and a tail wheel. Its cockpit is the
+  1944 one: the K-14 gunsight on the coaming, the six flight instruments,
+  manifold pressure and rpm (the airspeed dial is marked in miles an hour, as
+  the real one is).
 - **F-16**: with the power lever all the way forward the afterburner lights,
-  and it goes supersonic.
+  and it goes supersonic. A head-up display over the nose (pitch ladder,
+  flight path marker, airspeed, altitude, heading, g and Mach), two
+  multifunction displays and the standby dials.
 - **Boeing 737-800**: wants a runway of 1,500 m (the F-16 900 m, the P-51 550
-  m); from a shorter one the flight starts in the air over the field.
+  m); from a shorter one the flight starts in the air over the field. Flown
+  from the left seat: primary flight display, navigation display (the map pin
+  shows on it), engine display, standby instruments.
 
-The last three are FlightGear's models, converted by `tools/ac2glb.py`, and
-are under the GNU General Public License, version 2 (see
-`public/models/CREDITS.md`). Their landing gear and flaps look after
+The last three are FlightGear's models and FlightGear's cockpits, converted
+by `tools/ac2glb.py`, and are under the GNU General Public License, version 2
+(see `public/models/CREDITS.md`). Their landing gear and flaps look after
 themselves, the airbrakes of the jets open when the power lever is at idle,
 and the jets leave contrails in air colder than about -38 °C (above roughly
 28,000 feet on an ordinary day). The flight panel shows the Mach number for a
-jet where it shows rpm for the others. They have no modeled cockpit: `C`
-gives a clear view from the pilot's seat.
+jet where it shows rpm for the others. `C` puts you in the seat: the needles,
+drums, stick or yoke, throttle and pedals move with the flight, the screens
+and the F-16's head-up display are drawn by the game, the panels light up as
+it gets dark, and rain and frost gather on the canopy. A cockpit is fetched
+when its aircraft is chosen (3.5 to 7.5 MB); the aircraft flies meanwhile.
 
 ## Sound
 
@@ -416,6 +427,9 @@ over. The Moon itself is NASA's: the Lunar Reconnaissance Orbiter's color mosaic
 A rocket is heard through the air it is in: a crackling roar on the pad (recordings of real launches), duller and
 fainter as the air thins, a rumble through the structure in the onboard view (`C`) all the way to orbit. Coming
 home, the air glows around the craft.
+
+`C` in a rocket goes from the chase view to the commander's seat (the Apollo console in the Saturn V, a flight
+deck in Starship, the instruments live and the world through the windows) to a camera on the vehicle's skin.
 
 `M` in a rocket is the orbit map: the path ahead, with its high and low points, drawn around the Earth, and
 around the Moon for the part of it inside the Moon's pull. `.` and `,` run time faster and slower (up to

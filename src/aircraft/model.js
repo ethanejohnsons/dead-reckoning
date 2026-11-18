@@ -18,8 +18,9 @@ import { buildPanel, animatePanel } from './panel.js';
 
 /** Pilot's eye point (left seat) in body coordinates, for the cockpit camera. Set for the variant on build. */
 export const PILOT_EYE = new THREE.Vector3(-0.27, 0.42, -0.23);
-/** How the pilot's gaze rests: `down` radians below the horizon (onto the instruments here; an aircraft without a panel looks ahead). */
-export const PILOT_VIEW = { down: 0.31 };
+/** How the pilot's gaze rests: `down` radians below the horizon (onto the instruments here); `lean`: how far the head leans
+ *  toward a window as it turns to look back, [left, right] meters (null: the Cessna's, see cockpitcam.js). */
+export const PILOT_VIEW = { down: 0.31, lean: null };
 
 // Livery of the variant being built (set by buildAircraft): base paint, accent, pinstripe.
 let CSS = { white: '#f2f1ec', red: '#b0151b', dark: '#22252b', black: '#141516' };
@@ -627,7 +628,7 @@ export function buildAircraft(variant) {
     top: (z) => fTop(unwarpZ(g, z)), bot: (z) => fBot(unwarpZ(g, z)),
     zW: (z) => Wp([0, 0, z])[2], post: POST, paintMask: ft.paintMask,
   };
-  PILOT_EYE.set(-0.27 * g.width, 0.42, -0.23); PILOT_VIEW.down = 0.31;
+  PILOT_EYE.set(-0.27 * g.width, 0.42, -0.23); PILOT_VIEW.down = 0.31; PILOT_VIEW.lean = null;
   parts.eye = PILOT_EYE.clone();
   const cab = buildInterior(A, { root, cabin, body, pit });
   const pan = buildPanel(A, { root, cabin, body, pit });
@@ -663,6 +664,7 @@ export function buildAircraft(variant) {
 /** Free everything a built aircraft holds on the GPU. Textures shared between variants (marked userData.shared) stay. */
 export function disposeAircraft(model) {
   const seen = new Set();
+  model.parts.disposed = true;                         // (a cockpit still on its way in is dropped when it arrives: pit.js)
   model.root.traverse((o) => {
     if (o.geometry && !seen.has(o.geometry)) { seen.add(o.geometry); o.geometry.dispose(); }
     for (const m of o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : []) {

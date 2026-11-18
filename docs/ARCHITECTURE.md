@@ -20,8 +20,8 @@ how that file does it. This document sits between the two.
 Two pieces of three.js are imported by path rather than from the package root:
 `three/src/extras/lib/earcut.js` (polygon triangulation, in the city and land
 cover workers) and `three/addons/utils/BufferGeometryUtils.js` (merging the
-aircraft's parts, `src/aircraft/kit.js` and `gltfmodel.js`). `gltfmodel.js` also
-uses `three/addons/loaders/GLTFLoader.js`.
+aircraft's parts, `src/aircraft/kit.js`, `gltfmodel.js` and `pit.js`). `gltfmodel.js`
+and `pit.js` also use `three/addons/loaders/GLTFLoader.js`.
 
 ### Adding an aircraft
 
@@ -33,7 +33,12 @@ the file's center of gravity and wheels are, lights, nozzles: the fields are
 listed at the top of `gltfmodel.js`), a `spec` from `jetSpec` or `pistonSpec`
 (the flight model's numbers, the wheels and the points of the hull that can
 meet the ground), an `eye` point, a `view.scale` (how far back the cameras
-stand) and a `frame` (its shape for the rain and hail). The menu, the cameras,
+stand) and a `frame` (its shape for the rain and hail). A cockpit is a second
+file beside it (`model.pit`: its fields are listed at the top of `pit.js`),
+converted from the FlightGear model `.xml` that assembles it (`--model`), with
+the eye point set in the seat and `view.down`, `view.lean` saying how the
+pilot's gaze rests and how far the head can lean; screens that FlightGear
+draws in code need a drawing of their own in `displays.js`. The menu, the cameras,
 the autopilot, the sound and the weather read everything else from the spec.
 Flight-model changes can be tried without the browser: `physics.js` and
 `variants.js` import nothing but three's math classes, so Node can fly them.
@@ -184,12 +189,14 @@ Each file opens with a comment that says what it does and how; this is the index
 | `physics.js` | The flight model: forces from lift, drag and thrust; stalls, slips, wind and ground effect follow from them. Propeller or jet thrust, drag near the speed of sound, legs that fold, a tail wheel: all by the numbers of the aircraft flown |
 | `variants.js` | The fleet. Three Cessnas (152, 172, 182: proportions that reshape one generated airframe, paint, V-speeds, flight-model numbers) and the aircraft that come as model files (P-51D, F-16, 737-800): flight-model numbers, where the wheels and hull meet the ground, and how the file is fitted (`model`) |
 | `model.js` | The Cessna airframe, generated in code: fuselage, wings, tail, gear, glazing, prop; moving surfaces |
-| `gltfmodel.js` | Aircraft from model files (`public/models/*.glb`): loading, standing them on their wheels, merging what never moves, moving what does (the `rig` each file carries: landing gear, control surfaces), propeller, lights, nozzle, afterburner flame |
+| `gltfmodel.js` | Aircraft from model files (`public/models/*.glb`): loading, standing them on their wheels, merging what never moves, moving what does (the `rig` each file carries: landing gear, control surfaces), propeller, lights, nozzle, afterburner flame; what of the outside stays in view from the seat, window panes that turn to glass there, the surface rain and frost are drawn on |
+| `pit.js` | The cockpits of those aircraft (`public/models/*_pit.glb`, FlightGear's own): fetched when the aircraft is chosen, merged into a few dozen meshes, with needles, drums of digits, flags, stick, throttle and pedals moved by the file's hinges from the flight model's state (knots, feet, inches of mercury); panel lighting at night |
+| `displays.js` | What FlightGear draws in code and the game draws itself: the 737's primary flight, navigation and engine displays, the F-16's multifunction displays, EHSI and data entry display (canvases, redrawn only when what they show has changed, two a frame at most), and the F-16's head-up display (collimated symbols clipped to the combiner glass) |
 | `kit.js` | Building blocks for the model: lofts, airfoils, merged primitives, canvas textures |
 | `panel.js` | The instrument panel and its working instruments |
 | `interior.js` | The cabin: seats, lining, door cards, headliner |
 | `cabinkit.js` | The cabin's materials and baked contact shading |
-| `cockpitcam.js` | The pilot's head: eye point, free look, zoom, a little movement with the airplane |
+| `cockpitcam.js` | The pilot's head: eye point, free look, zoom, a little movement with the airplane, a lean toward the window that each aircraft sets |
 
 ### `src/world/`: the earth
 
@@ -305,6 +312,7 @@ until the craft comes back down (`arriveFromSpace` in `main.js` fetches it again
 | `fx-launch.js` | What a launch puts into that field: the two jets out of Launch Complex 39's flame trench, the ring of steam and dust under Starship's mount, the column on the way up, ice off the tanks, vent wisps, the vapor collar at Mach 1 |
 | `pad.js` | The launch pads: a Launch Complex 39 pad with its tower, and an orbital launch mount with its tower |
 | `satmodels.js` | Models of the satellites |
+| `cabin.js`, `cabin-apollo.js`, `cabin-starship.js`, `cabin-kit.js` | The crew's cabins, for the view from the commander's seat (`C`): the Apollo Command Module's main display console with working attitude balls, computer display, timers and meters, and a flight deck for Starship with three live screens. Built in code, lit by their own baked lighting; the outside of the vehicle is hidden while they show |
 
 `tools/space-viewer.html` shows the models on their own (through the dev server). `tools/bake-moon.py` bakes NASA's Moon maps into `public/data/moon_*.jpg` and `tools/bake-rocket-sounds.py` cuts the rocket recordings in `public/audio/`.
 
@@ -314,7 +322,7 @@ Shadows: the vehicle is handed to `world/sunshadow.js` as "the aircraft" (its sh
 
 | File | What it is |
 |---|---|
-| `ac2glb.py` | Turns FlightGear aircraft (AC3D `.ac` files and the hinges in their model `.xml`) into the `.glb` files in `public/models/` (`CREDITS.md` there has the command for each) |
+| `ac2glb.py` | Turns FlightGear aircraft (AC3D `.ac` files and the hinges in their model `.xml`) into the `.glb` files in `public/models/` (`CREDITS.md` there has the command for each). For a cockpit it follows a model `.xml` through every sub-model it places, keeps the hinges of instruments and controls, and packs the textures onto shared sheets |
 | `airfield-list.mjs` | The game's detailed airfields, by hand |
 | `fetch-airfields.mjs` | Bakes each of those fields' geometry from OpenStreetMap into `public/airfields/` and writes `src/world/airfield-index.js` |
 | `bake-world-airfields.mjs` | Bakes the runways of the world's other large and medium airports from OurAirports into `public/data/world-airfields.json` |

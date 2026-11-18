@@ -2,10 +2,14 @@
 // proportions that reshape the shared airframe (geom), its paint and fittings (look), the speeds its
 // instruments are marked with (speeds) and its flight-model numbers (spec).
 //
-// Every variant is the same procedural high-wing single (see model.js), built to the 172's lines and
+// The three Cessnas are the same procedural high-wing single (see model.js), built to the 172's lines and
 // then stretched: `warp` below moves any point of the 172 to where it sits on the variant. The flight
 // model takes its wheel and hull contact points through the same function, so what touches the ground
 // in the physics is what touches it on screen.
+//
+// The P-51D, the F-16 and the 737-800 come as model files instead (`model`: see gltfmodel.js for its fields),
+// each with a cockpit in a file of its own (`model.pit`: see pit.js), the pilot's eye point (`eye`, in the
+// file's axes) and how the gaze rests and the head leans in that cockpit (`view.down`, `view.lean`).
 
 const sstep = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
@@ -250,8 +254,13 @@ export const AIRCRAFT = [
       lights: { navL: [-5.67, -0.2, 2.53], navR: [5.67, -0.19, 2.53], tail: [0, 0.2, 9.04], landing: [-0.9, -0.72, 2.45] },
       exhaust: [[-0.47, 0, 1.1], [0.47, 0, 1.1]],
       tips: [-0.2, 2.9],
+      pit: {
+        url: 'models/p51d_pit.glb', env: 0.5, fill: 0.07, glass: [/^(canopy|windshield|windshieldLeft|windshieldRight)$/],
+        // FlightGear's horizon only banks: here its bar also rides down as the nose comes up, within the bank
+        rigInner: [{ on: ['p51d-jw-attitude/Face'], by: 'pitch', kind: 't', axis: [0, -1, 0], c: [0, 0, 0], tab: [[-25, -0.014], [25, 0.014]] }],
+      },
     },
-    eye: [0, 0.6, 3.75], view: { scale: 1.15, down: 0.06 },
+    eye: [0, 0.65, 3.30], view: { scale: 1.15, down: 0.14, lean: [0.1, 0.1] },
     frame: tubeFrame({ z0: -3.3, z1: 6.45, r: 0.5, y: -0.1, noseLen: 0.7, tailLen: 3.5, tailUp: 0.3, screen: [0.35, 0.9], wing: { span: 11.3, y: -0.4, rise: 0.5, zLE: -1.25, zTE: 1.4, thick: 0.25 }, stab: { half: 2, y: 0.3, zLE: 4.4, zTE: 5.7 }, fin: { foot: [4.2, 0.4], tip: [5.6, 1.66], thick: 0.1 } }),
     spec: pistonSpec({
       mass: 4100, S: 21.83, span: 11.28, Ipitch: 12e3, Iyaw: 17e3, Iroll: 8e3,
@@ -292,8 +301,9 @@ export const AIRCRAFT = [
       nozzle: { at: [0, 0.005, 4.45], r0: 0.55, r1: 0.4, len: 1.0 },
       burner: { at: [[0, 0.005, 5.3]], r: 0.38, len: 5.5 },
       tips: [0, 1.5],
+      pit: { url: 'models/f16_pit.glb', glass: [/^Canopy(Forward|Back)Outside$/], screens: 'f16', fuelLb: 7000, own: [/MFDimage\d$/, /^DED\/poly\.003$/, /HUDImage2$/, /EHSI-Display$/] },
     },
-    eye: [0, 0.98, -4.25], view: { scale: 1.35, down: 0.06 },
+    eye: [0, 0.80, -4.04], view: { scale: 1.35, down: 0.1, lean: [0.14, 0.14] },
     frame: tubeFrame({ z0: -7.6, z1: 5.4, r: 0.7, y: 0, noseLen: 4.5, tailLen: 1, screen: [-5.4, -3.4], wing: { span: 9.6, y: 0.1, rise: 0, zLE: -0.6, zTE: 2.3, thick: 0.15 }, stab: { half: 2.8, y: -0.1, zLE: 3.4, zTE: 5.5 }, fin: { foot: [2.9, 1.1], tip: [5.1, 3.2], thick: 0.1 } }),
     spec: jetSpec({
       mass: 10800, S: 27.9, span: 9.6, Ipitch: 78e3, Iyaw: 95e3, Iroll: 14e3,
@@ -321,8 +331,10 @@ export const AIRCRAFT = [
       lights: { navL: [-17.03, 1.06, 3.62], navR: [17.03, 1.06, 3.62], strobeL: [-17.03, 1.08, 3.9], strobeR: [17.03, 1.08, 3.9], tail: [0, 2.06, 18.62], beacon: [0, 2.62, -1], landing: [0, -1.6, -15.73] },
       exhaust: [[-5.16, -1.25, -0.9, 16, 3], [5.16, -1.25, -0.9, 16, 3]],
       tips: [1.1, 4.3],
+      glaze: [/^windows$/],
+      pit: { url: 'models/b738_pit.glb', glass: [/^windows$/], screens: 'b737', fuelLb: 46000, own: [/Screen[LR]?$/], flood: 0.12, plain: [0.62, 0.62, 0.6], tint: [[/^colum/, [0.1, 0.1, 0.11]], [/^silla/, [0.22, 0.25, 0.3]]] },
     },
-    eye: [-0.5, 1.15, -17.95], view: { scale: 3.3, down: 0.06 },
+    eye: [-0.54, 1.30, -17.12], view: { scale: 3.3, down: 0.3, lean: [0.12, 0.2] },
     frame: tubeFrame({ z0: -18.8, z1: 20.6, r: 1.88, y: 0.58, noseLen: 4.5, tailLen: 8, tailUp: 0.9, screen: [-17.4, -15.6], wing: { span: 34.3, y: -0.3, rise: 1.4, zLE: -1.5, zTE: 4, thick: 0.5 }, stab: { half: 5.9, y: 2.1, zLE: 16.5, zTE: 20.2 }, fin: { foot: [11, 2.5], tip: [19, 9.9], thick: 0.3 } }),
     spec: jetSpec({
       mass: 62000, S: 124.6, span: 35.7, Ipitch: 3.2e6, Iyaw: 4.2e6, Iroll: 1.2e6,

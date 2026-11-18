@@ -1,9 +1,11 @@
-// The pilot's head in the left seat.
+// The pilot's head in the seat (the left one of a Cessna or an airliner, the only one of a fighter).
 //
 // cockpitCamera() places the camera at the eye point and gives it a neck: free look
 // from the mouse with a little inertia, wheel zoom, a slight glance into the turn,
 // and a head that rides the aircraft on a soft spring so g, rough air, the runway
-// and the touchdown all register without the horizon ever lurching.
+// and the touchdown all register without the horizon ever lurching. Where the eye is,
+// how far down the gaze rests and how far the head can lean toward a window come with
+// the aircraft (PILOT_EYE, PILOT_VIEW).
 
 import * as THREE from 'three';
 import { PILOT_EYE, PILOT_VIEW } from './model.js';
@@ -14,8 +16,9 @@ export const COCKPIT_NEAR = 0.08;
 // 18 degrees below the horizon, so the six flight instruments fill the middle of the screen and a band of
 // windshield stays above the glareshield for the horizon and the runway. Looking round with the mouse lifts
 // the gaze back toward level, so the side windows show the world and not the door cards.
-// (An aircraft without a modeled panel rests its gaze nearly level: PILOT_VIEW.down is set with the aircraft.)
+// (PILOT_VIEW.down is set with the aircraft: a fighter looking through its head-up display rests its gaze nearly level.)
 const FOV = 50;                              // resting field of view (deg); the downward tilt is PILOT_VIEW.down (rad)
+const LEAN = [0.035, 0.085];                 // the Cessna's lean (see below); PILOT_VIEW.lean replaces it for another aircraft
 
 const S = { yaw: 0, pitch: -PILOT_VIEW.down, fov: FOV, lead: 0, last: -1, t: 0, wasDown: true, strike: null, off: new THREE.Vector3(), vel: new THREE.Vector3() };
 const v = new THREE.Vector3(), tgt = new THREE.Vector3(), q = new THREE.Quaternion(), e = new THREE.Euler(0, 0, 0, 'YXZ');
@@ -52,7 +55,9 @@ export function cockpitCamera(camera, ac, input, dt, turb = 0) {
   const roll = !airborne ? clamp(ac.groundSpeed / 25, 0, 1) * (ac.surface === 'paved' ? 0.3 : 1) : 0;      // wheels drumming on the runway
   const rough = clamp(turb, 0, 1) * (airborne ? 1 : 0.3);
   S.t += dt * (6 + 3 * roll);
-  const side = yawT > 0 ? 0.035 : 0.085;                                         // the door is close on the left; more room to lean right
+  // How far the head leans as it turns to look back: [to the left, to the right] meters. In the Cessna the door is
+  // close on the left and there is more room to the right; another aircraft says what its canopy or wall allows.
+  const lean = PILOT_VIEW.lean || LEAN, side = yawT > 0 ? lean[0] : lean[1];
   tgt.set(
     -Math.sin(yawT) * side * sstep(0.5, 1.5, Math.abs(yawT)) - clamp((airborne ? ac.beta : 0) * 0.2, -0.018, 0.018) + rough * 0.011 * wander(S.t, 1),
     -clamp((g - 1) * 0.022, -0.03, 0.04) + rough * 0.02 * wander(S.t * 1.3, 2),
@@ -75,7 +80,8 @@ export function cockpitCamera(camera, ac, input, dt, turb = 0) {
     const W = 10, Z = 0.6;
     v.copy(tgt).sub(S.off).multiplyScalar(W * W).addScaledVector(S.vel, -2 * Z * W);
     S.vel.addScaledVector(v, h); S.off.addScaledVector(S.vel, h);
-    S.off.set(clamp(S.off.x, -0.1, 0.1), clamp(S.off.y, -0.05, 0.05), clamp(S.off.z, -0.03, 0.03));
+    const reach = Math.max(0.1, lean[0] + 0.015, lean[1] + 0.015);
+    S.off.set(clamp(S.off.x, -reach, reach), clamp(S.off.y, -0.05, 0.05), clamp(S.off.z, -0.03, 0.03));
   }
   S.wasDown = ac.onGround; S.strike = ac.strike || null;
 

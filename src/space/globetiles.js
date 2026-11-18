@@ -54,13 +54,14 @@ export class GlobeTiles {
     this.glMask = k;
     this.putMask();
   }
-  /** Send the fade values to their texture. */
+  /** Send the fade values to their texture. (Unpack state goes through three's own cache, renderer.state.pixelStorei:
+   *  set behind its back, three's next upload of a canvas comes out upside down or misaligned.) */
   putMask() {
     const r = this.renderer, gl = r.getContext(), A = gl.TEXTURE_2D_ARRAY;
     r.state.activeTexture(gl.TEXTURE0); r.state.bindTexture(A, this.glMask);
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false); gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false); gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    r.state.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false); r.state.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false); r.state.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
     gl.texSubImage3D(A, 0, 0, 0, 0, this.W, this.W, this.NL, gl.RED, gl.UNSIGNED_BYTE, this.mask);
-    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    r.state.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
     r.state.bindTexture(A, null);
   }
 
@@ -144,8 +145,8 @@ export class GlobeTiles {
     if (!this.ready.length) return;
     const r = this.renderer, gl = r.getContext(), A = gl.TEXTURE_2D_ARRAY, W = this.W;
     r.state.activeTexture(gl.TEXTURE0); r.state.bindTexture(A, this.glTex);
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false); gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
-    gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE); gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    r.state.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false); r.state.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    r.state.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE); r.state.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
     for (let k = 0; k < 6 && this.ready.length; k++) {
       const t = this.ready.shift(), s = this.levels[t.level].slots[t.si];
       if (s && s.key === t.key && !s.done && t.bmp.width === TILE && t.bmp.height === TILE) {       // (else the window moved on while it was coming)

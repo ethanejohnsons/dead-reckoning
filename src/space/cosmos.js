@@ -149,7 +149,7 @@ float cloudAt(vec3 g, vec2 uv) {
   float c = textureLod(tNoise, g * 61.0 + w * 0.2, 0.0).r;
   float lat = asin(clamp(g.z, -1.0, 1.0));
   // Wet along the equator, dry in the subtropics, stormy in the middle latitudes.
-  float cover = 0.40 - 0.05 * uFar + 0.15 * cos(6.0 * lat) * (1.0 - 0.5 * smoothstep(1.0, 1.4, abs(lat))) + (a.a - 0.5) * 0.6;
+  float cover = 0.31 - 0.04 * uFar + 0.15 * cos(6.0 * lat) * (1.0 - 0.5 * smoothstep(1.0, 1.4, abs(lat))) + (a.a - 0.5) * 0.6;
   float shape = a.r * 0.5 + b * 0.32 + mix(c, 0.5, uFar) * 0.18;
   float th = quant(cover * 0.9);
   // Thick in the middle of a system and thin toward its edge; from far off the edges are soft.
@@ -160,7 +160,7 @@ float cloudAt(vec3 g, vec2 uv) {
     float e = max(abs(q.x), abs(q.y));
     if (e < 0.5) {
       vec4 wx = textureLod(tWxA, q + 0.5, 0.0);
-      float cv = max(max(wx.r, 0.85 * wx.g), 0.6 * wx.a), fine = b * 0.55 + c * 0.45;
+      float cv = max(max(wx.r, 0.85 * wx.g), 0.2 * wx.a), fine = b * 0.55 + c * 0.45;       // (high cloud is thin: from above it hides little)
       float tl = quant(cv);
       float dl = smoothstep(tl - 0.04, tl + 0.06, fine) * (0.6 + 0.4 * smoothstep(0.0, 0.6, wx.r));
       d = mix(dl, d, smoothstep(0.38, 0.5, e));
@@ -271,11 +271,18 @@ void main() {
       float nl = dot(n, uSun);
       float zw = log2(40030174.0 * max(cl, 0.02) / (256.0 * max(g0 * uPix, 0.5))) - 0.35;
       vec3 alb = tiles(uv, zw);
-      // Beyond the map's reach: sea ice in the north, the ice sheet in the south.
       float cap = smoothstep(0.9950, 0.9962, abs(s));
-      alb = mix(alb, s > 0.0 ? vec3(0.62, 0.68, 0.74) : vec3(0.80, 0.82, 0.85), cap);
       float lum = dot(alb, vec3(0.25, 0.6, 0.15));
       float water = smoothstep(0.003, 0.012, alb.b - max(alb.r, alb.g)) * (1.0 - smoothstep(0.05, 0.12, lum)) * (1.0 - cap);
+      // The mosaic is a dark picture: forest comes out of it at a few percent, hardly above the sea. The game's ground
+      // shader lifts it to what the land reflects before lighting it (world/chunks.js: the gain and its shoulder), and
+      // the same is done here, or from orbit the continents sink into the blue of the air over them. The sea stays dark.
+      vec3 land = alb * 2.9;
+      land = land / (1.0 + 1.45 * land) * (1.0 + 0.55 * smoothstep(1.6, 2.9, dot(land, vec3(0.3, 0.55, 0.15))));
+      land = mix(vec3(dot(land, vec3(0.3, 0.55, 0.15))), land, 1.25);                      // (and a little more color, against the haze)
+      alb = mix(max(land, 0.0), alb * 1.3, water);
+      // Beyond the map's reach: sea ice in the north, the ice sheet in the south.
+      alb = mix(alb, s > 0.0 ? vec3(0.62, 0.68, 0.74) : vec3(0.80, 0.82, 0.85), cap);
 
       // Clouds: where the ray meets the shell, and the shadow of the cloud between the ground and the sun.
       float c0, c1, cd = 0.0, shade = 1.0; vec3 nc = n; float tc = g0;

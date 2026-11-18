@@ -17,7 +17,7 @@ import { clamp, smoothstep } from '../core/noise.js';
 import { groundHeight } from '../world/terrain.js';
 import { toWorld, toLatLon, WORLD_HALF, REGION } from '../world/geo.js';
 import { Rocket, guidance, airPressure, ROCKETS } from './rocket.js';
-import { makeClock, RE, RM, D2R, ATMO_TOP, MU_E, enu, moonPos, moonVel, worldToRenderQuat, eciToGeo, len, dot } from './frames.js';
+import { makeClock, RE, RM, D2R, ATMO_TOP, MU_E, enu, moonPos, moonVel, sunDir, worldToRenderQuat, eciToGeo, len, dot } from './frames.js';
 import { gravity } from './orbit.js';
 import { Cosmos } from './cosmos.js';
 import { OrbitMap } from './orbitmap.js';
@@ -33,7 +33,7 @@ const PHYS_WARP = 2;                      // index of the fastest rate the engin
 const $ = (id) => document.getElementById(id);
 
 // The models are another module's business; until they have loaded (or if one fails) a plain stand-in flies.
-const lazy = import.meta.glob(['./vehicles.js', './plume.js', './pad.js', './satmodels.js']);
+const lazy = import.meta.glob(['./vehicles.js', './plume.js', './pad.js', './satmodels.js', './cabin.js']);
 const mods = {};
 export async function loadSpaceAssets() {
   await Promise.all(Object.entries(lazy).map(async ([k, f]) => { try { mods[k.slice(2, -3)] = await f(); } catch (e) { console.warn(`${k} did not load:`, e.message); } }));
@@ -71,7 +71,7 @@ export class Mission {
     this.spent = [];                       // dropped stages still in sight: { obj, r, v, q (local world), spin, age }
     this.mix = 0; this.groundOK = true;
     this.warp = 0; this.autopilot = false; this.view = 'chase'; this.mapOpen = false;
-    this.cam = { yaw: -2.2, pitch: -0.1, dist: 1, mapYaw: 0.6, mapPitch: 0.35, mapDist: 4 * RE, focus: 'body' };
+    this.cam = { yaw: -2.2, pitch: -0.1, dist: 1, mapYaw: 0.6, mapPitch: 0.35, mapDist: 4 * RE, focus: 'body', headYaw: 0, headPitch: 0 };
     this.env = { clock: this.clock, ground: (lat, lon) => this.groundAt(lat, lon), wind: [0, 0, 0] };
     this.ctl = { pitch: 0, yaw: 0, roll: 0 };
     this.eye = [0, 0, 0]; this.eyeQuat = new THREE.Quaternion();          // the camera in the inertial frame
@@ -99,13 +99,16 @@ export class Mission {
     this.site = site; this.active = true;
     this.clock = this.env.clock = makeClock(site.lon, g.sky.day, g.weather.hour, g.sky.moonPhase);
     this.vehicle = mods.vehicles ? mods.vehicles.buildVehicle(id) : standIn(id);
-    this.vehicle.setStage(0);
+    this.vehicle.setStage(0); this.shownStage = 0;
     this.pad = mods.pad ? mods.pad.buildPad(id) : null;
     this.plume = mods.plume ? new mods.plume.Plume() : null;
     this.trail = mods.plume ? new mods.plume.ExhaustTrail() : null;
     if (this.trail) { this.trail.setQuality?.(g.tier()); this.trail.terrainAt = groundHeight; this.trailTier = g.tier(); }      // (the land the pad cloud rolls out over, and how many puffs it may spend)
     if (this.plume) this.vehicle.root.add(this.plume.group);
     this.glow = new ReentryGlow(); this.vehicle.root.add(this.glow.mesh);
+    // The crew's cabin (space/cabin.js), for the view from the commander's seat: inside the vehicle, shown only in that view.
+    this.cabin = null; this.cabinShown = false;
+    if (mods.cabin) { try { this.cabin = mods.cabin.buildCabin(id); this.cabin.root.visible = false; this.vehicle.root.add(this.cabin.root); } catch (e) { console.warn('The cabin could not be built:', e); this.cabin = null; } }
     if (this.trail) g.scene.add(this.trail.object);
     g.scene.add(this.vehicle.root);
     // The pad stands on the highest ground under its hardstand, so no hillock comes up through the concrete (its walls reach down the rest).
@@ -137,10 +140,10 @@ export class Mission {
   startAloft(where) {
     const rk = this.rk, n = rk.spec.stages.length, site = this.site;
     if (where === 'moon') rk.placeAtMoon(this.clock, 0, 110000);
-    else rk.placeInOrbit(this.clock, 0, 250000, Math.max(Math.abs(site.lat), 5), site.lon - 8);
+    else rk.placeInOrbit(this.clock, 0, 250000, 0, site.lon - 2, site.lat);          // just short of the launch site, so the flight begins over country the player knows
     rk.stage = where === 'moon' ? n - 1 : Math.max(n - 2, 1);
     rk.roll = 0;
-    this.vehicle.setStage(rk.stage); rk.baseY = this.vehicle.stages[rk.stage].bottomY;
+    this.showCabin(false); this.vehicle.setStage(rk.stage); this.shownStage = rk.stage; rk.baseY = this.vehicle.stages[rk.stage].bottomY;
     this.shadows();
     if (this.pad) this.pad.root.visible = false;
     this.said.ignite = this.said.tower = this.said.mach = this.said.maxq = this.said.space = this.said.orbit = this.said.lunar = true;
@@ -165,6 +168,7 @@ export class Mission {
     if (!restarting) g.cities?.setKeepClear([]);
     if (this.plume) { this.plume.dispose?.(); this.plume = null; }
     if (this.glow) { this.glow.dispose(); this.glow = null; }
+    if (this.cabin) { this.cabin.dispose?.(); this.cabin = null; } this.cabinShown = false;
     if (this.padCaster) { const cr = g.sunShadows.casterRoots, i = cr.indexOf(this.padCaster); if (i >= 0) cr.splice(i, 1); this.padCaster = null; }
     if (this.trail) { g.scene.remove(this.trail.object); this.trail.dispose?.(); this.trail = null; }
     for (const s of this.spent) g.scene.remove(s.obj);
@@ -216,8 +220,9 @@ export class Mission {
     const rk = this.rk, was = rk.stageNext();
     if (was < 0) { this.g.toast('Nothing left to drop.', 2); return; }
     const v = this.vehicle, name = ROCKETS[rk.id].stages[was].name;
+    this.showCabin(false);                               // (the outside comes back for a moment: the dropped stage is copied from it)
     const obj = v.spent(was);
-    v.setStage(rk.stage);
+    this.showCabin(false); v.setStage(rk.stage); this.shownStage = rk.stage;
     rk.baseY = v.stages[rk.stage].bottomY;
     this.shadows();
     this.g.scene.add(obj);
@@ -280,7 +285,23 @@ export class Mission {
     this.map.setVisible(on);
   }
   cycleFocus() { const c = this.cam, order = ['body', 'craft', 'earth', 'moon']; c.focus = order[(order.indexOf(c.focus) + 1) % order.length]; this.map.fit(); this.g.toast(`Map centered on ${c.focus === 'body' ? (this.rk.body === 'moon' ? 'the Moon' : 'the Earth') : c.focus === 'craft' ? 'your craft' : c.focus === 'earth' ? 'the Earth' : 'the Moon'}.`, 2); }
-  toggleView() { this.view = this.view === 'chase' ? 'onboard' : 'chase'; }
+  /** C: the chase view, the commander's seat, the camera on the vehicle's skin, and round again. */
+  toggleView() {
+    const order = this.cabin ? ['chase', 'cockpit', 'onboard'] : ['chase', 'onboard'];
+    this.view = order[(order.indexOf(this.view) + 1) % order.length];
+    this.cam.headYaw = 0; this.cam.headPitch = 0; this.g.input.zoom = this.g.input.zoomTarget = 1;
+  }
+  /** Is the picture the one from the commander's seat? */
+  get inCabin() { return this.view === 'cockpit' && !!this.cabin && !this.mapOpen && this.g.S.mode === 'flying'; }
+  /** Show the cabin and hide the outside of the vehicle around it, or the other way about (the windows look straight out). */
+  showCabin(on) {
+    if (on === this.cabinShown || !this.vehicle) return;
+    this.cabinShown = on;
+    const v = this.vehicle, keep = new Set([this.cabin?.root, this.plume?.group, this.glow?.mesh]);
+    if (on) { this.hidden = v.root.children.filter((o) => !keep.has(o) && o.visible); for (const o of this.hidden) o.visible = false; }
+    else { for (const o of this.hidden || []) o.visible = true; this.hidden = null; v.setStage(this.rk.stage); }
+    if (this.cabin) this.cabin.root.visible = on;
+  }
   say(key, text, secs = 4) { if (this.said[key]) return; this.said[key] = true; this.g.toast(text, secs); }
 
   // ------------------------------------------------------------------ simulation
@@ -355,16 +376,18 @@ export class Mission {
       q1.setFromAxisAngle(v1.copy(s.spin).normalize(), s.spin.length() * h); s.q.multiply(q1);
     }
   }
-  modelStage() { let n = 0; for (const s of this.vehicle.stages) { if (s.group.visible) break; n++; } return n; }
+  /** The stage the model is showing as the lowest (kept here, not read off the model: the cabin view hides the whole outside). */
+  modelStage() { return this.shownStage || 0; }
   /** The autopilot dropped a stage inside the physics loop: make the model and the debris match. */
   syncStage() {
     const rk = this.rk, v = this.vehicle;
+    this.showCabin(false);
     for (let k = this.modelStage(); k < rk.stage; k++) {
       const obj = v.spent(k); this.g.scene.add(obj);
       this.spent.push({ obj, r: [rk.r[0], rk.r[1], rk.r[2]], v: [rk.v[0] - rk.nose[0] * 6, rk.v[1] - rk.nose[1] * 6, rk.v[2] - rk.nose[2] * 6], q: this.qLocal.clone(), spin: new THREE.Vector3(0.02 + Math.random() * 0.05, 0, 0.03 * (Math.random() - 0.5)), age: 0, pivot: rk.spec.stages[k].pivot });
       this.g.toast(`${ROCKETS[rk.id].stages[k].name} away. ${ROCKETS[rk.id].stages[k + 1].name} burning.`, 3);
     }
-    v.setStage(rk.stage); rk.baseY = v.stages[rk.stage].bottomY;
+    this.showCabin(false); v.setStage(rk.stage); this.shownStage = rk.stage; rk.baseY = v.stages[rk.stage].bottomY;
     this.shadows();
   }
 
@@ -443,13 +466,28 @@ export class Mission {
     if (this.mapOpen) {
       c.mapYaw += look.yaw; c.mapPitch = clamp(c.mapPitch + look.pitch, -1.5, 1.5);
       c.mapDist = clamp(c.mapDist * (input.zoomTarget / (this.zoomWas || 1)), this.map.minDist(), 3e9);
+    } else if (this.inCabin) {
+      const R = this.cabin.reach || { yaw: 1.6, up: 0.9, down: 0.9 };
+      c.headYaw = clamp(c.headYaw + look.yaw, -R.yaw, R.yaw); c.headPitch = clamp(c.headPitch - look.pitch, -R.down, R.up);
     } else { c.yaw -= look.yaw; c.pitch = clamp(c.pitch - look.pitch, -1.45, 1.45); }
     look.yaw = 0; look.pitch = 0; this.zoomWas = input.zoomTarget;
     input.zoom += (input.zoomTarget - input.zoom) * (dt <= 0 ? 1 : 1 - Math.exp(-dt * 9));
 
     const size = this.vehicle ? this.vehicle.height - (rk.baseY || 0) : 100;
     let eyeW = v2, qW = q2, fov = 55;                       // the camera in the game world's axes, relative to posW
-    if (this.view === 'onboard' && !this.mapOpen) {
+    const inCabin = this.inCabin;
+    this.showCabin(inCabin);
+    if (inCabin) {
+      // The commander's seat: the cabin's own eye point and gaze, the head turned by the mouse, and the seat shaking
+      // with the engines and with the air going by.
+      const cb = this.cabin, shake = 0.004 * rk.thrustLevel * (0.4 + 0.6 * airPressure(onEarth ? rk.alt : 1e9)) + 0.006 * smoothstep(4000, 30000, rk.q), t = g.S.time;
+      v3.copy(cb.eye); v3.y -= rk.pivot;
+      v3.x += shake * Math.sin(t * 47.0); v3.y += shake * Math.sin(t * 61.3 + 1.0); v3.z += shake * Math.sin(t * 53.7 + 2.0);
+      eyeW.copy(v3).applyQuaternion(this.qLocal);
+      m1.lookAt(v3.set(0, 0, 0), cb.look, cb.up); qW.setFromRotationMatrix(m1);
+      qW.multiply(q1.setFromEuler(new THREE.Euler(c.headPitch, c.headYaw, 0, 'YXZ'))).premultiply(this.qLocal);
+      fov = clamp((cb.fov || 62) * input.zoom, 28, 95);
+    } else if (this.view === 'onboard' && !this.mapOpen) {
       // On the vehicle's skin, looking back down its length at the flame and whatever is being left behind.
       const rad = (this.vehicle?.radius || 5) * 1.35;
       v3.set(rad, (this.vehicle ? this.vehicle.stages[rk.stage].topY - 4 : 60) - rk.pivot, 0).applyQuaternion(this.qLocal);
@@ -471,7 +509,7 @@ export class Mission {
     this.camDist = eyeW.length();
     if (this.mix < 1) {
       cam.position.copy(this.posW).add(eyeW); cam.quaternion.copy(qW); cam.up.set(0, 1, 0);
-      cam.fov = fov; cam.near = 1.5; cam.updateProjectionMatrix(); cam.updateMatrixWorld();
+      cam.fov = fov; cam.near = inCabin ? 0.06 : 1.5; cam.updateProjectionMatrix(); cam.updateMatrixWorld();
       if (dt > 0) g.camState.vel.copy(cam.position).sub(g.camState.prev).multiplyScalar(1 / dt);
       g.camState.prev.copy(cam.position);
     }
@@ -509,6 +547,18 @@ export class Mission {
           this.trail.object.visible = true;
         } else this.trail.object.visible = false;
       }
+      // The cabin's instruments, while the player is looking at them.
+      if (inCabin) {
+        const o = rk.orbit(this.clock), sun = sunDir(this.clock, rk.t, [0, 0, 0]);
+        const sl = new THREE.Vector3(dot(sun, [B[0], B[1], B[2]]), dot(sun, [B[6], B[7], B[8]]), -dot(sun, [B[3], B[4], B[5]])).applyQuaternion(q1.copy(this.qLocal).invert());
+        this.cabin.update(dt, {
+          time: g.S.time, met: rk.lifted ? rk.met : -1, throttle: rk.throttle, thrust: rk.thrustLevel, stage: rk.stage, stageName: rk.stageSpec.name, stages: rk.spec.stages.length,
+          alt: rk.landed ? Math.max(rk.agl, 0) : rk.alt, vs: rk.vs, speedSurf: rk.speedSurf, speedOrb: rk.speedOrb, pitch: rk.pitch, hdg: rk.hdg, roll: rk.roll, gLoad: rk.gLoad, mach: rk.mach, q: rk.q,
+          ap: o.ap, pe: o.pe, tAp: o.tAp, tPe: o.tPe, body: rk.body, warp: WARPS[this.warp], autopilot: this.autopilot, sas: rk.sas, pilot: this.pilot ? this.pilot.phase : null,
+          exposure: this.mix >= 1 ? (this.expo || 1) : g.sky.exposure,          // how far the picture is opened up against daylight: the cabin holds its own lights steady against it
+          landed: !!rk.landed, held: rk.held, night, sunDir: sl, lit: this.mix >= 1 ? this.cosmos.sunlit : 1 - 0.8 * clamp(g.wx.shade || 0, 0, 1),
+        });
+      }
       // The glow of reentry: which way the craft is going through the air, in its own axes.
       if (this.glow) {
         const wE = onEarth ? 7.2921159e-5 * Math.hypot(rk.r[0], rk.r[1]) : 0;
@@ -526,7 +576,7 @@ export class Mission {
     this.snd.attach(g.sound);
     this.snd.update(g.S.mode === 'flying' ? dt : 0, {
       thrust: g.S.mode === 'flying' ? rk.thrustLevel : 0, size: rk.stageSpec.thrust / 35.1e6, pressure: airNow,
-      view: this.mapOpen ? 'map' : this.view, dist: this.camDist, agl: rk.agl, mach: rk.mach, q: rk.q, pitch: rk.id === 'starship' ? 1.07 : 0.96,
+      view: this.mapOpen ? 'map' : this.view === 'cockpit' ? 'onboard' : this.view, dist: this.camDist, agl: rk.agl, mach: rk.mach, q: rk.q, pitch: rk.id === 'starship' ? 1.07 : 0.96,
     });
     this.hud(dt);
   }
@@ -568,6 +618,7 @@ export class Mission {
     // The craft and its debris are children of the game's scene; the view from space borrows them for its own pass.
     const kids = cs.near.children; kids.length = 5;
     const hideCraft = this.mapOpen && len([this.eye[0] - this.rk.r[0], this.eye[1] - this.rk.r[1], this.eye[2] - this.rk.r[2]]) > 40000;
+    cs.nearClip = this.inCabin ? 0.06 : 2;
     if (v && !hideCraft) { this.spacePose(); cs.shadowAround(v3.set(0, this.rk.pivot, 0).applyQuaternion(v.root.quaternion).add(v.root.position), this.shadowHalf || 70); kids.push(v.root); for (const s of this.spent) kids.push(s.obj); v.root.updateMatrixWorld(true); for (const s of this.spent) s.obj.updateMatrixWorld(true); }
     this.sats.draw(this.eye, kids, this.mapOpen);
     this.map.update(dt);
@@ -584,7 +635,7 @@ export class Mission {
     const tex = this.drawSpace(dt);
     const sun = ENV.uSunDir.value.clone(), fog = ENV.uFogDensity.value, night = ENV.uNight.value;
     ENV.uSunDir.value.copy(cs.u.uSun.value); ENV.uFogDensity.value = 1e-6; ENV.uNight.value = 0;
-    fx.time = g.S.time; fx.rain = 0; fx.snow = 0; fx.ice = 0; fx.cockpit = 0; fx.airspeed = 0; fx.flash = g.clouds.uFlashScreen.value; fx.clearance = 1e6;
+    fx.time = g.S.time; fx.rain = 0; fx.snow = 0; fx.ice = 0; fx.cockpit = this.inCabin ? 1 : 0; fx.airspeed = 0; fx.flash = g.clouds.uFlashScreen.value; fx.clearance = 1e6;
     // The eye carries over from the climb (the ground view opens its exposure as the sky darkens) and settles to space's own.
     this.expo = this.expo ? this.expo + (cs.exposure - this.expo) * Math.min(1, dt * 0.35) : cs.exposure;
     fx.exposure = 0.64 * this.expo * g.S.settings.exposure;

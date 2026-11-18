@@ -214,9 +214,9 @@ export class Imagery {
       gl.texParameteri(A, gl.TEXTURE_MIN_FILTER, linear ? gl.LINEAR : gl.LINEAR_MIPMAP_LINEAR); gl.texParameteri(A, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
       // The browser clears a level of the storage the first time part of it is written (tens of milliseconds for the
       // big ones): have that happen now, behind the loading screen, not when the first tile lands in flight.
-      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false); gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false); gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+      this.renderer.state.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false); this.renderer.state.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false); this.renderer.state.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
       for (let k = 0; k < levels; k++) for (let l = 0; l < layers; l++) gl.texSubImage3D(A, k, 0, 0, l, 1, 1, 1, format === gl.R8 ? gl.RED : gl.RGBA, gl.UNSIGNED_BYTE, this.blank, 0);
-      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+      this.renderer.state.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
       r.properties.get(tex).__webglTexture = t;          // three binds this as it is: the texture's version stays 0, so it never uploads over it
       return t;
     };
@@ -385,10 +385,10 @@ export class Imagery {
     const gl = this.gl, T = this.T, A = gl.TEXTURE_2D_ARRAY;
     this.renderer.state.activeTexture(gl.TEXTURE0);
     this.renderer.state.bindTexture(A, this.glTex);
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
-    gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
-    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    this.renderer.state.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    this.renderer.state.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    this.renderer.state.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+    this.renderer.state.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
     const sx = (slot % T) * TILE, sy = Math.floor(slot / T) * TILE, src = buf || this.blank;
     this.stale = true;
     for (let k = 0, o = 0; k < MIPS; k++) {
@@ -416,11 +416,11 @@ export class Imagery {
     const gl = this.gl, A = gl.TEXTURE_2D_ARRAY;
     this.renderer.state.activeTexture(gl.TEXTURE0);
     this.renderer.state.bindTexture(A, this.glFade);
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
-    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    this.renderer.state.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    this.renderer.state.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    this.renderer.state.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
     gl.texSubImage3D(A, 0, 0, 0, 0, this.T, this.T, this.levels.length, gl.RED, gl.UNSIGNED_BYTE, f);
-    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    this.renderer.state.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
   }
 }
 

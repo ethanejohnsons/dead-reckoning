@@ -1,4 +1,4 @@
-// Aircraft that come as model files (glTF) rather than being generated in code (model.js): the jets.
+// Aircraft that come as model files (glTF) rather than being generated in code (model.js): the P-51D and the jets.
 //
 // The files in public/models/ are made by tools/ac2glb.py from FlightGear's aircraft: already in the game's axes
 // (meters, +X right wing, +Y up, -Z out the nose), every part a node of its own at the origin, and the hinges of
@@ -9,11 +9,19 @@
 // the shadows, the weather and the post-processing treat it like any other aircraft. What the file does not bring is
 // added here: navigation lights, an engine nozzle, the flame of an afterburner, the sheen of rain on the paint.
 //
+// The cockpit is a second file (pit.js loads it, after the aircraft is in the scene, into parts.pit). With one, the
+// outside of the aircraft stays drawn in the cockpit view, as FlightGear draws it: the pilot sees the nose, the wings
+// and the canopy with its frame, the glazing thinned to a faint sheen; and the glazing is also handed to the
+// post-processing as the surface that rain and frost are drawn on (rainGlass).
+//
 // A variant describes its file in `model` (see variants.js):
 //   url       path under the site root
 //   cg        station (the file's Z) of the center of gravity, and
 //   ground    height (the file's Y) of the undersides of the main wheels as drawn: they stand on the runway
 //   hide      optional, names (regular expressions) of parts not to draw
+//   pit       optional, the cockpit that goes with it (a file of its own: see pit.js for the fields)
+//   outside   optional, with a cockpit: names of parts drawn only from outside (the rest stays in view from the seat)
+//   glaze     optional, with a cockpit: names of window panes that are painted on the outside model; from the seat they are glass
 //   stow      optional, names of parts that are out of sight once the landing gear is up
 //   drive     optional, { driver: (ac) => value } for the rig's drivers, over the usual ones (see DRIVE)
 //   skip      optional, drivers of the rig to leave alone
@@ -31,6 +39,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { PILOT_EYE, PILOT_VIEW } from './model.js';
+import { loadPit, animatePit, table } from './pit.js';
 
 const files = new Map();                 // url -> promise of the file's bytes (kept: a model is parsed afresh each time it is chosen)
 const fetchFile = (url) => {
@@ -73,6 +82,38 @@ void main() {
   gl_FragColor = vec4(c * a * 9.0, a);
 }`;
 
+/**
+ * The glazing as the post-processing wants it, to draw rain and frost on it in the cockpit view (see GLASS_VERT in
+ * render/postfx-lens.js, written for the Cessna's hull): a mesh, never drawn itself, whose z is the station along the
+ * glass (its forward edge at -0.945, where the Cessna's windshield begins), whose normals point out, whose second
+ * texture coordinate is the way round the hull from the roof line (4 m to the unit), and whose mask says "glass" everywhere.
+ *   panes  geometries of the outside model's glazing, in the file's axes;  eye  the pilot's eye, in the same
+ */
+function rainGlass(panes, eye) {
+  const pos = [], nor = [], uv = [], idx = [];
+  let z0 = Infinity;
+  for (const g of panes) { const p = g.attributes.position; for (let i = 0; i < p.count; i++) z0 = Math.min(z0, p.getZ(i)); }
+  const yc = eye[1] - 0.45;                                  // the axis the hull is taken to curve about
+  for (const g of panes) {
+    const p = g.attributes.position, n = g.attributes.normal, base = pos.length / 3;
+    for (let i = 0; i < p.count; i++) {
+      const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+      let nx = n.getX(i), ny = n.getY(i), nz = n.getZ(i);
+      if (nx * (x - eye[0]) + ny * (y - eye[1]) + nz * (z - eye[2]) < 0) { nx = -nx; ny = -ny; nz = -nz; }
+      pos.push(x, y, z - z0 - 0.945); nor.push(nx, ny, nz);
+      uv.push(0.5, 0.5 + (Math.atan2(x, y - yc) * Math.hypot(x, y - yc)) / 4);
+    }
+    if (g.index) for (let i = 0; i < g.index.count; i++) idx.push(base + g.index.getX(i)); else for (let i = 0; i < p.count; i++) idx.push(base + i);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3)); geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); geo.setIndex(idx);
+  if (!allGlass) { allGlass = new THREE.DataTexture(new Uint8Array(16 * 4).fill(255), 4, 4); allGlass.needsUpdate = true; allGlass.userData.shared = true; }
+  const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ alphaMap: allGlass }));
+  m.visible = false; m.castShadow = false; m.position.set(0, 0, z0 + 0.945);
+  return m;
+}
+let allGlass = null;
+
 const namesOf = (o) => [o.userData.name ?? o.name, ...(o.userData.path || [])];
 
 /**
@@ -89,11 +130,15 @@ export async function loadAircraft(variant) {
   root.add(body, pit); pit.visible = false;
   const parts = { body, pit, glass: null, variant: v };
   // The file's origin is moved so that the center of gravity is the aircraft's own, and the wheels stand on the runway.
-  const holder = new THREE.Group(); body.add(holder);
-  holder.position.set(0, -sp.wheelDrop - M.ground, -M.cg);
+  // An aircraft with a cockpit keeps its outside in view from the seat (the nose, the wings, the canopy and its frame:
+  // `skin`, drawn in every view); only the parts named in `outside` go with `body`, which the cockpit view hides.
+  const holder = new THREE.Group(), away = new THREE.Group(), skin = M.pit ? new THREE.Group() : body;
+  if (M.pit) root.add(skin);
+  skin.add(holder); body.add(away);
+  holder.position.set(0, -sp.wheelDrop - M.ground, -M.cg); away.position.copy(holder.position);
 
   // ---- materials: lit by the sky like the rest of the scene; glass let through
-  const paint = [], seen = new Set();
+  const paint = [], clear = [], glaze = [], seen = new Set();
   const tidy = (m) => {
     if (seen.has(m)) return; seen.add(m);
     if (m.map) m.map.anisotropy = 8;
@@ -101,13 +146,14 @@ export async function loadAircraft(variant) {
     if (m.transparent || m.opacity < 0.99) {
       m.transparent = true; m.depthWrite = false; m.envMapIntensity = 1.3;
       if (m.isMeshStandardMaterial) { m.roughness = 0.06; m.metalness = 0.9; }
+      clear.push({ m, opacity: m.opacity, env: m.envMapIntensity });
       return;
     }
     if (m.isMeshStandardMaterial) { m.envMapIntensity = M.env ?? 0.9; paint.push({ m, rough: m.roughness, env: m.envMapIntensity }); }
   };
 
   // ---- parts: those a hinge moves stay as they are; the rest are merged, one mesh a material
-  const moving = [], still = new Map(), list = [...(src.children.length === 1 && !src.children[0].isMesh ? src.children[0].children : src.children)];
+  const moving = [], still = new Map(), panes = [], list = [...(src.children.length === 1 && !src.children[0].isMesh ? src.children[0].children : src.children)];
   for (const o of list) {
     const names = namesOf(o);
     if ((M.hide || []).some((re) => names.some((n) => re.test(n)))) continue;
@@ -122,12 +168,19 @@ export async function loadAircraft(variant) {
       continue;
     }
     o.traverse((c) => { if (c.isMesh) { tidy(c.material); const clear = c.material.transparent; c.castShadow = !clear; c.receiveShadow = !clear; if (clear) c.renderOrder = 3; } });
-    if (hinges.length) {
+    if (M.pit && is(M.pit.glass)) o.traverse((c) => { if (c.isMesh) panes.push(c.geometry); });
+    if (M.pit && is(M.outside)) away.add(o);
+    else if (M.pit && is(M.glaze)) {
+      // window panes painted on the outside model: from the seat they are glass (see `inside` in animate)
+      o.traverse((c) => { if (c.isMesh) { const m = c.material = c.material.clone(); glaze.push({ m, rough: m.roughness, metal: m.metalness, env: m.envMapIntensity, side: m.side }); c.castShadow = false; c.renderOrder = 3; } });
+      holder.add(o);
+    } else if (hinges.length) {
       o.matrixAutoUpdate = false; o.matrix.identity();
       moving.push({ o, hinges, stow: (M.stow || []).some((re) => names.some((n) => re.test(n))), key: '' });
       holder.add(o);
     } else o.traverse((c) => { if (c.isMesh) { if (!still.has(c.material)) still.set(c.material, []); still.get(c.material).push(c.geometry); } });
   }
+  if (panes.length) { parts.glass = rainGlass(panes, v.eye); parts.glass.position.add(holder.position); root.add(parts.glass); }
   for (const [mat, geos] of still) {
     const g = geos.length > 1 ? mergeGeometries(geos, false) : geos[0];
     if (geos.length > 1) for (const x of geos) x.dispose();
@@ -135,7 +188,7 @@ export async function loadAircraft(variant) {
     m.castShadow = !clear; m.receiveShadow = !clear; if (clear) m.renderOrder = 3;
     holder.add(m);
   }
-  parts.paint = paint; parts.moving = moving;
+  parts.paint = paint; parts.clear = clear; parts.glaze = glaze; parts.moving = moving;
   parts.drive = { ...DRIVE, ...(M.drive || {}) }; parts.driven = {};
 
   // ---- what the file leaves out: a plain engine nozzle
@@ -144,7 +197,7 @@ export async function loadAircraft(variant) {
     const N = M.nozzle, geo = new THREE.CylinderGeometry(N.r1, N.r0, N.len, 28, 1, true);
     geo.translate(0, N.len / 2, 0); geo.rotateX(Math.PI / 2);                                 // from the origin toward +Z
     const mat = new THREE.MeshStandardMaterial({ color: 0x2a2826, metalness: 0.85, roughness: 0.42, side: THREE.DoubleSide, envMapIntensity: 0.7 });
-    const m = new THREE.Mesh(geo, mat); m.position.set(...P(N.at)); m.castShadow = true; body.add(m);
+    const m = new THREE.Mesh(geo, mat); m.position.set(...P(N.at)); m.castShadow = true; skin.add(m);
   }
 
   // ---- lights: a lens and an additive glow that grows at night (as on the generated aircraft)
@@ -181,19 +234,15 @@ export async function loadAircraft(variant) {
   parts.nozzles = parts.exhaust.map((e) => new THREE.Vector3(e[0], e[1], e[2]));     // where the contrails begin
   parts.gearHeight = sp.gearHeight;
   PILOT_EYE.set(...P(v.eye)); parts.eye = PILOT_EYE.clone();
-  PILOT_VIEW.down = v.view?.down ?? 0.08;
+  PILOT_VIEW.down = v.view?.down ?? 0.08; PILOT_VIEW.lean = v.view?.lean || null;
   parts.animate = animate;
+  // The cockpit comes after: the aircraft is flown from the outside view, or from a bare seat, until it is in (or if it never is).
+  if (M.pit) parts.pitLoading = loadPit(v, parts, holder.position).catch((e) => { console.warn(`The cockpit of the ${v.name} could not be loaded:`, e); });
   animate(parts, { gear: 1, flap: 0, airbrake: 0, elev: 0, rud: 0, ail: 0, reheat: 0, agl: 0, crashed: null, fuel: 1, thrustLevel: 0 }, 0, 0, 0, 0);
   return { root, parts, variant: v };
 }
 
 const mA = new THREE.Matrix4(), mB = new THREE.Matrix4(), mC = new THREE.Matrix4(), axis = new THREE.Vector3();
-/** Value of a hinge's table [[driver value, degrees or meters], ...] at x. */
-function table(tab, x) {
-  if (x <= tab[0][0]) return tab[0][1];
-  for (let i = 1; i < tab.length; i++) if (x <= tab[i][0]) { const [x0, y0] = tab[i - 1], [x1, y1] = tab[i]; return x1 > x0 ? y0 + (y1 - y0) * (x - x0) / (x1 - x0) : y1; }
-  return tab[tab.length - 1][1];
-}
 
 /** Each frame: hinged parts, afterburner, lights, rain on the paint (the generated aircraft's animateAircraft hands over to this). */
 function animate(parts, ac, dt, time, night, wet = 0) {
@@ -230,6 +279,19 @@ function animate(parts, ac, dt, time, night, wet = 0) {
     const on = ac.reheat > 0.01 && !ac.crashed;
     for (const b of parts.burners) b.visible = on;
     if (on) { parts.burnerMat.uniforms.uLevel.value = ac.reheat; parts.burnerMat.uniforms.uTime.value = time; }
+  }
+
+  // From the seat: the cockpit's own moving parts, and the canopy seen from inside (a faint sheen, not a mirror).
+  const inside = parts.pit.visible && !!parts.cockpit;
+  if (inside) animatePit(parts, ac, dt, time, night);
+  if (parts.inside !== inside) {
+    parts.inside = inside;
+    for (const c of parts.clear) { c.m.opacity = inside ? Math.min(c.opacity, 0.16) : c.opacity; c.m.envMapIntensity = inside ? 0.3 : c.env; }
+    for (const c of parts.glaze) {
+      const m = c.m;
+      m.transparent = inside; m.depthWrite = !inside; m.opacity = inside ? 0.1 : 1; m.side = inside ? THREE.DoubleSide : c.side;
+      m.roughness = inside ? 0.06 : c.rough; m.metalness = inside ? 0.9 : c.metal; m.envMapIntensity = inside ? 0.3 : c.env; m.needsUpdate = true;
+    }
   }
 
   if (parts.wetNow !== wet) {

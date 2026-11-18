@@ -1103,6 +1103,7 @@ function updateHud(dt) {
   // Where the player is going, if they have pinned it on the map: the flight panel points the way.
   let nav = null;
   if (chart.pin) { const p = toWorld(chart.pin.lat, chart.pin.lon); nav = { x: p.x, z: p.z, label: chart.pin.field || 'Pin' }; }
+  model.parts.nav = nav;                    // (a cockpit with navigation displays of its own draws it there too: aircraft/displays.js)
   if (!mission.active) panel.update(dt, { ac, wx, ap, accel: S.timeAccel, magVar: REGION.magVar, hour: weather.hour, flight: S.flight, running: !S.paused && !S.busy, pit, nav });
   if (weather.trans && !wxChange) {   // a change started elsewhere (debug handle, the weather developing on its own)
     wxChange = { to: weather.kind, secs: weather.trans.seconds, left: weather.trans.remaining, flight: S.flight };
@@ -1219,7 +1220,7 @@ function tick(dt, shown = false) {
   clouds.uFlashScreen.value *= Math.exp(-dt * 7);
   const fx = clouds.fx;
   fx.time = S.time; fx.rain = pr * (1 - sn); fx.snow = pr * sn; fx.ice = S.frost;
-  fx.cockpit = S.mode === 'flying' && S.view === 'cockpit' ? 1 : 0; fx.airspeed = ac.tas; fx.flash = clouds.uFlashScreen.value;
+  fx.cockpit = S.mode === 'flying' && (rocket ? mission.inCabin : S.view === 'cockpit') ? 1 : 0; fx.airspeed = ac.tas; fx.flash = clouds.uFlashScreen.value;
   fx.clearance = Math.max(camera.position.y - groundHeight(camera.position.x, camera.position.z), 1);      // lets post skip motion blur when nothing is near enough to streak
   fx.exposure = 0.64 * sky.exposure * S.settings.exposure;
   perf.cpuEnd();

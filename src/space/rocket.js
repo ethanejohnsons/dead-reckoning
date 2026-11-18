@@ -79,12 +79,18 @@ export class Rocket {
     this.data(clock, null);
   }
 
-  /** Put the craft in a circular orbit of the Earth: for tests and for "start in orbit". */
-  placeInOrbit(clock, t, alt, incDeg = 28.5, lonDeg = -80) {
+  /** Put the craft in a circular orbit of the Earth: for tests and for "start in orbit". Crossing the equator at lonDeg on an
+   *  orbit inclined incDeg, or, given latDeg, over that place heading east. */
+  placeInOrbit(clock, t, alt, incDeg = 28.5, lonDeg = -80, latDeg = null) {
     const r = RE + alt, v = Math.sqrt(MU_E / r), i = incDeg * D2R;
-    geoToEci(clock, t, 0, lonDeg, alt, this.r);
-    enu(this.r, B);
-    for (let k = 0; k < 3; k++) this.v[k] = v * (Math.cos(i) * B[k] + Math.sin(i) * B[3 + k]);
+    if (latDeg !== null) {
+      // Over a place, heading due east: the northernmost (or southernmost) point of an orbit inclined by that place's latitude.
+      geoToEci(clock, t, latDeg, lonDeg, alt, this.r); enu(this.r, B);
+      for (let k = 0; k < 3; k++) this.v[k] = v * B[k];
+    } else {
+      geoToEci(clock, t, 0, lonDeg, alt, this.r); enu(this.r, B);
+      for (let k = 0; k < 3; k++) this.v[k] = v * (Math.cos(i) * B[k] + Math.sin(i) * B[3 + k]);
+    }
     this.t = t; this.landed = null; this.held = false; this.crashed = null; this.throttle = 0; this.thrustLevel = 0;
     this.stage = this.spec.stages.length - 1; this.burnT = 0; this.sas = 'prograde'; this.lifted = true; this.met = 0;
     this.aim(clock); this.data(clock, null);

@@ -27,8 +27,8 @@ const hud = document.getElementById('hud'), errBox = document.getElementById('er
 const fail = (what, e) => { console.error(what, e); errBox.textContent += `${what}: ${e && e.message ? e.message : e}\n`; };
 const load = async (path) => { try { return await import(/* @vite-ignore */ path); } catch (e) { fail(path, e); return null; } };
 
-const [vehMod, plumeMod, padMod, satMod] = await Promise.all([
-  load('../src/space/vehicles.js'), load('../src/space/plume.js'), load('../src/space/pad.js'), load('../src/space/satmodels.js'),
+const [vehMod, plumeMod, padMod, satMod, cabMod] = await Promise.all([
+  load('../src/space/vehicles.js'), load('../src/space/plume.js'), load('../src/space/pad.js'), load('../src/space/satmodels.js'), load('../src/space/cabin.js'),
 ]);
 
 const q = new URLSearchParams(location.search), num = (k, d) => (q.has(k) ? parseFloat(q.get(k)) : d);
@@ -102,6 +102,7 @@ let vehicle = null, pad = null, sat = null, plume = null, trail = null, built = 
 const spentBits = [];
 function clear(o) { if (!o) return; (o.root || o.group || o.object).removeFromParent(); o.dispose && o.dispose(); }
 function rebuild() {
+  leaveCabin();
   clear(vehicle); clear(pad); clear(sat); clear(plume); clear(trail);
   for (const b of spentBits.splice(0)) b.removeFromParent();
   vehicle = pad = sat = plume = trail = null; built = {};
@@ -157,6 +158,82 @@ function step(dt) {
     if (A.on && A.follow) { const y = vehicle.root.position.y + vehicle.height * 0.3, d = y - controls.target.y; controls.target.y = y; camera.position.y += d; }
   }
   if (pad) pad.update(dt, { t: S.t, night: S.night });
+  if (C.on && C.cabin) {
+    if (C.run) C.t += dt;
+    C.s = { ...flight(C.t, S.vehicle), time: S.time, night: S.night, lit: C.lit, sunDir: C.sun || SUN_DIR, ...C.data };
+    try { C.cabin.update(dt, C.s); } catch (e) { fail('cabin.update', e); C.on = false; }
+  }
+}
+
+// ---------------------------------------------------------------- the crew cabin
+const C = { on: false, cabin: null, yaw: 0, pitch: 0, zoom: 1, fov: 0, t: -8, run: true, lit: 1, sun: null, data: {}, hidden: null, s: null, light: 'daylight', free: false, ms: 0 };
+const earth = new THREE.Mesh(new THREE.SphereGeometry(6.371e6, 96, 48), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, fog: false }));
+{
+  const c = document.createElement('canvas'); c.width = 1024; c.height = 512; const g = c.getContext('2d');
+  g.fillStyle = '#1d4f9c'; g.fillRect(0, 0, 1024, 512);
+  let sd = 7; const rnd = () => { sd = (sd * 16807) % 2147483647; return sd / 2147483647; };
+  for (let i = 0; i < 260; i++) { g.fillStyle = `rgba(${rnd() < 0.3 ? '70,110,60' : '250,250,250'},${0.1 + rnd() * 0.35})`; g.beginPath(); g.ellipse(rnd() * 1024, rnd() * 512, 8 + rnd() * 70, 4 + rnd() * 22, rnd() * 3, 0, 7); g.fill(); }
+  earth.material.map = new THREE.CanvasTexture(c); earth.material.map.colorSpace = THREE.SRGBColorSpace;
+  earth.position.set(0, 1.2e6, -6.6e6); earth.visible = false; earth.frustumCulled = false; scene.add(earth);
+}
+const sm = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+/** A scripted flight to a 115 mile orbit, as the fields the game's mission.js gives a cabin. */
+function flight(t, id) {
+  const ss = id === 'starship', T = ss ? 520 : 700, cuts = ss ? [[0, 162], [168, T]] : [[0, 161], [166, 548], [553, T]], names = ss ? ['Super Heavy', 'Ship'] : ['S-IC', 'S-II', 'S-IVB', 'CSM'];
+  const at = (tt) => {
+    const f = Math.max(0, Math.min(1, tt / T));
+    return { alt: 185000 * (1 - Math.pow(1 - f, 2.3)) + (tt > T ? 3000 * Math.sin((tt - T) / 860) : 0), so: 408 + (7793 - 408) * Math.pow(f, 1.55), pitch: tt < 12 ? 90 : 90 * Math.pow(1 - sm(12 / T, 1, f), 1.6) };
+  };
+  if (t < 0) return { met: -1, throttle: t > -3 ? 1 : 0, thrust: t > -3 ? (t + 3) / 3 : 0, stage: 0, stageName: names[0], stages: names.length, alt: 0, vs: 0, speedSurf: 0, speedOrb: 408, pitch: 90, hdg: 72, roll: 0, gLoad: 1, mach: 0, q: 0, ap: 0, pe: -6.36e6, tAp: NaN, tPe: NaN, body: 'earth', warp: 1, autopilot: true, sas: 'hold', pilot: null, landed: true, held: true };
+  const a = at(t), b = at(t + 0.5), f = Math.min(1, t / T), orbit = t >= T;
+  let stage = cuts.findIndex(([, e]) => t < e + 4); if (stage < 0) stage = cuts.length - 1;
+  const [s0, s1] = cuts[stage], burning = !orbit && t >= s0 && t < s1, k = Math.max(0, Math.min(1, (t - s0) / (s1 - s0)));
+  const g = burning ? (ss ? [1.5 + 1.9 * k, 0.8 + 2.7 * k * k][stage] : [1.2 + 2.75 * k * k, 0.85 + 0.95 * k, 0.52 + 0.2 * k][stage]) : 0;
+  const surf = Math.max(0, a.so - 408 * Math.cos(a.pitch * Math.PI / 180) * (1 - f * 0.1)), rho = 1.225 * Math.exp(-a.alt / 7200);
+  const ap = orbit ? 191000 : Math.min(191000, a.alt + (a.so * a.so) / 19.6 * 0.02 * Math.pow(f, 3) + 60000 * f * f), pe = orbit ? 183000 : -6.36e6 + (6.36e6 + 183000) * Math.pow(f, 7);
+  return {
+    met: t, throttle: burning ? 1 : 0, thrust: burning ? 1 : 0, stage, stageName: names[stage], stages: names.length, alt: a.alt, vs: (b.alt - a.alt) / 0.5, speedSurf: surf, speedOrb: a.so,
+    pitch: a.pitch + (orbit ? 0 : 0.6 * Math.sin(t * 0.7)), hdg: 72 + 14 * f + (t < 30 ? 0 : 0.4 * Math.sin(t * 0.31)), roll: t > 12 && t < 30 ? 18 * Math.sin(((t - 12) / 18) * Math.PI) : 0.5 * Math.sin(t * 0.45),
+    gLoad: g, mach: surf / 300, q: 0.5 * rho * surf * surf, ap, pe, tAp: orbit ? 2650 - ((t - T) % 5300) / 2 : (T - t) * 0.6, tPe: orbit ? 5300 - ((t - T) % 5300) : NaN, body: 'earth', warp: 1, autopilot: !orbit, sas: orbit ? 'prograde' : 'hold', pilot: null, landed: false, held: false,
+  };
+}
+function leaveCabin() {
+  if (!C.on && !C.cabin) return;
+  if (C.cabin) { C.cabin.root.removeFromParent(); try { C.cabin.dispose(); } catch (e) { fail('cabin.dispose', e); } C.cabin = null; }
+  for (const o of C.hidden || []) o.visible = true; C.hidden = null; C.on = false;
+  earth.visible = false; controls.enabled = true; renderer.toneMappingExposure = 0.7; camera.near = 0.5; camera.far = 60000; camera.fov = 35; camera.updateProjectionMatrix();
+}
+function enterCabin(o = {}) {
+  if (o.vehicle && o.vehicle !== S.vehicle) V.set({ vehicle: o.vehicle });
+  if (!vehicle || !cabMod) return;
+  if (!C.cabin) {
+    const t0 = performance.now();
+    try { C.cabin = cabMod.buildCabin(S.vehicle); } catch (e) { fail('buildCabin', e); return; }
+    C.ms = +(performance.now() - t0).toFixed(1); built.cabin = C.ms;
+    vehicle.root.add(C.cabin.root); C.yaw = 0; C.pitch = 0; C.zoom = 1;
+    C.hidden = vehicle.root.children.filter((x) => x !== C.cabin.root && x.visible && !(plume && x === plume.group)); for (const x of C.hidden) x.visible = false;
+  }
+  C.on = true; controls.enabled = false;
+  for (const k of ['t', 'run', 'lit', 'free']) if (k in o) C[k] = o[k];
+  if ('yaw' in o) C.yaw = (o.yaw * Math.PI) / 180; if ('pitch' in o) C.pitch = (o.pitch * Math.PI) / 180;
+  if ('fov' in o) C.fov = o.fov; if ('zoom' in o) C.zoom = o.zoom;
+  if ('sun' in o) C.sun = o.sun ? new THREE.Vector3(...o.sun).normalize() : null;
+  if ('data' in o) C.data = o.data || {};
+  if (o.light) C.light = o.light;
+  S.light = C.light === 'space' ? 'space' : 'day'; S.night = C.light === 'night' ? 1 : 0; earth.visible = C.light === 'space';
+  if (C.sun) { SUN_DIR.copy(C.sun); S.sunEl = 0; }
+  applyLight();
+}
+const _m1 = new THREE.Matrix4(), _q1 = new THREE.Quaternion(), _e1 = new THREE.Euler(), _z = new THREE.Vector3();
+function cabinCamera() {
+  const cb = C.cabin, R = cb.reach || { yaw: 1.5, up: 0.8, down: 0.8 };
+  if (!C.free) { C.yaw = Math.max(-R.yaw, Math.min(R.yaw, C.yaw)); C.pitch = Math.max(-R.down, Math.min(R.up, C.pitch)); }
+  vehicle.root.updateMatrixWorld(true);
+  camera.position.copy(cb.eye).applyMatrix4(vehicle.root.matrixWorld);
+  _m1.lookAt(_z.set(0, 0, 0), cb.look, cb.up); camera.quaternion.setFromRotationMatrix(_m1).multiply(_q1.setFromEuler(_e1.set(C.pitch, C.yaw, 0, 'YXZ'))).premultiply(vehicle.root.quaternion);
+  // the game's eye opens as the light goes (sky.js on the ground, cosmos.js in space): stand in for it here
+  renderer.toneMappingExposure = 0.7 * (C.light === 'space' ? 1.25 + 1.5 * (1 - C.lit) * (1 - C.lit) : 1 + 2.8 * S.night);
+  camera.fov = Math.max(12, Math.min(100, (C.fov || cb.fov || 62) * C.zoom)); camera.near = 0.05; camera.far = C.light === 'space' ? 2e7 : 60000; camera.updateProjectionMatrix();
 }
 
 function resize() {
@@ -166,14 +243,15 @@ function resize() {
   }
 }
 function draw() {
-  resize(); controls.update();
+  resize(); if (C.on && C.cabin) cabinCamera(); else controls.update();
   renderer.info.reset();
   if (S.bloom) composer.render(); else renderer.render(scene, camera);
   const st = vehicle ? vehicle.stages[Math.min(S.stage, vehicle.stages.length - 1)] : null;
   hud.textContent = `${S.vehicle}${pad ? ' + pad' : ''}${S.sat ? ' ' + S.sat : ''}  light ${S.light}  night ${S.night}\n` +
     (st ? `stage ${S.stage} ${st.name} (${st.propellant})  throttle ${S.throttle.toFixed(2)}  pressure ${S.pressure.toFixed(3)}  time ${S.time.toFixed(1)}  t ${S.t.toFixed(1)}\n` : '') +
     `build ms ${JSON.stringify(built)}  calls ${renderer.info.render.calls}  tris ${renderer.info.render.triangles}` +
-    (trail && trail.count ? `\nsmoke ${trail.count} puffs  overdraw ${trail.overdraw.toFixed(1)} screens  quality ${S.quality}` : '') + (A.on ? `  T${A.lifted ? '+' + A.met.toFixed(1) : '-'}  height ${A.y.toFixed(0)} m  ${A.vy.toFixed(0)} m/s` : '');
+    (trail && trail.count ? `\nsmoke ${trail.count} puffs  overdraw ${trail.overdraw.toFixed(1)} screens  quality ${S.quality}` : '') + (A.on ? `  T${A.lifted ? '+' + A.met.toFixed(1) : '-'}  height ${A.y.toFixed(0)} m  ${A.vy.toFixed(0)} m/s` : '') +
+    (C.on && C.s ? `\ncabin (${C.light})  T${C.t < 0 ? '' : '+'}${C.t.toFixed(1)}  ${C.s.stageName}  alt ${(C.s.alt / 1000).toFixed(1)} km  ${C.s.speedOrb.toFixed(0)} m/s  pitch ${C.s.pitch.toFixed(1)}  g ${C.s.gLoad.toFixed(2)}  head ${(C.yaw * 57.3).toFixed(0)}/${(C.pitch * 57.3).toFixed(0)}  fov ${camera.fov.toFixed(0)}` : '');
 }
 renderer.info.autoReset = false;
 
@@ -229,7 +307,30 @@ const V = (window.V = {
   /** Throw stage n clear, as the game would: returns the detached copy, already in the scene. */
   spent(n, offset = [30, -20, 0]) { const c = vehicle.spent(n); scene.add(c); c.position.add(new THREE.Vector3(...offset)); c.rotation.z += 0.25; spentBits.push(c); return c; },
   errors: () => errBox.textContent,
+  /** The view from the commander's seat (see the top of the file). */
+  cabin(o = {}) { if (o.off) leaveCabin(); else enterCabin(o); return V; },
+  get C() { return C; },
+  flight,
+  /** Draw calls and triangles of the cabin alone, its textures and how long it took to build. */
+  cabinInfo() {
+    if (!C.cabin) return null;
+    const keep = []; scene.traverse((x) => { if ((x.isMesh || x.isPoints || x.isLine) && x.visible) { let p = x, inside = false; while (p) { if (p === C.cabin.root) inside = true; p = p.parent; } if (!inside) { keep.push(x); x.visible = false; } } });
+    const smE = renderer.shadowMap.enabled; renderer.shadowMap.enabled = false; renderer.info.reset(); renderer.render(scene, camera);
+    const calls = renderer.info.render.calls, triangles = renderer.info.render.triangles; renderer.shadowMap.enabled = smE; for (const x of keep) x.visible = true;
+    const tex = new Map(); let lights = 0;
+    C.cabin.root.traverse((x) => { if (x.isLight) lights++; for (const m of x.material ? [].concat(x.material) : []) for (const k of Object.keys(m)) { const t = m[k]; if (t && t.isTexture && t.image) tex.set(t.uuid, [t.image.width, t.image.height]); } });
+    let bytes = 0; for (const [w, h] of tex.values()) bytes += w * h * 4 * 1.34;
+    return { calls, triangles, textures: tex.size, textureMB: +(bytes / 1048576).toFixed(1), sizes: [...tex.values()].map((x) => x.join('x')).join(' '), lights, buildMs: C.ms, info: C.cabin.info };
+  },
 });
+// the head turns with a drag and the lens zooms with the wheel while in the cabin
+{
+  let drag = null;
+  canvas.addEventListener('pointerdown', (e) => { if (C.on) drag = [e.clientX, e.clientY]; });
+  addEventListener('pointerup', () => { drag = null; });
+  addEventListener('pointermove', (e) => { if (!C.on || !drag) return; const k = (camera.fov * Math.PI / 180) / canvas.clientHeight; C.yaw += (e.clientX - drag[0]) * k; C.pitch += (e.clientY - drag[1]) * k; drag = [e.clientX, e.clientY]; });
+  canvas.addEventListener('wheel', (e) => { if (C.on) { C.zoom = Math.max(0.3, Math.min(1.5, C.zoom * (e.deltaY > 0 ? 1.08 : 0.926))); e.preventDefault(); } }, { passive: false });
+}
 
 addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase(), ids = vehMod ? vehMod.VEHICLES.map((v) => v.id) : [];
@@ -247,11 +348,14 @@ addEventListener('keydown', (e) => {
   else if (k === 'g') V.launch();
   else if (k === 'f') A.follow = !A.follow;
   else if (k === 'n') V.set({ night: S.night > 0.5 ? 0 : 1 });
+  else if (k === 'c') V.cabin(C.on ? { off: true } : {});
+  else if (k === 'k' && C.on) V.cabin({ light: { daylight: 'space', space: 'night', night: 'daylight' }[C.light] });
   else if (k === ' ') S.paused = !S.paused;
 });
 
 rebuild(); applyLight();
 if (num('launch', 0)) V.launch();
+if (q.has('cabin')) V.cabin({ light: q.get('cabin') === '1' ? 'daylight' : q.get('cabin'), t: num('ct', -8) });
 {
   const h = vehicle ? vehicle.height : sat ? sat.radius : 100, base = pad && vehicle ? pad.standY : 0;
   if (sat && !vehicle) V.view({ target: [0, 0, 0], az: 35, el: 20, dist: sat.radius * 3.4 });
