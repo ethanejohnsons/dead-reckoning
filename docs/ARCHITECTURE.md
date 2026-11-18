@@ -297,12 +297,13 @@ until the craft comes back down (`arriveFromSpace` in `main.js` fetches it again
 | `frames.js` | The inertial frame (the equatorial frame of `world/celestial.js`), the mission clock, where the Earth's turn, the sun and the Moon are at a time, and the conversions to latitude/longitude/height and to the flat world's axes |
 | `orbit.js` | Gravity of the Earth and the Moon, the coasting integrator (RK4), orbital elements for the readouts, and the predicted path the map draws |
 | `rocket.js` | The vehicle as a point with a nose: thrust per stage (no fuel to run out), drag, attitude against the local horizon, ground contact, and the autopilot that flies to a parking orbit |
-| `mission.js` | The flight itself: start on a pad (or in orbit), keys, staging, time acceleration, which view shows (`mix`), the cameras, the stand-in that makes the rest of the game follow the rocket, the rocket's HUD panel |
+| `mission.js` | The flight itself: start on a pad (or in orbit), keys, staging, time acceleration, which view shows (`mix`), the cameras (chase, cabin, onboard, and the tracking camera by the pad: `view === 'track'`, placed by the mouse or, for a recording or a test, by `mission.shot`), the stand-in that makes the rest of the game follow the rocket, the rocket's HUD panel |
 | `cosmos.js` | The view from space: one full-screen pass that ray-traces the Earth (ground from the clip levels, clouds, marched atmosphere), the Moon (NASA's color and relief maps, with generated craters below their resolution), sun and Milky Way; then the things with shape, lit by sun and Earthshine |
 | `globetiles.js` | The Earth's picture for that pass: Sentinel-2 cloudless tiles as clip levels in one array texture, zoom 2 to 12, streamed around the point under the camera |
 | `orbitmap.js` | The orbit map (`M` in a rocket): the path ahead, the Moon's orbit, labels |
 | `satellites.js` | The space stations and satellites on their orbits, as points far off and models near |
 | `sites.js` | The world's launch sites (only places with real pads; a pin on the map makes a pad anywhere) |
+| `catch.js` | Back to the tower (`K`, Starship): the autopilot that turns the booster or the Ship around, lets it fall (steering the fall with the flaps or the grid fins), flies the landing burn and brings it between the tower's arms; the game declares the catch (`Mission.tryCatch`) and moves the arms (`pad.js`) |
 | `transfer.js` | The way to the Moon (`L`): plans the burn by flying it ahead, then flies it: wait for the Moon, burn, coast, trim, brake into lunar orbit |
 | `rocketsound.js` | The rocket's sound: three recordings through filters that follow the air's pressure, the view and the thrust |
 | `reentry.js` | The glow of reentry: a shell of shocked air around the craft, by the flight model's heating |

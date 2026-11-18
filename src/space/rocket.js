@@ -31,7 +31,7 @@ export const ROCKETS = {
   },
   starship: {
     stages: [
-      { name: 'Super Heavy', thrust: 74.4e6, a0: 14.7, a1: 36, burn: 160, cda: 50, cdaSide: 820, pivot: 55 },
+      { name: 'Super Heavy', thrust: 74.4e6, a0: 14.7, a1: 36, burn: 160, cda: 50, cdaSide: 820, cdaBack: 720, pivot: 55 },      // (cdaBack: engines first, grid fins out, as it comes back: slowed by the air to about 500 mph)
       { name: 'Ship', thrust: 12.3e6, a0: 9.6, a1: 34, burn: 350, cda: 45, cdaSide: 480, cdaBack: 300, pivot: 92 },      // (cdaBack: tail first, as it comes home under the autopilot's "tail to the direction of travel")
     ],
   },
@@ -51,7 +51,9 @@ export class Rocket {
     this.throttle = 0; this.thrustLevel = 0;  // commanded, and what the engines are giving (they take a moment to come up)
     this.sas = 'hold';                        // 'hold' | 'prograde' | 'retrograde'
     this.stage = 0; this.burnT = 0;
-    this.landed = null;                       // { body, lat, lon, alt } on the Earth; { body: 'moon', off: [x, y, z] } on the Moon
+    this.landed = null;                       // { body, lat, lon, alt } on the Earth (alt: of the full stack's base, wherever the lowest part left is); { body: 'moon', off: [x, y, z] } on the Moon
+    this.caught = false;                      // landed, but hanging in a launch tower's arms
+    this.light = 1;                           // how much harder the engines push than the stage's figures say: a booster that has let its upper stage go is a fraction of the weight
     this.held = false;                        // on the pad with the hold-down arms on: no liftoff until released
     this.crashed = null;
     this.body = 'earth';
@@ -73,8 +75,8 @@ export class Rocket {
   placeOnPad(clock, t, lat, lon, alt, hdg = 90) {
     this.t = t; this.stage = 0; this.burnT = 0; this.throttle = 0; this.thrustLevel = 0;
     this.hdg = hdg; this.pitch = 90; this.roll = 0; this.sas = 'hold';
-    this.landed = { body: 'earth', lat, lon, alt }; this.held = true; this.crashed = null; this.body = 'earth';
-    this.met = 0; this.lifted = false; this.maxAlt = 0; this.touchdown = null; this.baseY = 0;
+    this.landed = { body: 'earth', lat, lon, alt }; this.held = true; this.caught = false; this.crashed = null; this.body = 'earth';
+    this.met = 0; this.lifted = false; this.maxAlt = 0; this.touchdown = null; this.baseY = 0; this.light = 1;
     this.ride(clock);
     this.data(clock, null);
   }
@@ -182,7 +184,7 @@ export class Rocket {
     if (this.landed) {
       this.ride(c);
       const gl = this.body === 'moon' ? MU_M / (RM * RM) : G0;
-      if (!this.held && aT > gl * 1.01) { this.landed = null; this.lifted = true; }      // off the ground
+      if (!this.held && aT > gl * 1.01) { this.landed = null; this.caught = false; this.lifted = true; }      // off the ground (or out of the arms)
       else { this.burnT += this.thrustLevel * dt * (this.held ? 0 : 1); this.data(c, env); this.gLoad = 1; if (this.lifted) this.met += dt; return; }
     }
     if (this.lifted) this.met += dt;
@@ -247,7 +249,15 @@ export class Rocket {
   /** Thrust acceleration right now (m/s2). */
   thrustAccel() { return this.thrustLevel * this.fullAccel(); }
   /** At full throttle: rising from a0 to a1 as a stage with constant thrust and draining tanks does, then staying there. */
-  fullAccel() { const S = this.stageSpec, f = Math.min(this.burnT / S.burn, 1); return S.a0 / (1 - (1 - S.a0 / S.a1) * f); }
+  fullAccel() { const S = this.stageSpec, f = Math.min(this.burnT / S.burn, 1); return (this.light || 1) * S.a0 / (1 - (1 - S.a0 / S.a1) * f); }
+
+  /** Caught by a tower's arms: hang there, the stack's base (as it would be with every stage on) at alt over a place. */
+  catchAt(clock, lat, lon, alt) {
+    this.landed = { body: 'earth', lat, lon, alt }; this.caught = true; this.held = false;
+    this.throttle = 0; this.thrustLevel = 0; this.pitch = 90; this.sas = 'hold';
+    this.touchdown = { sink: Math.max(-this.vs, 0), side: 0, pitch: 90, t: this.t, caught: true };
+    this.ride(clock); this.data(clock, null);
+  }
 
   /** Touching the ground: a soft, upright arrival is a landing; anything else is the end of the vehicle. */
   contact(c, env) {
@@ -259,8 +269,9 @@ export class Rocket {
     const side = Math.sqrt(Math.max(dot(vrel, vrel) - up * up, 0));
     this.touchdown = { sink: -up, side, pitch: this.pitch, t: this.t };
     if (up > -9 && side < 7 && this.pitch > 72) {
-      if (this.body === 'moon') { const k = (RM + this.pivot) / len(rel); this.landed = { body: 'moon', off: [rel[0] * k, rel[1] * k, rel[2] * k] }; }
-      else this.landed = { body: 'earth', lat: geo.lat, lon: geo.lon, alt: geo.alt - this.clear() - base };
+      // (what is kept is where the full stack's base would be: below the ground by the height of the stages that are gone)
+      if (this.body === 'moon') { const k = (RM + this.clear()) / len(rel); this.landed = { body: 'moon', off: [rel[0] * k, rel[1] * k, rel[2] * k] }; }
+      else this.landed = { body: 'earth', lat: geo.lat, lon: geo.lon, alt: geo.alt - this.pivot - base };
       this.held = false; this.throttle = 0; this.thrustLevel = 0; this.pitch = 90; this.sas = 'hold';
       this.ride(c);
     } else this.crashed = up < -9 || side >= 7 ? 'Hit the ground' : 'Fell over on landing';

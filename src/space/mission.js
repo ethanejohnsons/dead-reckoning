@@ -25,6 +25,7 @@ import { Satellites } from './satellites.js';
 import { RocketSound } from './rocketsound.js';
 import { ReentryGlow } from './reentry.js';
 import { plan as planTransfer, planPath, pass as moonPass, TransferPilot } from './transfer.js';
+import { ReturnPilot, offsetTo } from './catch.js';
 
 const MIX_LO = 24000, MIX_HI = 36000;     // the band (m) over which the view from space takes over
 const STEP = 1 / 60;
@@ -71,7 +72,13 @@ export class Mission {
     this.spent = [];                       // dropped stages still in sight: { obj, r, v, q (local world), spin, age }
     this.mix = 0; this.groundOK = true;
     this.warp = 0; this.autopilot = false; this.view = 'chase'; this.mapOpen = false;
-    this.cam = { yaw: -2.2, pitch: -0.1, dist: 1, mapYaw: 0.6, mapPitch: 0.35, mapDist: 4 * RE, focus: 'body', headYaw: 0, headPitch: 0 };
+    this.cam = { yaw: -2.2, pitch: -0.1, dist: 1, mapYaw: 0.6, mapPitch: 0.35, mapDist: 4 * RE, focus: 'body', headYaw: 0, headPitch: 0, trackAz: -2.0, trackEl: 0 };
+    /** The tracking camera's place and lens, when something other than the mouse sets them (a recording, a test):
+     *  { pos: [east, up, south] (m from the foot of the pad), fov (degrees; 0: fitted to the vehicle), fill (how much of the frame's
+     *  height the vehicle takes when fitted), look: [east, up, south] (a fixed point to look at), follow (0..1: how far from that
+     *  point toward the vehicle the aim goes; 1 without a look point), shake (0..1) }. */
+    this.shot = null;
+    this.aimW = new THREE.Vector3(); this.aimSet = false;
     this.env = { clock: this.clock, ground: (lat, lon) => this.groundAt(lat, lon), wind: [0, 0, 0] };
     this.ctl = { pitch: 0, yaw: 0, roll: 0 };
     this.eye = [0, 0, 0]; this.eyeQuat = new THREE.Quaternion();          // the camera in the inertial frame
@@ -126,7 +133,7 @@ export class Mission {
     this.azimuth = site.az ?? 90;
     this.warp = 0; this.autopilot = false; this.view = 'chase'; this.setMap(false);
     this.cam.yaw = (this.azimuth - 55) * D2R; this.cam.pitch = -0.06; this.cam.dist = 1;
-    this.said = {}; this.endT = 0; this.maxQ = 0; this.mix = 0; this.pilot = null; this.xfer = null;
+    this.said = {}; this.endT = 0; this.maxQ = 0; this.mix = 0; this.pilot = null; this.xfer = null; this.ret = null; this.boosterOnly = false;
     this.sats.reset(this.clock, site);
     // Shadows: the vehicle's on the ground and on itself, the pad's structures' on the ground.
     this.shadows();
@@ -197,6 +204,7 @@ export class Mission {
         case 'Period': this.setWarp(this.warp + 1); break;
         case 'Comma': this.setWarp(this.warp - 1); break;
         case 'KeyL': this.toggleTransfer(); break;
+        case 'KeyK': this.toggleReturn(); break;
         case 'KeyN': this.sats.next(); g.toast(this.sats.target ? `Target: ${this.sats.target.name}.` : 'No target.', 3); break;
         case 'Tab': if (this.mapOpen) { e.preventDefault(); this.cycleFocus(); } break;
         default:
@@ -206,6 +214,7 @@ export class Mission {
   manual() {
     if (this.autopilot) { this.autopilot = false; this.g.toast('Autopilot off. You have control.', 3); }
     if (this.pilot) { this.pilot = null; this.g.toast('Transfer helper off. You have control; the plan stays on the map.', 4); }
+    if (this.ret) { this.ret = null; this.g.toast('You have control. The tower will still catch you: come down between its arms, upright and slow.', 6); }
   }
   setSas(mode) { this.rk.sas = mode; this.manual(); this.g.toast(mode === 'hold' ? 'Holding attitude.' : mode === 'prograde' ? 'Holding the nose on the direction of travel.' : 'Holding the tail to the direction of travel.', 2.5); }
   /** Space: light the engines and let go, or drop the stage. */
@@ -271,6 +280,83 @@ export class Mission {
     else if (ev === 'lost') { g.toast('The pass of the Moon went wrong. You have control.', 7); this.pilot = null; this.warp = 0; }
   }
 
+  // ------------------------------------------------------------------ back to the tower (catch.js)
+
+  /** Where the tower catches what is left of the vehicle: { lat, lon, alt (of the vehicle's turning point), origin (of the full stack's base) }, or null. */
+  catchTarget() {
+    const rk = this.rk, v = this.vehicle, pad = this.pad;
+    if (rk.id !== 'starship' || !pad || !pad.catchY || !this.site || !v) return null;
+    // The catch pins: under the booster's grid fins; on the Ship alone, under its forward flaps.
+    const st = v.stages, pinY = rk.stage === 0 ? st[0].topY - 7 : st[1].bottomY + 32.4;          // (the forward flaps begin 33.6 m up the Ship: the arms close just beneath them)
+    const origin = this.padY + pad.catchY - pinY;
+    return { lat: this.site.lat, lon: this.site.lon, alt: origin + rk.pivot, origin };
+  }
+  /** K: fly back to the tower and into its arms. With the Ship still on, the Ship is let go and the booster comes home. */
+  toggleReturn() {
+    const rk = this.rk, g = this.g, v = this.vehicle;
+    if (this.ret) { this.manual(); return; }
+    if (rk.crashed) return;
+    if (rk.id !== 'starship') { g.toast('Only Starship comes back to its tower.', 4); return; }
+    const tg = this.catchTarget();
+    if (!tg || rk.body !== 'earth') { g.toast('There is no tower to come back to here.', 4); return; }
+    if (rk.landed) { g.toast(rk.caught ? 'Already in the tower\'s arms.' : 'Lift off first: K brings the vehicle back to the tower.', 4); return; }
+    const o = offsetTo(rk, this.clock, tg);
+    if (o.dist > 450000 || rk.speedSurf > 3600) { g.toast('Too far and too fast to turn back: the tower can be reached from within about 280 miles, below 8,000 mph.', 6); return; }
+    this.autopilot = false; this.pilot = null; this.setWarp(Math.min(this.warp, PHYS_WARP), true);
+    if (rk.stage === 0 && !this.boosterOnly) {
+      // The Ship goes on by itself; the player stays with the booster, which is now a fraction of the weight.
+      this.showCabin(false); if (this.view === 'cockpit') this.view = 'chase';
+      const obj = v.spent(1); g.scene.add(obj);
+      this.spent.push({ obj, r: [rk.r[0], rk.r[1], rk.r[2]], v: [rk.v[0] + rk.nose[0] * 12, rk.v[1] + rk.nose[1] * 12, rk.v[2] + rk.nose[2] * 12], q: this.qLocal.clone(), spin: new THREE.Vector3(0.004, 0, 0), age: 0, pivot: rk.spec.stages[0].pivot });
+      v.stages[1].group.visible = false; this.boosterOnly = true; rk.light = 1.8;
+      this.shadows();
+    }
+    rk.burnT = Math.max(rk.burnT, 0.85 * rk.stageSpec.burn);                   // (tanks nearly empty: the engines have little left to lift)
+    const t2 = this.catchTarget();
+    this.ret = new ReturnPilot(t2, { belly: rk.stage > 0 });
+    g.toast(this.boosterOnly ? 'The Ship flies on. The booster is going back to the tower: boostback, a fall engines first, a landing burn into the arms. Any control takes over.'
+      : 'Going back to the tower: a burn to turn around, a fall flat on the belly, then the flip and the landing burn into the arms. Any control takes over.', 9);
+  }
+  returnSaid(ev) {
+    const g = this.g, rk = this.rk;
+    if (ev === 'burn') g.toast('Boostback burn.', 4);
+    else if (ev === 'fall') g.toast(rk.stage > 0 ? 'Engines off. Falling belly first.' : 'Engines off. Falling engines first.', 4);
+    else if (ev === 'land') g.toast(rk.stage > 0 ? 'The flip, and the landing burn.' : 'Landing burn.', 4);
+  }
+  /** Is the vehicle where the arms can take it: over the rails, upright and slow? Then it is caught (by hand or by the autopilot alike). */
+  tryCatch() {
+    const rk = this.rk, tg = this.catchTarget();
+    if (!tg || rk.body !== 'earth') return;
+    const o = offsetTo(rk, this.clock, tg);
+    if (o.dist < 2 && Math.abs(o.height) <= 2 && rk.speedSurf < 3.5 && rk.pitch > 84) {
+      rk.catchAt(this.clock, tg.lat, tg.lon, tg.origin); rk.roll = (rk.hdg + 180) % 360;
+      this.ret = null; this.warp = 0;
+    }
+  }
+  /** Coming down upright near the tower, the vehicle turns about its own length until it is square to the arms: its catch pins
+   *  out to the sides over the rails, its heat shield away from the tower (as it stood on the pad). Standing upright, which way the
+   *  model faces is its heading less its roll, and the heading swings wildly as the nose wanders about the vertical: so the facing
+   *  is what is kept here and turned, steadily, to a half turn from north, and the roll is whatever gives it. */
+  squareUp(dt) {
+    const rk = this.rk, tg = this.catchTarget();
+    if (!tg || rk.pitch < 60 || rk.body !== 'earth' || !(this.ret ? this.ret.phase === 'land' : offsetTo(rk, this.clock, tg).dist < 150)) { this.facing = null; return; }
+    if (this.facing == null) this.facing = rk.hdg - rk.roll;
+    const e = ((180 - this.facing + 540) % 360) - 180;
+    this.facing += clamp(e, -26 * dt, 26 * dt);
+    rk.roll = (((rk.hdg - this.facing) % 360) + 360) % 360;
+  }
+  /** What the tower's arms should be doing: 0 shut under the pins, 1 open as for launch, 1.4 wide for a vehicle coming in. */
+  armsWanted() {
+    const rk = this.rk;
+    if (rk.caught) return 0;
+    if (rk.id !== 'starship' || rk.landed || !rk.lifted) return 1;
+    const tg = this.catchTarget();
+    if (!tg || rk.vs > 2) return 1;
+    const o = offsetTo(rk, this.clock, tg);
+    if (o.dist > 600 || o.height > 1500 || o.height < -6) return 1;
+    return o.height < 9 && o.dist < 4 ? 0.3 : 1.4;                             // closing as the pins come down to the rails
+  }
+
   setWarp(i, quiet = false) {
     const rk = this.rk, max = rk.canCoast ? WARPS.length - 1 : PHYS_WARP;
     const n = clamp(i, 0, max);
@@ -285,21 +371,53 @@ export class Mission {
     this.map.setVisible(on);
   }
   cycleFocus() { const c = this.cam, order = ['body', 'craft', 'earth', 'moon']; c.focus = order[(order.indexOf(c.focus) + 1) % order.length]; this.map.fit(); this.g.toast(`Map centered on ${c.focus === 'body' ? (this.rk.body === 'moon' ? 'the Moon' : 'the Earth') : c.focus === 'craft' ? 'your craft' : c.focus === 'earth' ? 'the Earth' : 'the Moon'}.`, 2); }
-  /** C: the chase view, the commander's seat, the camera on the vehicle's skin, and round again. */
+  /** C: the chase view, the commander's seat, the camera on the vehicle's skin, the tracking camera by the pad, and round again. */
   toggleView() {
-    const order = this.cabin ? ['chase', 'cockpit', 'onboard'] : ['chase', 'onboard'];
+    const order = ['chase'];
+    if (this.cabin && !this.boosterOnly) order.push('cockpit');
+    order.push('onboard');
+    if (this.canTrack) order.push('track');
     this.view = order[(order.indexOf(this.view) + 1) % order.length];
-    this.cam.headYaw = 0; this.cam.headPitch = 0; this.g.input.zoom = this.g.input.zoomTarget = 1;
+    this.cam.headYaw = 0; this.cam.headPitch = 0; this.g.input.zoom = this.g.input.zoomTarget = 1; this.aimSet = false;
+    if (this.view === 'track') this.g.toast('Tracking camera: a long lens a mile from the pad. Drag to walk it round, wheel for the lens.', 5);
+  }
+  /** Can a camera by the pad see the vehicle? (Within some 40 miles of it, below where the view from space takes over.) */
+  get canTrack() {
+    if (!this.pad || !this.groundOK || this.rk.alt > MIX_LO - 1000) return false;
+    const pp = this.pad.root.position;
+    return Math.hypot(this.posW.x - pp.x, this.posW.z - pp.z) < 65000;
+  }
+  /** Which of the stage's engines are burning. In the air the Ship lights only its three sea-level engines (the flip and the landing
+   *  burn), and a booster coming home burns its inner thirteen; otherwise all of them. */
+  burning(st, pres) {
+    const rk = this.rk, n = rk.id !== 'starship' ? 0 : rk.stage === 1 ? (pres > 0.2 ? 3 : 0) : this.boosterOnly && rk.met > 40 ? 13 : 0;
+    if (!n || n >= st.nozzles.length) return st.nozzles;
+    if (this.nzKey !== st.name + n) { this.nzKey = st.name + n; this.nzSome = st.nozzles.slice(0, n); }
+    return this.nzSome;
+  }
+  /** The Ship's flaps on the way down: out and working while it falls on its belly, the aft pair folded away for the flip and the
+   *  landing burn. Nothing (the model's own rest pose) at any other time. */
+  flapPose(dt) {
+    const rk = this.rk, f = this.flaps || (this.flaps = { fwd: 0.1, aft: 0.06 });
+    let fw = 0.1, af = 0.06;
+    if (rk.id === 'starship' && rk.stage === 1 && rk.body === 'earth' && rk.lifted && rk.alt < 70000) {
+      const t = this.g.S.time;
+      if (rk.caught || (rk.landed && rk.met > 40) || (this.ret && this.ret.phase === 'land')) { fw = 0.45; af = 1; }
+      else if (!rk.landed && rk.vs < -20 && rk.throttle < 0.05) { const k = Math.min(1, rk.q / 4000); fw = 0.12 + k * (0.1 * Math.sin(t * 1.9) + 0.05 * Math.sin(t * 4.3 + 1)); af = 0.05 + k * (0.1 * Math.sin(t * 1.6 + 2) + 0.05 * Math.sin(t * 3.7)); }
+    }
+    const k = dt > 0 ? 1 - Math.exp(-dt * 1.6) : 1;
+    f.fwd += (fw - f.fwd) * k; f.aft += (af - f.aft) * k;
+    return f;
   }
   /** Is the picture the one from the commander's seat? */
-  get inCabin() { return this.view === 'cockpit' && !!this.cabin && !this.mapOpen && this.g.S.mode === 'flying'; }
+  get inCabin() { return this.view === 'cockpit' && !!this.cabin && !this.boosterOnly && !this.mapOpen && this.g.S.mode === 'flying'; }
   /** Show the cabin and hide the outside of the vehicle around it, or the other way about (the windows look straight out). */
   showCabin(on) {
     if (on === this.cabinShown || !this.vehicle) return;
     this.cabinShown = on;
     const v = this.vehicle, keep = new Set([this.cabin?.root, this.plume?.group, this.glow?.mesh]);
     if (on) { this.hidden = v.root.children.filter((o) => !keep.has(o) && o.visible); for (const o of this.hidden) o.visible = false; }
-    else { for (const o of this.hidden || []) o.visible = true; this.hidden = null; v.setStage(this.rk.stage); }
+    else { for (const o of this.hidden || []) o.visible = true; this.hidden = null; v.setStage(this.rk.stage); if (this.boosterOnly) v.stages[1].group.visible = false; }
     if (this.cabin) this.cabin.root.visible = on;
   }
   say(key, text, secs = 4) { if (this.said[key]) return; this.said[key] = true; this.g.toast(text, secs); }
@@ -327,7 +445,7 @@ export class Mission {
     const inv = g.S.settings.invert ? -1 : 1;
     this.ctl.pitch = input.raw.pitch * inv; this.ctl.yaw = input.raw.roll; this.ctl.roll = input.raw.yaw;
     if (input.raw.throttle) { rk.throttle = clamp(rk.throttle + input.raw.throttle * 0.7 * dt, 0, 1); this.manual(); }
-    if ((this.autopilot || this.pilot) && (this.ctl.pitch || this.ctl.yaw)) this.manual();
+    if ((this.autopilot || this.pilot || this.ret) && (this.ctl.pitch || this.ctl.yaw)) this.manual();
 
     // The roll program: in the first half minute the vehicle turns its underside to the way it is going.
     if (rk.lifted && !rk.landed && rk.met > 4 && rk.met < 40 && !this.ctl.roll && rk.roll) { const d = rk.roll > 180 ? 360 - rk.roll : -rk.roll, st = Math.sign(d) * Math.min(Math.abs(d), 14 * dt * Math.min(WARPS[this.warp], 4)); rk.roll = (rk.roll + st + 360) % 360; if (Math.abs(d) < 0.05) rk.roll = 0; }
@@ -359,6 +477,8 @@ export class Mission {
           else if (rk.stage !== this.modelStage()) this.syncStage();
         }
         if (this.pilot) { const ev = this.pilot.step(rk, c, predictMoon); if (ev) this.pilotSaid(ev); }
+        if (this.ret && !rk.landed) { const ev = this.ret.step(rk, c, h); if (ev) this.returnSaid(ev); }
+        if (!rk.landed && rk.agl < 1500 && rk.id === 'starship') { this.squareUp(h); if (rk.agl < 400) this.tryCatch(); }
         rk.step(h, this.ctl, this.env);
       }
     }
@@ -410,7 +530,8 @@ export class Mission {
     if (rk.heat > 6e8 && rk.vs < 0) this.say('entry', 'Reentry: the air is slowing you down.', 4);
     if (rk.touchdown && rk.touchdown !== this.lastTd) {
       this.lastTd = rk.touchdown;
-      if (rk.landed) g.toast(rk.body === 'moon' ? `Down on the Moon at ${rk.touchdown.sink.toFixed(1)} m/s. The Eagle has nothing on you.` : `Landed at ${rk.touchdown.sink.toFixed(1)} m/s.`, 7);
+      if (rk.caught) g.toast(`Caught by the tower's arms at ${rk.touchdown.sink.toFixed(1)} m/s.`, 8);
+      else if (rk.landed) g.toast(rk.body === 'moon' ? `Down on the Moon at ${rk.touchdown.sink.toFixed(1)} m/s. The Eagle has nothing on you.` : `Landed at ${rk.touchdown.sink.toFixed(1)} m/s.`, 7);
     }
   }
 
@@ -469,11 +590,12 @@ export class Mission {
     } else if (this.inCabin) {
       const R = this.cabin.reach || { yaw: 1.6, up: 0.9, down: 0.9 };
       c.headYaw = clamp(c.headYaw + look.yaw, -R.yaw, R.yaw); c.headPitch = clamp(c.headPitch - look.pitch, -R.down, R.up);
-    } else { c.yaw -= look.yaw; c.pitch = clamp(c.pitch - look.pitch, -1.45, 1.45); }
+    } else if (this.view === 'track' && this.canTrack) { c.trackAz -= look.yaw; c.trackEl = clamp(c.trackEl - look.pitch, 0, 1.2); }
+    else { c.yaw -= look.yaw; c.pitch = clamp(c.pitch - look.pitch, -1.45, 1.45); }
     look.yaw = 0; look.pitch = 0; this.zoomWas = input.zoomTarget;
     input.zoom += (input.zoomTarget - input.zoom) * (dt <= 0 ? 1 : 1 - Math.exp(-dt * 9));
 
-    const size = this.vehicle ? this.vehicle.height - (rk.baseY || 0) : 100;
+    const size = this.vehicle ? (this.boosterOnly ? this.vehicle.stages[0].topY : this.vehicle.height) - (rk.baseY || 0) : 100;
     let eyeW = v2, qW = q2, fov = 55;                       // the camera in the game world's axes, relative to posW
     const inCabin = this.inCabin;
     this.showCabin(inCabin);
@@ -494,6 +616,27 @@ export class Mission {
       eyeW.copy(v3);
       const back = new THREE.Vector3(0.22, -1, 0).normalize().applyQuaternion(this.qLocal), side = new THREE.Vector3(1, 0, 0).applyQuaternion(this.qLocal);
       m1.lookAt(eyeW, v3.copy(eyeW).add(back), side); qW.setFromRotationMatrix(m1); fov = 70;
+    } else if (this.view === 'track' && !this.mapOpen && this.canTrack) {
+      // A camera standing some way from the pad, following the vehicle through a long lens: how the real ones are filmed. The mouse
+      // walks it round the pad (and up, as a camera in the air); the wheel is the lens.
+      const sh = this.shot, pp = this.pad.root.position, t = g.S.time;
+      if (sh) v3.set(pp.x + sh.pos[0], this.padY + sh.pos[1], pp.z + sh.pos[2]);
+      else {
+        const d = 1700, ce = Math.cos(c.trackEl);
+        v3.set(pp.x + d * Math.sin(c.trackAz) * ce, this.padY + d * Math.sin(c.trackEl), pp.z - d * Math.cos(c.trackAz) * ce);
+        v3.y = Math.max(v3.y, groundHeight(v3.x, v3.z) + 2.2);
+      }
+      eyeW.copy(v3).sub(this.posW);
+      // The aim: the middle of the vehicle, a little late (the operator's hands), or a point given by the shot.
+      const mid = new THREE.Vector3().copy(nose).multiplyScalar(size / 2 + (rk.baseY || 0) - rk.pivot).add(this.posW);
+      if (sh && sh.look) { const f = sh.follow ?? 0; mid.multiplyScalar(f).add(v3.set(pp.x + sh.look[0], this.padY + sh.look[1], pp.z + sh.look[2]).multiplyScalar(1 - f)); }
+      if (!this.aimSet || dt <= 0) { this.aimW.copy(mid); this.aimSet = true; } else this.aimW.lerp(mid, 1 - Math.exp(-dt * (sh?.rate ?? 7)));
+      const tgt = new THREE.Vector3().copy(this.aimW).sub(this.posW), dist = tgt.distanceTo(eyeW);
+      m1.lookAt(eyeW, tgt, UP); qW.setFromRotationMatrix(m1);
+      fov = clamp((sh && sh.fov ? sh.fov : 2 * Math.atan(size / (2 * (sh?.fill ?? 0.3) * dist)) / D2R) * (sh ? 1 : input.zoom), 0.5, 70);
+      // (a long lens shows every tremor of its mount)
+      const k = (sh?.shake ?? 1) * fov * D2R * 0.0035;
+      qW.multiply(q1.setFromEuler(new THREE.Euler(k * (Math.sin(t * 5.1) + 0.6 * Math.sin(t * 12.7 + 1)), k * (Math.sin(t * 4.3 + 2) + 0.6 * Math.sin(t * 10.9)), 0.3 * k * Math.sin(t * 3.1))));
     } else {
       const dist = clamp(size * 2.3 * c.dist * input.zoom, size * 0.6, 60000);
       const dir = v3.set(Math.sin(c.yaw) * Math.cos(c.pitch), Math.sin(c.pitch), -Math.cos(c.yaw) * Math.cos(c.pitch));
@@ -526,8 +669,9 @@ export class Mission {
     const v = this.vehicle;
     if (v) {
       const st = v.stages[rk.stage], pres = onEarth ? airPressure(rk.alt) : 0, night = ENV.uNight.value;
-      v.update(dt, { throttle: rk.thrustLevel, stage: rk.stage, gimbal: { x: this.ctl.yaw * 0.5, y: this.ctl.pitch * 0.5 }, altitude: rk.alt, mach: rk.mach, q: rk.q, night, time: g.S.time, heat: rk.heat });
-      this.plume?.update(dt, { nozzles: st.nozzles, nozzleRadius: st.nozzleRadius, throttle: rk.thrustLevel, pressure: pres, propellant: st.propellant, speed: rk.speedSurf, time: g.S.time, night });
+      v.update(dt, { throttle: rk.thrustLevel, stage: rk.stage, gimbal: { x: this.ctl.yaw * 0.5, y: this.ctl.pitch * 0.5 }, altitude: rk.alt, mach: rk.mach, q: rk.q, night, time: g.S.time, heat: rk.heat, flaps: this.flapPose(dt) });
+      const back = rk.lifted && rk.met > 40;                     // (coming home, not leaving)
+      this.plume?.update(dt, { nozzles: this.burning(st, pres), nozzleRadius: st.nozzleRadius, throttle: rk.thrustLevel, pressure: pres, propellant: st.propellant, speed: rk.speedSurf, time: g.S.time, night });
       if (this.trail) {
         if (this.groundOK && this.mix < 1) {
           const nz = st.nozzles, cy = nz.length ? nz[0].y : st.bottomY;
@@ -539,8 +683,9 @@ export class Mission {
               pos: v3, dir: nose.clone().negate(), vel: g.ac.vel, throttle: rk.thrustLevel, pressure: pres, propellant: st.propellant, radius: v.radius,
               wind: new THREE.Vector3(g.wx.x, g.wx.y, g.wx.z), onPad: rk.agl < 40, groundY: this.padY + (rk.agl < 200 ? 0 : -1e4),
               vehicle: rk.id, stage: rk.stage, landed: !!rk.landed, held: rk.held, met: rk.lifted ? rk.met : -1, agl: rk.agl, mach: rk.mach, q: rk.q,
-              padY: this.padY, standY: this.standY, hasPad: !!this.pad && rk.agl < 400, base: this.baseW, nose, height: v.height, heat: rk.heat,
+              padY: this.padY, standY: this.standY, hasPad: !!this.pad && rk.agl < 400, padPos: this.pad?.root.position, base: this.baseW, nose, height: v.height, heat: rk.heat,
               shade: g.wx.shade, flameLen: this.plume?.length || undefined,
+              padCloud: back ? 0 : 1, settle: back ? (rk.stage > 0 ? 0.6 : 1) : 0,          // coming back to the tower: a few engines, high over a dry plate
             });
           }
           this.trail.update(dt, { camPos: cam.position, sunDir: ENV.uSunDir.value, sunColor: ENV.uSunCol.value, ambient: ENV.uAmbSky.value, time: g.S.time });
@@ -567,7 +712,7 @@ export class Mission {
         const len0 = v.height - (rk.baseY || 0);
         this.glow.update(dt, { heat: onEarth && !rk.landed ? rk.heat : 0, flow: fl, length: len0, radius: v.radius, centerY: (rk.baseY || 0) + len0 / 2, time: g.S.time });
       }
-      this.pad?.update(dt, { t: rk.lifted ? rk.met : -10, night });
+      this.pad?.update(dt, { t: rk.lifted ? rk.met : -10, night, arms: this.armsWanted() });
       this.groundPose();
     }
     // ---- sound: the engines through whatever air there is, and how much of the weather's own sound still reaches the craft
@@ -683,11 +828,13 @@ export class Mission {
     ann('rpAuto', this.autopilot);
     ann('rpSas', !this.autopilot && rk.sas !== 'hold', rk.sas === 'prograde' ? 'Prograde' : 'Retrograde');
     const pl = this.pilot;
+    const rt = this.ret;
+    ann('rpRet', !!rt || rk.caught, rk.caught ? 'caught' : rt ? (rt.phase === 'burnback' ? `boostback, ${fmt(miles(rt.miss))} mi to go` : rt.phase === 'land' ? `landing burn, ${fmt(Math.max(rt.height, 0) * 3.28084)} ft` : `falling, ${fmt(miles(rt.dist))} mi out`) : '');
     ann('rpXfer', !!pl, pl ? (pl.phase === 'wait' ? `burn in ${tt(pl.plan.tBurn - rk.t) || 'a moment'}` : pl.phase === 'burn' ? 'transfer burn' : pl.phase === 'capture' ? 'braking into orbit' : rk.throttle > 0 ? 'trimming course' : `coasting, ${tt(Math.max(pl.plan.tArrive - rk.t, 0)) || 'arriving'}`) : '');
     ann('rpWarp', this.warp > 0, `×${fmt(WARPS[this.warp])}`);
     const tg = this.sats.target;
     ann('rpTgt', !!tg, tg ? `${tg.name} ${fmt(miles(tg.dist))} mi` : '');
-    const warn = rk.crashed ? '' : rk.landed && rk.held ? '' : !rk.landed && rk.body === 'earth' && rk.alt < 3000 && rk.vs < -60 ? 'PULL UP' : '';
+    const warn = rk.crashed ? '' : rk.landed && rk.held ? '' : !rk.landed && rk.body === 'earth' && rk.alt < 3000 && rk.vs < -60 && !this.ret ? 'PULL UP' : '';
     put('warn', warn);
   }
 }

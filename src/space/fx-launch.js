@@ -11,6 +11,7 @@
 //     strongest between the mount's six legs, the fastest of it picking up dust as it runs out past the
 //     concrete, and slower steam boiling up around the mount and the foot of the tower.
 //   - With no pad under it, a flame near the ground throws a ring of dust.
+//   - A vehicle coming back down to its tower: a thin, low skirt of dust under the end of its flame (s.settle).
 //   - The column: puffs strung along the path of the flame's end, a vehicle radius or so apart, in the
 //     color and amount of the propellant (dense white-gray for kerosene, a thin white streak for methane),
 //     carried off by the wind of the height they were left at, plus a made-up shear by height so the
@@ -46,7 +47,8 @@ export const TRAIL_TUNING = {
 const LOOK = {
   //            amount of smoke, its color, flame length in vehicle radii, light: color and strength
   kerolox: { amount: 1, tint: [0.9, 0.88, 0.85], len: 27, light: [1.0, 0.5, 0.17], power: 3.4 },
-  methalox: { amount: 0.2, tint: [0.97, 0.97, 0.98], len: 44, light: [1.0, 0.62, 0.42], power: 2.2 },
+  // (methane burns clean: nothing is left behind it low down; the white streak is its water, freezing out in the cold air from a few miles up)
+  methalox: { amount: 0.2, tint: [0.97, 0.97, 0.98], len: 44, light: [1.0, 0.62, 0.42], power: 2.2, from: [2500, 8000] },
   hydrolox: { amount: 0.14, tint: [0.98, 0.98, 0.98], len: 30, light: [0.75, 0.8, 1.0], power: 0.8 },
   hypergolic: { amount: 0, tint: [1, 0.95, 0.9], len: 16, light: [1.0, 0.6, 0.4], power: 0.5 },
 };
@@ -148,6 +150,11 @@ export class LaunchSmoke {
       const lc39 = kind === 'saturnv';
       this.pad = { kind: lc39 ? 'lc39' : 'mount', x: base.x, y: padY, z: base.z, dust0: lc39 ? 150 : 70, dust1: lc39 ? 520 : 330 };
       this.shadeY0 = padY;
+    } else if (hasPad && s.padPos && (!this.pad || this.pad.kind === 'bare')) {
+      // (a vehicle coming back to a pad the smoke has forgotten, or never saw it leave: the game says where it stands)
+      const lc39 = kind === 'saturnv';
+      this.pad = { kind: lc39 ? 'lc39' : 'mount', x: s.padPos.x, y: padY, z: s.padPos.z, dust0: lc39 ? 150 : 70, dust1: lc39 ? 520 : 330 };
+      this.shadeY0 = padY;
     } else if (!hasPad && th > 0.05 && agl < 120 && (!this.pad || Math.hypot(this.pad.x - base.x, this.pad.z - base.z) > 400)) {
       this.pad = { kind: 'bare', x: base.x, y: base.y - agl, z: base.z, dust0: 15, dust1: 90 };
     }
@@ -194,7 +201,9 @@ export class LaunchSmoke {
     // ---- the flame on the pad
     const h0 = Math.max(0, base.y - (pad ? pad.y : padY) - standY);      // how far the vehicle has risen off its stand
     if (pad && dir.y < -0.3 && T.padCloud > 0) {
-      const wx = wind.x * 1.5, wz = wind.z * 1.5, js = T.jetSpeed, lifeK = T.padLife, rate = Q * T.padCloud * thr;
+      // (s.padCloud, s.padLife: less of it, and sooner gone, for a vehicle coming down to be caught: a few engines far above a dry plate.
+      //  And none from a flame that ends well short of the ground.)
+      const wx = wind.x * 1.5, wz = wind.z * 1.5, js = T.jetSpeed, lifeK = T.padLife * (s.padLife ?? 1), rate = Q * T.padCloud * (s.padCloud ?? 1) * thr * (1 - smooth(0.9 * Lf, 1.8 * Lf, toGround));
       // White steam with streaks of creamier exhaust through it: which, changes slowly with the moment and the place it left from, so neighbors match.
       const steam = (i, warm) => {
         if (i < 0) return;
@@ -266,8 +275,23 @@ export class LaunchSmoke {
       }
     }
 
+    // ---- coming down to be caught: no deluge is running and the few engines burning are far above the plate. What the end of
+    // the flame raises, once it reaches the ground, is a low skirt of dust and scorched air that runs out over the concrete and is soon gone.
+    if (pad && s.settle > 0 && dir.y < -0.5) {
+      const lick = 1 - smooth(0.75 * Lf, 1.35 * Lf, toGround), n = this._count('settle', 30 * Q * s.settle * thr * lick, dt, 20);
+      const gx = pos.x + dir.x * toGround, gz = pos.z + dir.z * toGround;
+      for (let k = 0; k < n; k++) {
+        const a = r() * 6.2832, ca = Math.cos(a), sa = Math.sin(a), v0 = 10 + 28 * r(), d0 = 2 + 5 * r();
+        const i = f.spawn(P_JET, gx + ca * d0, surf + 0.6 + 2 * r(), gz + sa * d0, ca * v0, 1 + 3 * r(), sa * v0, (2.4 + 2 * r()) * K, 11 + 15 * r(), wind.x * 1.5, wind.z * 1.5, r() * dt);
+        if (i < 0) break;
+        f.kq[i] = 1 / (v0 * (1.5 + 2 * r())); f.kl[i] = 0.06; f.ent[i] = 0.12; f.dif[i] = 0.9; f.buoy[i] = 0.05 + 0.22 * r(); f.buoyTau[i] = 15; f.cap[i] = 16 + 16 * r();
+        f.alpha[i] = 0.26 + 0.2 * r(); f.heat[i] = 0.5; f.heatTau[i] = 0.4; f.dustMax[i] = 0.55 + 0.35 * r(); f.dust[i] = 0.8 * f.dustMax[i];
+        const g = 0.8 + 0.08 * r(); f.cr[i] = g; f.cg[i] = g - 0.03; f.cb[i] = g - 0.08;
+      }
+    }
+
     // ---- the column
-    const dens = look.amount * Math.pow(clamp((p - T.minPressure) / 0.25, 0, 1), 0.6) * (0.4 + 0.6 * th);
+    const dens = look.amount * Math.pow(clamp((p - T.minPressure) / 0.25, 0, 1), 0.6) * (0.4 + 0.6 * th) * (look.from ? smooth(look.from[0], look.from[1], pos.y - (pad ? pad.y : padY)) : 1);
     if (stage !== this.lastStage) { this.hasLast = false; this.lastStage = stage; }
     const back = Lf * (look.amount > 0.5 ? 0.62 : 0.85);
     a1.copy(pos).addScaledVector(dir, back);                              // where the flame gives way to smoke

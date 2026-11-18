@@ -1,18 +1,21 @@
 // Launch pads, as procedural models: buildPad('saturnv') is a Launch Complex 39 pad with the Mobile
 // Launcher and its red umbilical tower on it; buildPad('starship') is an orbital launch mount beside its
-// tower and tank farm.
+// light gray lattice tower, the tower's two dark arms, a tank farm and the worked ground of the site.
 //
 //   { root, standY, towerTop, lights, update(dt, s), dispose() }
 //
 // The origin is ground level under the vehicle's centerline, +Y up, -Z north; the vehicle goes at
-// (0, standY, 0) and both towers stand north of it. Everything rests on an octagonal concrete apron whose
-// walls go 60 m down, so the pad can sit on a slope without showing daylight underneath.
+// (0, standY, 0) and both towers stand north of it. Launch Complex 39 rests on an octagonal concrete apron
+// whose walls go 60 m down, so the pad can sit on a slope without showing daylight underneath; the Starship
+// site's ground (siteGround) is flat as far out, then banks down into the land.
 //
 // Lattice structures are real members (model-kit's Beams: four quads a beam, merged into one mesh per
 // finish), not textured cards, so they light, shadow and parallax properly: the umbilical tower is about
 // 1,500 members. Concrete wears one tiling canvas mapped in world meters. update(dt, s) takes
-// s = { t: seconds since liftoff, night: 0..1 }: the swing arms (and Starship's quick-disconnect arm) let
-// go and swing clear as t passes 0, the lamps glow and the floodlights come up with night.
+// s = { t: seconds since liftoff, night: 0..1, arms }: the swing arms (and Starship's quick-disconnect arm) let
+// go and swing clear as t passes 0, the lamps glow and the floodlights come up with night. Starship's tower
+// has its two "chopstick" arms on hinges: s.arms sets them (0 shut under a vehicle's catch pins, 1 open as
+// for launch, 1.4 wide open for one coming back); `catchY` is the height of their rails.
 //
 // The floodlights are real SpotLights (no shadows) so the vehicle is lit at night; they stay in the scene
 // at zero intensity by day so no shader is recompiled at dusk. buildPad(kind, { lights: false }) leaves
@@ -105,7 +108,7 @@ function finish(root, M, lights, extra) {
       const night = Math.max(0, Math.min(1, s.night || 0));
       M.lamp.emissiveIntensity = PAD_TUNING.lamp * (0.04 + 0.96 * night);
       for (const l of lights) l.intensity = night * PAD_TUNING.floodlight * l.userData.reach2;
-      if (extra.animate) extra.animate(s.t ?? -1e9, dt);
+      if (extra.animate) extra.animate(s.t ?? -1e9, dt, s);
     },
     dispose() { disposeTree(root); for (const l of lights) l.dispose(); },
   };
@@ -263,17 +266,82 @@ function wedge(r1, r0, h, w) {
 
 // ---------------------------------------------------------------- Starship launch site
 
+/** Smooth value noise over the plane, 0..1: n(x, z, cell) has features `cell` meters across. */
+function valueNoise(seed) {
+  const N = 64, rnd = rng(seed), t = new Float32Array(N * N).map(() => rnd());
+  const at = (i, j) => t[(((i % N) + N) % N) + (((j % N) + N) % N) * N];
+  return (x, z, cell) => {
+    const fx = x / cell, fz = z / cell, ix = Math.floor(fx), iz = Math.floor(fz), ux = fx - ix, uz = fz - iz, sx = ux * ux * (3 - 2 * ux), sz = uz * uz * (3 - 2 * uz);
+    return lerp(lerp(at(ix, iz), at(ix + 1, iz), sx), lerp(at(ix, iz + 1), at(ix + 1, iz + 1), sx), sz);
+  };
+}
+/** A plain tiling grain for bare ground: gravel, sand, asphalt (their color is on the corners). */
+function earthTexture() {
+  const N = 256, [C, g] = canvas(N, N, '#f2f2f2'), rnd = rng(11);
+  for (let i = 0; i < 6000; i++) { const v = rnd() < 0.55 ? 0 : 255, sz = 1 + rnd() * 4; g.fillStyle = `rgba(${v},${v},${v},${0.03 + rnd() * 0.06})`; g.fillRect(rnd() * N, rnd() * N, sz, sz); }
+  const t = tex(C, true, true); t.wrapS = THREE.RepeatWrapping;
+  return t;
+}
+const EARTH_SCALE = 14;        // meters a tile of the grain covers
+
+/**
+ * The ground of the Starship site, seen mostly from the air. It is flat at height G out to an octagon 165 m from the mount
+ * (the launch smoke and dust count on hard ground that far), then falls away as a bank of sand until the land takes over.
+ * A grid of 6 m cells, each one concrete hardstand, asphalt or bare ground, gives pads and roads their hard edges on the
+ * joints of the concrete; the bare ground goes from compacted gravel round the works to sand at no edge in particular, so
+ * the octagon itself never shows. Mottling, the scorch round the mount and the wear of traffic are colors on the corners.
+ * Returns [geometry for the concrete canvas, geometry for the plain grain].
+ */
+function siteGround(G) {
+  const S = 6, HALF = 234, n1 = valueNoise(31), n2 = valueNoise(47);
+  const out = (x, z) => Math.max(Math.abs(x) - 165, Math.abs(z) - 165, (Math.abs(x) + Math.abs(z) - 264) / Math.SQRT2);          // meters outside the octagon
+  // (the bank begins up to 34 m beyond the octagon, here sooner and there later, so its foot is no octagon; the last cells go straight down, as the old apron's walls did)
+  const yAt = (x, z) => { const d = out(x, z); if (d <= 0) return G; const y = G - Math.max(0, Math.min(d, 56) - 34 * n1(x, z, 90)) / 7; return d < 56 ? y : y - (d - 56) * 8; };
+  const PADS = [[-54, 78, -60, 66], [-114, -36, -54, 42], [78, 120, -24, 30], [-30, 54, 66, 108], [36, 96, -96, -60], [-12, 12, -96, -60]];       // hardstands: [x0, x1, z0, z1]
+  const ROADS = [[-234, 234, 138, 150], [-6, 6, 108, 138], [54, 102, 108, 138], [-234, -114, -6, 6], [96, 108, -60, -24]];                         // asphalt: the road past the site and the ways in
+  const inAny = (L, x, z) => L.some(([x0, x1, z0, z1]) => x > x0 && x < x1 && z > z0 && z < z1);
+  const hash = (a, b) => { const v = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return v - Math.floor(v); };
+  const GRAVEL_A = lin('#cbc7bb'), GRAVEL_B = lin('#a9a59a'), SAND_A = lin('#beb9a0'), SAND_B = lin('#9fa28a'), ROAD = lin('#656565');
+  const scorch = (x, z) => { const r = Math.hypot(x, z); return r > 90 ? 0 : (1 - sstep(15, 90, r)) * (0.45 + 0.55 * n1(x, z, 13)); };
+  const bufs = [0, 1].map(() => ({ p: [], n: [], u: [], c: [] }));
+  for (let i = -HALF; i < HALF; i += S) for (let j = -HALF; j < HALF; j += S) {
+    const cx = i + S / 2, cz = j + S / 2;
+    if (out(cx, cz) > 66) continue;
+    const kind = inAny(PADS, cx, cz) ? 0 : inAny(ROADS, cx, cz) ? 1 : 2, b = bufs[kind ? 1 : 0], sc = kind ? EARTH_SCALE : UV_SCALE;
+    const slab = 0.88 + 0.2 * hash(Math.floor(cx / 12), Math.floor(cz / 12)) + (hash(i, j) < 0.06 ? -0.12 : 0);                    // concrete: each pour its own tone, a patched one here and there
+    for (const [x, z] of [[i, j], [i, j + S], [i + S, j + S], [i, j], [i + S, j + S], [i + S, j]]) {
+      const e = 1, gx = (yAt(x + e, z) - yAt(x - e, z)) / (2 * e), gz = (yAt(x, z + e) - yAt(x, z - e)) / (2 * e), l = Math.hypot(gx, 1, gz);
+      let k = (0.82 + 0.34 * n2(x, z, 34)) * (0.9 + 0.2 * n1(x, z, 11)) * (1 - 0.6 * scorch(x, z)), col;
+      if (kind === 0) { col = CONCRETE; k *= slab * (0.93 + 0.14 * n1(x, z, 9)); }
+      else if (kind === 1) { col = ROAD; k = 0.9 + 0.2 * n2(x, z, 20); }
+      else {
+        // worked ground: gravel where the site is busy, darker where wheels go, giving way to sand toward the edge
+        const w = sstep(-6, 22, -out(x, z) - 14 - 50 * (n1(x, z, 64) - 0.4)), g = n1(x * 0.35, z * 2.2, 22), sn = sstep(0.3, 0.7, n2(x, z, 46));
+        col = [0, 1, 2].map((q) => lerp(lerp(SAND_A[q], SAND_B[q], sn), lerp(GRAVEL_A[q], GRAVEL_B[q], g), w));
+      }
+      b.p.push(x, yAt(x, z), z); b.n.push(-gx / l, 1 / l, -gz / l); b.u.push(x / sc, z / sc); b.c.push(col[0] * k, col[1] * k, col[2] * k);
+    }
+  }
+  return bufs.map((b) => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(b.p, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(b.n, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(b.u, 2)); g.setAttribute('color', new THREE.Float32BufferAttribute(b.c, 3));
+    return g;
+  });
+}
+
 const SB = { mountTop: 20.6, legR: 9.6, towerZ: -22.5, towerHalf: 6, towerH: 139, rodH: 146.5 };
 const STAND_SB = SB.mountTop - 1.1;                                  // the booster's skirt sits on the clamps
 
 function buildStarbase(M, opts) {
   const root = new THREE.Group(); root.name = 'Starship launch site';
-  const con = [], st = [], lamps = [], bm = new Beams(), G = 0.5, MT = SB.mountTop, PLATE = lin('#34363a'), TOWER = lin('#26282b'), MOUNT = lin('#4b4e53');
-  con.push(...apron(165, G));
-  // ---- water-deluge plate under the mount, scorched concrete round it
+  const con = [], st = [], lamps = [], bm = new Beams({ outward: true }), G = 0.5, MT = SB.mountTop, PLATE = lin('#34363a'), MOUNT = lin('#4b4e53');
+  const TOWER = lin('#adb0b3'), CLADDING = lin('#8f9397'), STAIR = lin('#7c8084'), CARRIAGE = lin('#2b2d30'), ARM = lin('#2f3134'), QD = lin('#56595d');
+  const [hard, soft] = siteGround(G);
+  con.push(hard);
+  // ---- water-deluge plate under the mount (the scorched concrete round it is siteGround's)
   st.push(revolve([[13.5, G], [12.5, G + 0.5], [0, G + 0.5]], { seg: 24, rgb: PLATE, crease: 20 }));
   for (let k = 0; k < 24; k++) { const a = (k / 24) * TAU; bm.add(polar(2.5, a, G + 0.52), polar(12.3, a, G + 0.52), 0.12, DARK, 0.06); }
-  con.push(revolve([[24, G + 0.03], [13.5, G + 0.03]], { seg: 32, rgb: lin('#85827c'), uv: () => [0.3, 0.3] }));
   // ---- orbital launch mount: six legs, a ring table with the booster's seat cut through it
   for (let k = 0; k < 6; k++) {
     const a = (k / 6) * TAU + Math.PI / 6;
@@ -288,60 +356,168 @@ function buildStarbase(M, opts) {
   st.push(atAz(box(3.2, 3.0, 4.4, [8.3, MT + 1.5, 0], lin('#3c3e42')), 90 * D2R));                                                    // booster quick-disconnect hood
   for (const a of [200, 250, 290, 340]) st.push(atAz(box(2.2, 1.6, 2.6, [9.6, MT + 0.8, 0], lin('#56595e')), a * D2R));
   for (let k = 0; k < 36; k++) { const a = (k / 36) * TAU; bm.add(polar(11.5, a, MT + 1.1), polar(11.5, a + TAU / 36, MT + 1.1), 0.06, STEEL); bm.add(polar(11.5, a, MT), polar(11.5, a, MT + 1.1), 0.06, STEEL); }
-  // ---- launch tower: four heavy columns, X-braced in nine modules, the vehicle face left open for the carriage rails
+  // ---- launch tower: four square columns of light gray steel, X-braced on every face in nine modules, the top of the
+  // last one clad, a railed deck over it. (Light against the sky and heavy enough in its members that it still reads as
+  // a lattice, not a stick, from two kilometers away.)
   const tz = SB.towerZ, th = SB.towerHalf, H = SB.towerH, corner = [[-th, tz - th], [th, tz - th], [th, tz + th], [-th, tz + th]];
-  for (const [x, z] of corner) bm.add([x, G, z], [x, G + H, z], 1.7, TOWER);
-  const nMod = 9, mh = H / nMod;
+  const nMod = 9, mh = H / nMod, CLAD = 9.5, yClad = G + H - CLAD;
+  con.push(...block(-th - 2.5, th + 2.5, G, G + 1.3, tz - th - 2.5, tz + th + 2.5, CONCRETE));                                 // its footing
+  for (const [x, z] of corner) bm.add([x, G, z], [x, G + H, z], 1.9, TOWER);
   for (let k = 0; k < nMod; k++) {
-    const ya = G + k * mh, yb = ya + mh;
+    const ya = G + k * mh, yb = ya + mh, yx = k === nMod - 1 ? yClad : yb;
     for (let i = 0; i < 4; i++) {
-      const a = corner[i], b = corner[(i + 1) % 4], south = i === 2;
-      bm.add([a[0], yb, a[1]], [b[0], yb, b[1]], 0.8, TOWER, 1.0);
-      if (!south) { bm.add([a[0], ya, a[1]], [b[0], yb, b[1]], 0.6, TOWER); bm.add([b[0], ya, b[1]], [a[0], yb, a[1]], 0.6, TOWER); }
+      const a = corner[i], b = corner[(i + 1) % 4], ns = i % 2 === 0;
+      bm.add([a[0], yb, a[1]], [b[0], yb, b[1]], 1.0, TOWER, 1.2);
+      bm.add([a[0], ya, a[1]], [b[0], yx, b[1]], 0.85, TOWER); bm.add([b[0], ya, b[1]], [a[0], yx, a[1]], 0.85, TOWER);
+      st.push(box(ns ? 1.8 : 0.5, 1.8, ns ? 0.5 : 1.8, [(a[0] + b[0]) / 2, (ya + yx) / 2, (a[1] + b[1]) / 2], TOWER));           // the gusset where the braces cross
       for (const f of [0.25, 0.75]) lamps.push(box(0.35, 0.35, 0.35, [lerp(a[0], b[0], f), yb - 0.9, lerp(a[1], b[1], f)], [1, 1, 1]));
     }
-    st.push(box(th * 2 - 1.8, 0.2, th * 2 - 1.8, [0, yb - 0.5, tz], lin('#303236')));
+    st.push(box(th * 2 - 1.8, 0.2, th * 2 - 1.8, [0, yb - 0.5, tz], lin('#63666a')));                                            // floor grating
+    // stairs up the inside of the west face, two flights a module
+    bm.add([-th + 1.6, ya + 0.3, tz - 3.6], [-th + 1.6, ya + mh / 2, tz + 3.6], 1.1, STAIR, 0.16); bm.add([-th + 2.9, ya + mh / 2, tz + 3.6], [-th + 2.9, yb - 0.4, tz - 3.6], 1.1, STAIR, 0.16);
   }
-  for (const x of [-2.6, 2.6]) bm.add([x, G + 8, tz + th + 0.5], [x, G + H - 2, tz + th + 0.5], 0.5, lin('#4a4c50'), 0.7);            // carriage rails
-  st.push(box(4, H - 4, 3.4, [1.5, G + H / 2, tz - 1.6], lin('#2e3033')));                                                              // elevator and services core
-  st.push(box(th * 2 + 2.4, 0.5, th * 2 + 2.4, [0, G + H + 0.25, tz], TOWER), box(5, 3.2, 5, [0, G + H + 2.1, tz], lin('#3a3c40')));
+  // the clad section under the deck: ribbed sheet between the columns, a frame under it
+  for (let i = 0; i < 4; i++) {
+    const a = corner[i], b = corner[(i + 1) % 4], ns = i % 2 === 0, mx = (a[0] + b[0]) / 2, mz = (a[1] + b[1]) / 2;
+    bm.add([a[0], yClad, a[1]], [b[0], yClad, b[1]], 1.0, TOWER, 1.0);
+    st.push(box(ns ? th * 2 - 1.9 : 0.3, CLAD - 1.0, ns ? 0.3 : th * 2 - 1.9, [mx, yClad + CLAD / 2 - 0.1, mz], CLADDING));
+    const out = ns ? [0, Math.sign(mz - tz) * 0.2] : [Math.sign(mx) * 0.2, 0];
+    for (let f = 0.1; f < 0.95; f += 0.1) { const x = lerp(a[0], b[0], f) + out[0], z = lerp(a[1], b[1], f) + out[1]; bm.add([x, yClad + 0.5, z], [x, G + H - 0.6, z], 0.16, TOWER); }
+  }
+  for (const x of [-th, th]) bm.add([x, G + 6, tz + th + 0.98], [x, yClad, tz + th + 0.98], 0.55, lin('#585b5f'), 0.1);       // the rails the carriage rides, on the vehicle face of the two near columns
+  st.push(box(3.2, H - 4, 3.2, [2.2, G + H / 2, tz - 2.2], lin('#8a8e92')));                                                      // elevator and services core
+  for (const x of [-0.6, 0.1, 0.8]) bm.add([x, G + 1, tz - th + 1.3], [x, yClad, tz - th + 1.3], 0.42, lin('#c7c9cb'));         // propellant and water risers up the back
+  // the deck: a railed plate, the winch house and the sheaves the carriage hangs from, the lightning rod on its corner
+  const yD = G + H + 0.5, dh = th + 1.6;
+  st.push(box(dh * 2, 0.5, dh * 2, [0, G + H + 0.25, tz], lin('#7b7f83')), box(5, 3.2, 5, [0, yD + 1.6, tz - 1.2], lin('#8d9195')));
+  [[-dh, -dh], [dh, -dh], [dh, dh], [-dh, dh]].forEach(([x0, z0], i, a) => {
+    const [x1, z1] = a[(i + 1) % 4];
+    for (const dy of [0.6, 1.15]) bm.add([x0, yD + dy, tz + z0], [x1, yD + dy, tz + z1], 0.09, TOWER);
+    for (let f = 0; f < 1; f += 0.125) bm.add([lerp(x0, x1, f), yD, tz + lerp(z0, z1, f)], [lerp(x0, x1, f), yD + 1.15, tz + lerp(z0, z1, f)], 0.09, TOWER);
+  });
+  for (const x of [-2.2, 2.2]) { bm.add([x, yD, tz + 2.2], [x, yD + 3.4, tz + th + 1.3], 0.5, TOWER); bm.add([x, yD, tz + th + 0.4], [x, yD + 3.4, tz + th + 1.3], 0.4, TOWER); }
+  bm.add([-2.6, yD + 3.4, tz + th + 1.3], [2.6, yD + 3.4, tz + th + 1.3], 0.7, lin('#55585c'));
   bm.add([th - 1, G + H + 0.5, tz - th + 1], [th - 1, G + SB.rodH, tz - th + 1], 0.3, lin('#9a9c9f'));
   lamps.push(box(0.6, 0.6, 0.6, [th - 1, G + H + 4, tz - th + 1], [1, 1, 1]));
-  // ---- chopsticks: a carriage on the vehicle face and two long arms held open round the ship
-  const yCar = STAND_SB + 86, armL = 36, open = 27 * D2R;
-  st.push(box(th * 2 + 2.2, 8.5, 2.6, [0, yCar, tz + th + 1.6], lin('#2f3134')));
+  // ---- chopsticks: a dark carriage round three sides of the tower, hung from the sheaves, and two long arms on hinges at
+  // its near corners. Each arm is a deep truss of its own, three chords and their webs, that swings about its hinge:
+  // held open round the ship for launch, opened wide for a vehicle coming back, closed under its catch pins.
+  const yCar = STAND_SB + 86, armL = 36, OPEN = 27 * D2R, SHUT = -4.3 * D2R, hz = tz + th + 2.4, hx = th + 0.9;
+  const cT = yCar + 2.3, cB = yCar - 7.3, zf = tz + th + 1.4, xs = th + 1.5, zb = tz - th - 0.6;        // the carriage: its top and bottom, its near frame, its side frames, how far back they run
+  for (const y of [cT, cB]) {
+    bm.add([-xs, y, zf], [xs, y, zf], 0.8, CARRIAGE, 1.0);
+    for (const sx of [1, -1]) { bm.add([sx * xs, y, zf], [sx * xs, y, zb], 0.8, CARRIAGE, 1.0); st.push(box(2.8, 0.5, 2.6, [sx * hx, y, hz - 0.35], CARRIAGE)); }       // (and the lug each hinge turns in)
+    for (const sx of [1, -1]) for (const z of [tz - th, tz + th]) st.push(box(0.7, 1.7, 2.3, [sx * (th + 1.25), y + (y === cT ? -0.5 : 0.5), z], lin('#4d5054')));     // the skates on the columns
+  }
+  for (const x of [-xs, -2.6, 2.6, xs]) bm.add([x, cB, zf], [x, cT, zf], 0.7, CARRIAGE);
+  bm.add([-2.6, cB, zf], [2.6, cT, zf], 0.5, CARRIAGE); bm.add([2.6, cB, zf], [-2.6, cT, zf], 0.5, CARRIAGE);
   for (const sx of [1, -1]) {
-    const hx = sx * (th + 0.9), hz = tz + th + 2.4, dx = Math.sin(open) * sx, dzz = Math.cos(open), at = (d, y, off = 0) => [hx + dx * d + dzz * off * sx, yCar + y, hz + dzz * d - dx * off * sx];
-    bm.add(at(0, 0.6), at(armL, 0.2), 2.0, lin('#2b2d30'), 3.0, true);                       // box girder
-    bm.add(at(0, -3.4), at(armL * 0.6, -1.4), 0.8, TOWER); bm.add(at(0, -3.4), at(0, 0.6), 0.9, TOWER);
-    bm.add(at(6, 2.0, -1.25), at(armL - 0.5, 1.85, -1.25), 0.5, lin('#55585d'), 0.4);        // landing rail on the inner edge
-    for (let d = 3; d < armL; d += 5.5) bm.add(at(d, -0.9, 1.02), at(d, 1.6, 1.02), 0.12, lin('#44474b'), 0.5);
-    st.push(atAzAt(cyl(1.3, 1.3, 6.5, [0, 0, 0], lin('#3a3c40'), 14), 0, [hx, yCar - 0.6, hz]));
+    bm.add([sx * 2.6, cT, zf], [sx * xs, cB, zf], 0.5, CARRIAGE);
+    for (const z of [zb, (zf + zb) / 2]) bm.add([sx * xs, cB, z], [sx * xs, cT, z], 0.7, CARRIAGE);
+    bm.add([sx * xs, cB, zf], [sx * xs, cT, (zf + zb) / 2], 0.5, CARRIAGE); bm.add([sx * xs, cT, (zf + zb) / 2], [sx * xs, cB, zb], 0.5, CARRIAGE);
+    bm.add([sx * 2.2, cT, zf - 0.1], [sx * 2.2, yD + 3.4, tz + th + 1.3], 0.16, DARK);                                           // the cables it hangs from
   }
-  // ---- tank farm to the west: vertical tanks in two rows, a few horizontal ones, a berm wall
-  for (let r = 0; r < 2; r++) for (let k = 0; k < 4; k++) {
-    const x = -78 - r * 13, z = -30 + k * 13.5, h = r ? 26 : 30;
-    st.push(revolve([[4.5, G + 0.4], [4.5, G + h], [3.6, G + h + 1.6], [1.5, G + h + 2.5], [0, G + h + 2.7]], { seg: 28, rgb: WHITE }).translate(x, 0, z));
-    for (const y of [9.5, 18.6]) st.push(revolve([[4.5, G + y - 0.06], [4.56, G + y - 0.05], [4.56, G + y + 0.05], [4.5, G + y + 0.06]], { seg: 28, rgb: lin('#c9cac8') }).translate(x, 0, z));
-    bm.add([x + 4.7, G + 0.5, z], [x + 4.7, G + h, z], 0.3, lin('#c8cacc'));
+  const chop = [1, -1].map((sx) => {
+    // Built straight out from the hinge along +Z; `off` is toward the outside of the pair. Two top chords and one bottom
+    // chord, deep at the root and rising to the tip, with a frame at every panel point and diagonals between; nothing
+    // near the vehicle stands higher than the rail (the Ship's forward flaps are just above it).
+    const ab = new Beams({ outward: true }), at = (d, y, off = 0) => [off * sx, y, d];
+    const yT = 1.45, ti = -0.75, to = 1.05, tb = 0.15, low = (d) => (d < 13 ? lerp(-6.3, -5.0, d / 13) : lerp(-5.0, -0.25, (d - 13) / (armL - 13)));
+    ab.add(at(0.4, yT, ti), at(armL, yT, ti), 0.7, ARM, 0.8, true); ab.add(at(0.4, yT, to), at(armL - 1.4, yT, to), 0.7, ARM, 0.8, true);
+    ab.add(at(0.4, low(0.4), tb), at(13, low(13), tb), 0.8, ARM); ab.add(at(13, low(13), tb), at(armL - 0.4, low(armL - 0.4), tb), 0.8, ARM, 0.8, true);
+    const P = [0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => 0.9 + i * 4.2125);
+    P.forEach((d, i) => {
+      for (const o of [ti, to]) ab.add(at(d, yT, o), at(d, low(d), tb), 0.42, ARM);
+      ab.add(at(d, yT, ti), at(d, yT, to), 0.4, ARM, 0.5);
+      if (i === P.length - 1) return;
+      const e = P[i + 1], up = i & 1;
+      for (const o of [ti, to]) ab.add(at(d, up ? low(d) : yT, up ? tb : o), at(e, up ? yT : low(e), up ? o : tb), 0.36, ARM);
+      ab.add(at(d, yT, up ? ti : to), at(e, yT, up ? to : ti), 0.3, ARM);
+    });
+    ab.add(at(P[8], yT, to), at(armL, yT, ti), 0.6, ARM, 0.7);                               // the tip closes to a point
+    // The landing rail on the inner edge: what a vehicle's pins come down on. (Narrow, so that closed under the pins it
+    // lies just clear of a 9 m hull.)
+    ab.add(at(6, 2.0, -1.15), at(armL - 0.5, 1.85, -1.15), 0.3, lin('#74787d'), 0.4, true);
+    const g = new THREE.Group(); g.add(meshOf([ab.build(), cyl(0.95, 0.95, 9.0, [0, -2.45, 0], lin('#3a3c40'), 16)], M.struct));           // (the barrel of the hinge turns with the arm)
+    g.position.set(sx * hx, yCar, hz); g.rotation.y = sx * OPEN; root.add(g);
+    return { g, sx };
+  });
+  let armNow = 1;                                                                            // 0 shut on the pins, 1 open as for launch, up to 1.4 wide open
+
+  // ---- tank farm to the west: two rows of tall tanks, each built up of rings as the vehicles are (some left bare steel, most
+  // painted and weathered), with a vent, a railed top, a ladder and a fill line; a battery of horizontal tanks on saddles;
+  // pump skids; a berm wall round it all; a vent stack. Plant, not white cylinders.
+  const PIPE = lin('#c3c5c7'), PAINT = lin('#d6d5cf');
+  const tank = (x, z, h, r, rgb) => {
+    const q = rng(Math.round(x * 7 + z * 13) + 5), at = (g) => g.translate(x, 0, z);
+    for (let y = 0.5; y < h - 0.01; y += 1.83) { const k = 0.88 + q() * 0.18; st.push(at(revolve([[r, G + y], [r, G + Math.min(h, y + 1.83)]], { seg: 20, rgb: rgb.map((c) => c * k) }))); }
+    st.push(at(revolve([[r, G + h], [r * 0.8, G + h + r * 0.36], [r * 0.34, G + h + r * 0.56], [0, G + h + r * 0.6]], { seg: 20, rgb: rgb.map((c) => c * 0.94) })));
+    st.push(at(revolve([[r + 0.3, G], [r + 0.3, G + 0.5], [r, G + 0.5]], { seg: 20, rgb: DARK_CONCRETE, crease: 20 })));
+    bm.add([x, G + h + r * 0.55, z], [x, G + h + r * 0.6 + 2.4, z], 0.35, STEEL);                                    // vent
+    for (let i = 0; i < 10; i++) {
+      const p = (k, y) => [x + Math.cos((k / 10) * TAU) * (r - 0.25), G + h + y, z + Math.sin((k / 10) * TAU) * (r - 0.25)];
+      bm.add(p(i, 1.1), p(i + 1, 1.1), 0.09, STEEL); bm.add(p(i, 0), p(i, 1.1), 0.09, STEEL);
+    }
+    bm.add([x + r + 0.3, G + 0.5, z], [x + r + 0.3, G + h + 1.0, z], 0.12, DARK, 0.7);                               // ladder cage
+    bm.add([x, G + 0.5, z + r + 0.3], [x, G + h * 0.82, z + r + 0.3], 0.38, PIPE);                                   // fill line
+  };
+  for (let r = 0; r < 2; r++) for (let k = 0; k < 4; k++) tank(-78 - r * 13, -30 + k * 13.5, r ? 26 : 30, 4.5, (k + r) % 3 === 0 ? lin('#8b9095') : (k + r) % 3 === 1 ? PAINT : lin('#c2c2bc'));
+  for (let k = 0; k < 5; k++) {
+    const z = -34 + k * 6.5, c = k === 3 ? lin('#a9adb0') : PAINT;
+    st.push(cyl(2, 2, 20, [-56, G + 3.2, z], c, 18, [0, 0, Math.PI / 2]), ball(2, [-66, G + 3.2, z], c, 16), ball(2, [-46, G + 3.2, z], c, 16));
+    for (const x of [-62, -50]) st.push(box(0.6, 1.4, 3.6, [x, G + 0.7, z], DARK_CONCRETE));
+    bm.add([-56, G + 5.2, z], [-56, G + 6.0, z], 0.3, STEEL);
   }
-  for (let k = 0; k < 5; k++) { const z = -34 + k * 6.5; st.push(cyl(2, 2, 20, [-56, G + 3.2, z], WHITE, 18, [0, 0, Math.PI / 2]), ball(2, [-66, G + 3.2, z], WHITE, 16), ball(2, [-46, G + 3.2, z], WHITE, 16)); for (const x of [-62, -50]) st.push(box(0.6, 1.4, 3.6, [x, G + 0.7, z], DARK_CONCRETE)); }
+  bm.add([-56, G + 6.0, -34], [-56, G + 6.0, -8], 0.3, PIPE);                                                        // their manifold
+  for (const [x, z, w] of [[-64, 14, 5], [-64, 22, 4], [-98, -44, 5], [-100, 22, 4], [-50, 24, 3.4], [-46, -46, 4]]) st.push(box(w, 2.4, 2.6, [x, G + 1.2, z], lin('#6c7176')), box(1.2, 1.3, 1.2, [x + 0.8, G + 3.0, z], lin('#8b8f93')), box(w + 0.6, 0.3, 3.2, [x, G + 0.15, z], DARK_CONCRETE));
   con.push(...block(-104, -40, G, G + 3.2, -44, -42.6, DARK_CONCRETE), ...block(-104, -40, G, G + 3.2, 30, 31.4, DARK_CONCRETE), ...block(-41.4, -40, G, G + 3.2, -44, 31.4, DARK_CONCRETE));
-  bm.add([-40, G + 1.6, -6], [-14, G + 1.6, -6], 1.2, lin('#b9bbbd'), 0.8); bm.add([-14, G + 1.6, -6], [-9, G + 1.6, -3], 1.2, lin('#b9bbbd'), 0.8);       // pipe rack to the mount
+  { const x = -108, z = 36, h = 40;                                                                                  // vent stack in its lattice
+    for (const [dx, dz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+      bm.add([x + dx * 1.6, G, z + dz * 1.6], [x + dx * 0.7, G + h, z + dz * 0.7], 0.2, STEEL);
+      for (let k = 0; k < 8; k++) { const w0 = lerp(1.6, 0.7, k / 8), w1 = lerp(1.6, 0.7, (k + 1) / 8), ya = G + (h * k) / 8, yb = G + (h * (k + 1)) / 8; bm.add([x + dx * w0, ya, z + dz * w0], [x - dz * w1, yb, z + dx * w1], 0.1, STEEL); }
+    }
+    bm.add([x, G, z], [x, G + h + 4, z], 0.7, PIPE);
+  }
+  // pipe rack from the farm over its wall to the mount
+  for (const [dz, w, c] of [[-0.8, 0.5, PIPE], [0, 0.4, lin('#9da1a5')], [0.8, 0.5, PIPE]]) { bm.add([-48, G + 4.4, -6 + dz], [-17, G + 4.4, -6 + dz], w, c); bm.add([-17, G + 4.4, -6 + dz], [-9.8, G + 1.6, -2.6 + dz * 0.8], w, c); }
+  for (let x = -46; x <= -18; x += 7) { for (const z of [-7.5, -4.5]) bm.add([x, G, z], [x, G + 4.0, z], 0.25, STEEL); bm.add([x, G + 4.0, -7.5], [x, G + 4.0, -4.5], 0.25, STEEL); }
+  // ---- deluge water to the northeast: a big tank, the gas bottles that drive it out, the main to the plate
+  st.push(revolve([[8, G], [8, G + 11], [7.2, G + 11.9], [0, G + 12.6]], { seg: 28, rgb: PAINT, crease: 30 }).translate(62, 0, -78));
+  for (const y of [3.7, 7.4]) st.push(revolve([[8, G + y - 0.08], [8.08, G + y - 0.06], [8.08, G + y + 0.06], [8, G + y + 0.08]], { seg: 28, rgb: lin('#b4b4ae') }).translate(62, 0, -78));
+  for (let k = 0; k < 5; k++) st.push(cyl(1.0, 1.0, 13, [84, G + 1.5, -90 + k * 2.6], lin('#3f4347'), 12, [0, 0, Math.PI / 2]));
+  bm.add([55, G + 0.7, -73], [10, G + 0.7, -8.5], 0.9, PIPE);
+  // ---- what else stands about a working pad: containers and sheds, a blockhouse, a crawler crane with its boom up
+  for (const [x, z, turn, c, len] of [[18, 84, 0, '#c6c5bf', 12.2], [18, 88, 0, '#58677a', 12.2], [34, 86, 0, '#84463a', 6.1], [-20, 96, 1, '#c6c5bf', 12.2], [108, 6, 1, '#767b81', 12.2], [112, 6, 1, '#c6c5bf', 12.2], [62, 54, 0, '#4d594f', 6.1], [-8, -80, 0, '#c6c5bf', 12.2], [-8, -76, 0, '#6a7178', 12.2]])
+    st.push(box(turn ? 2.44 : len, 2.6, turn ? len : 2.44, [x, G + 1.3, z], lin(c)));
+  con.push(...block(86, 102, G, G + 4.6, -14, -2, lin('#a39f95')));
+  st.push(box(17, 0.4, 13, [94, G + 4.8, -8], lin('#5b5d60')));
+  { const A = [40, G + 2.6, 92], Bt = [22, G + 60, 66], C = lin('#b0481c'), n = 16, ux = 0.82, uz = -0.57;         // (u: level and square to the boom)
+    st.push(box(7.5, 1.6, 6.5, [42, G + 0.8, 93], DARK), box(6, 2.6, 4.4, [43, G + 2.9, 93.5], C), box(3, 2, 3.4, [47, G + 2.6, 95], lin('#4a4c4f')));
+    const dx = Bt[0] - A[0], dy = Bt[1] - A[1], dz = Bt[2] - A[2], L = Math.hypot(dx, dy, dz), t = [dx / L, dy / L, dz / L], v = [t[1] * uz, t[2] * ux - t[0] * uz, -t[1] * ux];
+    const P = (f, a, b2) => { const w = 0.95 * Math.min(1, 4 * f + 0.25, 4 * (1 - f) + 0.25); return [A[0] + dx * f + (ux * a + v[0] * b2) * w, A[1] + dy * f + v[1] * b2 * w, A[2] + dz * f + (uz * a + v[2] * b2) * w]; };
+    const cn = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+    cn.forEach(([a, b2], i) => {
+      const [a2, b3] = cn[(i + 1) % 4];
+      for (let k = 0; k < n; k++) { bm.add(P(k / n, a, b2), P((k + 1) / n, a, b2), 0.2, C); bm.add(P(k / n, a, b2), P((k + 1) / n, a2, b3), 0.1, C); }
+    });
+    bm.add(Bt, [Bt[0] - 3, G + 22, Bt[2] - 4.3], 0.1, DARK); st.push(box(1, 1.6, 1, [Bt[0] - 3, G + 21.4, Bt[2] - 4.3], DARK));
+    bm.add([44, G + 5, 94], [44, G + 16, 97], 0.5, C); bm.add([44, G + 16, 97], Bt, 0.1, DARK);                    // mast and pendants
+  }
   // ---- floodlight masts
   const masts = [[95, 70], [-95, 80], [100, -60], [0, 130]];
   for (const [x, z] of masts) floodMast(x, z, G, 34, bm, lamps, st);
   st.push(bm.build());
-  root.add(meshOf(con, M.concrete, false, true), meshOf(st, M.struct), meshOf(lamps, M.lamp, false, false));
+  M.earth = new THREE.MeshStandardMaterial({ map: earthTexture(), vertexColors: true, roughness: 0.96, metalness: 0, envMapIntensity: 0.2 });          // (little of the sky's light: the land round it darkens early toward dusk, and the site should go with it)
+  root.add(meshOf(con, M.concrete, false, true), meshOf([soft], M.earth, false, true), meshOf(st, M.struct), meshOf(lamps, M.lamp, false, false));
 
   // ---- ship quick-disconnect arm: swings back against the tower as the stack lifts off
   const qd = new THREE.Group(), yQ = STAND_SB + 73.4, hinge = [th - 0.6, yQ, tz + th + 0.4], tipZ = -4.75;
-  const L = Math.hypot(hinge[0] - 0, hinge[2] - tipZ), a0 = Math.atan2(-(tipZ - hinge[2]), 0 - hinge[0]), qb = new Beams(), w = 3, h = 3.4, n = 4, bay = (L - 2.6) / n;
-  for (const z of [-w / 2, w / 2]) for (const y of [-h / 2, h / 2]) qb.add([0, y, z], [L - 2.6, y, z], 0.4, TOWER);
+  const L = Math.hypot(hinge[0] - 0, hinge[2] - tipZ), a0 = Math.atan2(-(tipZ - hinge[2]), 0 - hinge[0]), qb = new Beams({ outward: true }), w = 3, h = 3.4, n = 4, bay = (L - 2.6) / n;
+  for (const z of [-w / 2, w / 2]) for (const y of [-h / 2, h / 2]) qb.add([0, y, z], [L - 2.6, y, z], 0.4, QD);
   for (let k = 0; k <= n; k++) {
     const x = k * bay;
-    for (const z of [-w / 2, w / 2]) { qb.add([x, -h / 2, z], [x, h / 2, z], 0.25, TOWER); if (k < n) qb.add([x, (k & 1 ? 1 : -1) * h / 2, z], [x + bay, (k & 1 ? -1 : 1) * h / 2, z], 0.2, TOWER); }
-    for (const y of [-h / 2, h / 2]) qb.add([x, y, -w / 2], [x, y, w / 2], 0.25, TOWER);
+    for (const z of [-w / 2, w / 2]) { qb.add([x, -h / 2, z], [x, h / 2, z], 0.25, QD); if (k < n) qb.add([x, (k & 1 ? 1 : -1) * h / 2, z], [x + bay, (k & 1 ? -1 : 1) * h / 2, z], 0.2, QD); }
+    for (const y of [-h / 2, h / 2]) qb.add([x, y, -w / 2], [x, y, w / 2], 0.25, QD);
   }
   qd.add(meshOf([qb.build(), box(2.8, h + 0.6, w + 0.6, [L - 1.5, 0, 0], lin('#3a3c40')), box(0.4, 2.2, 2.4, [L - 0.05, -0.2, 0], lin('#7d8084')), box(L - 2.6, 0.12, w - 0.6, [(L - 2.6) / 2, -h / 2 + 0.3, 0], STEEL)], M.struct));
   qd.position.set(...hinge); qd.rotation.y = a0; root.add(qd);
@@ -349,7 +525,15 @@ function buildStarbase(M, opts) {
   if (opts.lights !== false) for (const [x, z] of [[95, 70], [-95, 80], [0, 130]]) lights.push(spot(root, [x, G + 36, z], [0, STAND_SB + 60, 0], 0.5));
   return finish(root, M, lights, {
     standY: STAND_SB, towerTop: G + SB.rodH, deckY: MT, chopsticksY: yCar,
-    animate(t) { qd.rotation.y = a0 + 62 * D2R * sstep(-2.5, 0.5, t); },
+    /** Where a vehicle is caught: the top of the arms' rails (above the pad's origin), on the vehicle's own centerline. */
+    catchY: yCar + 1.95,
+    animate(t, dt, st2) {
+      qd.rotation.y = a0 + 62 * D2R * sstep(-2.5, 0.5, t);
+      // The arms: toward what is asked (s.arms: 0 shut .. 1 open as for launch .. 1.4 wide), at the pace of heavy steel.
+      const want = Math.max(0, Math.min(1.4, st2?.arms ?? 1));
+      armNow = dt > 0 ? armNow + Math.max(-dt * 0.55, Math.min(dt * 0.55, want - armNow)) : want;
+      for (const c of chop) c.g.rotation.y = c.sx * (SHUT + (OPEN - SHUT) * armNow);
+    },
   });
 }
 

@@ -428,8 +428,18 @@ A rocket is heard through the air it is in: a crackling roar on the pad (recordi
 fainter as the air thins, a rumble through the structure in the onboard view (`C`) all the way to orbit. Coming
 home, the air glows around the craft.
 
+`K` in a Starship brings it back to the launch tower to be caught by the tower's two arms. Pressed before the
+Ship is dropped, the Ship is let go to fly on and the booster comes home: a boostback burn, a fall engines
+first, a landing burn, and it settles between the arms, which close under its catch pins. Pressed after, the Ship
+comes back instead: it falls flat on its belly, steering with its flaps, lights its three sea-level engines,
+flips upright and is caught the same way, hanging by the pins under its forward flaps. It works from within
+about 280 miles of the tower; flown in by hand, upright and slow, the arms catch just the same.
+
 `C` in a rocket goes from the chase view to the commander's seat (the Apollo console in the Saturn V, a flight
-deck in Starship, the instruments live and the world through the windows) to a camera on the vehicle's skin.
+deck in Starship, the instruments live and the world through the windows) to a camera on the vehicle's skin,
+and, while the vehicle is within sight of its pad, to a tracking camera a mile from it that follows the vehicle
+through a long lens, the way launches and catches are filmed: drag walks the camera round the pad and up into
+the air, the wheel is the lens.
 
 `M` in a rocket is the orbit map: the path ahead, with its high and low points, drawn around the Earth, and
 around the Moon for the part of it inside the Moon's pull. `.` and `,` run time faster and slower (up to

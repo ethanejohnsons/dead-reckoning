@@ -1215,7 +1215,7 @@ function tick(dt, shown = false) {
     hail: live ? wx.hail || 0 : 0, blow: wx.blow || 0, ground: groundHeight(camera.position.x, camera.position.z),
     wind: v1.set(wx.x, wx.y, wx.z), camVel: camState.vel, camPos: camera.position, camera,
     cloud: wx.cloud / CLOUD_SIGMA, humidity: weather.humidity * 0.6, temp: wx.temp,
-    aircraft: { pos: ac.pos, quat: ac.quat, vel: ac.vel, root: model.root, tas: ac.tas, gLoad: ac.gLoad, onGround: ac.onGround, power: ac.thrustLevel },
+    aircraft: { pos: ac.pos, quat: ac.quat, vel: ac.vel, root: model.root, tas: ac.tas, gLoad: ac.gLoad, onGround: rocket || ac.onGround, power: ac.thrustLevel },      // (a rocket has no wingtips to trail vapor from: its stand-in is "on the ground" to this)
   });
   clouds.uFlashScreen.value *= Math.exp(-dt * 7);
   const fx = clouds.fx;

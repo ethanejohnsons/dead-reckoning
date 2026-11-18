@@ -26,12 +26,14 @@ import { LaunchSmoke, TRAIL_TUNING } from './fx-launch.js';
 export { TRAIL_TUNING, SMOKE_TUNING, SMOKE_QUALITY };
 
 /** Peak radiance of the flame by propellant (scene-linear HDR units) and a master gain over all of them. */
-export const PLUME_TUNING = { intensity: 1, kerolox: 42, methalox: 24, hydrolox: 4.5, hypergolic: 2.2 };
+export const PLUME_TUNING = { intensity: 1, kerolox: 42, methalox: 26, hydrolox: 4.5, hypergolic: 2.2, lamp: 5 };      // (lamp: the flame's light on the vehicle and the pad, against its radiance)
 
 const LOOK = {
   //           core (hot middle)         mid (limb by the nozzle) tail (far down)                   jet length (nozzle radii), cluster length (cluster radii), diamonds, film, opacity
   kerolox: { core: [1.0, 0.9, 0.62], mid: [1.0, 0.42, 0.09], tail: [1.0, 0.22, 0.03], jet: 24, len: 27, diamond: 0.0, film: 1, opacity: 0.85, white: 0.7 },
-  methalox: { core: [0.86, 0.8, 1.0], mid: [0.4, 0.3, 1.0], tail: [1.0, 0.48, 0.22], jet: 20, len: 44, diamond: 1.0, film: 0, opacity: 0.25, white: 0.35 },
+  // (methane in the open air, by day: a short violet-pink root with its diamonds, then a long ragged yellow-white flame that goes orange and frays
+  //  rather than closing to a point: the fuel-rich film the engines cool their walls with burns all the way down it)
+  methalox: { core: [1.0, 0.84, 0.56], mid: [0.95, 0.46, 0.62], tail: [1.0, 0.4, 0.1], jet: 18, len: 46, diamond: 0.8, film: 0, opacity: 0.3, white: 0.35, taper: 0.35, spread: 2.3, rag: 2.0 },
   hydrolox: { core: [0.8, 0.9, 1.0], mid: [0.32, 0.52, 1.0], tail: [0.5, 0.45, 0.9], jet: 14, len: 30, diamond: 0.7, film: 0, opacity: 0.0, white: 0.3 },
   hypergolic: { core: [1.0, 0.85, 0.75], mid: [1.0, 0.62, 0.5], tail: [0.8, 0.45, 0.5], jet: 8, len: 16, diamond: 0.0, film: 0, opacity: 0.0, white: 0.2 },
 };
@@ -71,7 +73,7 @@ function noiseTexture() {
 const PLUME_VS = /* glsl */`
 attribute vec3 iPos;       // nozzle exit center (root coordinates), or the cluster's center
 attribute vec4 iParam;     // radius at the exit, kind (0 jet, 1 cluster core, 2 cluster shell), seed
-uniform float uTime, uThrottle, uW;
+uniform float uTime, uThrottle, uW, uRag;
 uniform float uLen[3], uSpread[3], uTaper[3];
 varying float vT, vAng, vKind, vSeed, vLenR;
 varying vec3 vN, vView, vAxis;
@@ -86,10 +88,10 @@ void main() {
   float a = uv.x * 6.2831853;
   // the wall billows more the farther it is from the nozzle
   float wob = sin(a * 3.0 + t * 37.0 - uTime * 9.0 + iParam.z * 6.0) + 0.6 * sin(a * 5.0 - t * 61.0 + uTime * 14.0 + iParam.z * 11.0);
-  r *= 1.0 + wob * t * (k == 0 ? 0.035 : 0.06) * (1.0 - 0.75 * uW);
+  r *= 1.0 + wob * t * (k == 0 ? 0.035 : 0.06 * uRag) * (1.0 - 0.75 * uW);
   vec3 radial = vec3(position.x, 0.0, position.z);
   vec3 p = iPos + radial * r - vec3(0.0, t * len, 0.0);
-  if (k > 0) p.xz += vec2(sin(t * 5.0 - uTime * 2.9), cos(t * 4.3 - uTime * 2.3)) * t * t * r0 * 0.3;
+  if (k > 0) p.xz += vec2(sin(t * 5.0 - uTime * 2.9), cos(t * 4.3 - uTime * 2.3)) * t * t * r0 * 0.3 * uRag;
   vec3 n = normalize(radial * len + vec3(0.0, dr, 0.0));
   vec4 mv = modelViewMatrix * vec4(p, 1.0);
   vN = normalMatrix * n; vView = -mv.xyz; vAxis = normalMatrix * vec3(0.0, -1.0, 0.0);
@@ -172,7 +174,7 @@ export class Plume {
     geo.setAttribute('iPos', this.iPos); geo.setAttribute('iParam', this.iParam);
     geo.instanceCount = 0;
     this.uniforms = {
-      uNoise: { value: noiseTexture() }, uTime: { value: 0 }, uThrottle: { value: 0 }, uW: { value: 0 },
+      uNoise: { value: noiseTexture() }, uTime: { value: 0 }, uThrottle: { value: 0 }, uW: { value: 0 }, uRag: { value: 1 },
       uCore: { value: new THREE.Vector3() }, uMid: { value: new THREE.Vector3() }, uTail: { value: new THREE.Vector3() },
       uDiamond: { value: 0 }, uFilm: { value: 0 }, uOpacity: { value: 0 }, uWhite: { value: 0 },
       uLen: { value: [1, 1, 1] }, uSpread: { value: [0, 0, 0] }, uTaper: { value: [0, 0, 0] },
@@ -186,6 +188,9 @@ export class Plume {
     this.mesh = new THREE.Mesh(geo, this.material);
     this.mesh.frustumCulled = false; this.mesh.renderOrder = 10; this.mesh.visible = false;
     this.group.add(this.mesh);
+    // The flame as a lamp: it lights the vehicle's own skirt and whatever it comes down beside (plain by day close to, everything at night).
+    this.lamp = new THREE.PointLight(0xffffff, 0, 0, 2); this.lamp.castShadow = false; this.group.add(this.lamp);
+    this.cy = 0;
     this.level = 0; this.key = ''; this.clusterR = 1; this.time = 0;
     /** Length of the visible flame in meters, for cameras and lights (updated every frame). */
     this.length = 0;
@@ -211,7 +216,7 @@ export class Plume {
       Q[i * 4] = R * (k ? 1.08 : 0.94); Q[i * 4 + 1] = 1 + k; Q[i * 4 + 2] = 0.31 + k * 0.4; Q[i * 4 + 3] = 0;
     }
     this.iPos.needsUpdate = true; this.iParam.needsUpdate = true;
-    this.mesh.geometry.instanceCount = n + 2; this.clusterR = R; this.single = n === 1;
+    this.mesh.geometry.instanceCount = n + 2; this.clusterR = R; this.single = n === 1; this.cy = cy; this.lamp.position.set(cx, cy, cz);
   }
 
   update(dt, s) {
@@ -222,7 +227,7 @@ export class Plume {
     this.level += (want - this.level) * (dt > 0 ? 1 - Math.exp(-dt * 5) : 1);
     const th = this.level, U = this.uniforms;
     this.mesh.visible = th > 0.004;
-    if (!this.mesh.visible) { this.length = 0; this.light.power = 0; return; }
+    if (!this.mesh.visible) { this.length = 0; this.light.power = 0; this.lamp.intensity = 0; return; }
     this.time = s.time != null ? s.time : this.time + dt;
     const L = LOOK[s.propellant] || LOOK.kerolox, p = Math.max(1e-5, Math.min(1, s.pressure ?? 1));
     const w = Math.max(0, Math.min(1, Math.log10(1 / p) / 3));                 // 0 at sea level, 1 by a thousandth of an atmosphere
@@ -232,8 +237,10 @@ export class Plume {
     U.uDiamond.value = L.diamond * (1 - w) * (1 - w) * Math.min(1, p * 3); U.uFilm.value = L.film * (1 - w); U.uOpacity.value = L.opacity; U.uWhite.value = L.white;
     const lenJet = L.jet * push * (1 + 1.3 * w), lenCore = L.len * R * push * (1 + 1.5 * w) * (this.single ? 1.6 : 1);
     U.uLen.value[0] = lenJet; U.uLen.value[1] = lenCore; U.uLen.value[2] = lenCore * 1.15;
-    U.uSpread.value[0] = 0.45 + 9 * w * w; U.uSpread.value[1] = 0.42 + 9 * Math.pow(w, 1.6); U.uSpread.value[2] = 0.75 + 22 * Math.pow(w, 1.4);
-    U.uTaper.value[0] = 0.55 * (1 - w); U.uTaper.value[1] = 0.78 * (1 - w); U.uTaper.value[2] = 0.7 * (1 - w);
+    const sp = L.spread || 1, tp = L.taper ?? 1;
+    U.uSpread.value[0] = 0.45 + 9 * w * w; U.uSpread.value[1] = 0.42 * sp + 9 * Math.pow(w, 1.6); U.uSpread.value[2] = 0.75 * sp + 22 * Math.pow(w, 1.4);
+    U.uTaper.value[0] = 0.55 * (1 - w); U.uTaper.value[1] = 0.78 * tp * (1 - w); U.uTaper.value[2] = 0.7 * tp * (1 - w);
+    U.uRag.value = 1 + ((L.rag || 1) - 1) * (1 - w);
     // many jets overlap along the eye's line: share the light out
     U.uGain.value[0] = gain * (1 - 0.82 * w) * Math.min(1, 2.6 / (this.mesh.geometry.instanceCount - 2));
     U.uGain.value[1] = gain * 0.8 * (1 - 0.9 * w) * (this.single ? 0.5 : 1); U.uGain.value[2] = gain * 0.12 * (1 - 0.8 * w);
@@ -241,6 +248,8 @@ export class Plume {
     U.uFadeIn.value[0] = 0.004; U.uFadeIn.value[1] = this.single ? 0.01 : 0.07 * (1 - w) + 0.004; U.uFadeIn.value[2] = this.single ? 0.01 : 0.1 * (1 - w) + 0.004;
     this.length = lenCore * 0.9;
     this.light.color.setRGB(L.mid[0], L.mid[1], L.mid[2]); this.light.power = gain * (1 - 0.8 * w);
+    this.lamp.color.setRGB((L.core[0] + L.tail[0]) / 2, (L.core[1] + L.tail[1]) / 2, (L.core[2] + L.tail[2]) / 2);
+    this.lamp.intensity = PLUME_TUNING.lamp * this.light.power * R * R; this.lamp.position.y = this.cy - 0.22 * this.length;
   }
 
   dispose() { this.mesh.geometry.dispose(); this.material.dispose(); this.group.removeFromParent(); }
@@ -261,7 +270,8 @@ export class Plume {
  * emit's s (world axes, meters; nothing in it is kept): pos (center of the nozzle exit plane), dir (unit, the way
  * the exhaust goes), vel, throttle 0..1, pressure 0..1, propellant, radius, wind, and, when the caller has them:
  * nose, base (bottom of the stack), height, vehicle ('saturnv' | 'starship'), stage, landed, held, met (seconds
- * since liftoff, -1 before), agl, mach, padY, standY, hasPad, flameLen (m, else estimated), and shade (0..1, how
+ * since liftoff, -1 before), agl, mach, padY, standY, hasPad, padPos (where the pad's model stands), padCloud and settle
+ * (0..1: how much of the launch's pad cloud, and of the thin dust under a vehicle coming back, to make), flameLen (m, else estimated), and shade (0..1, how
  * much of the direct sun the weather's cloud takes at the vehicle: remembered by height, so a cloud left under an
  * overcast stays in its shade after the vehicle has climbed out of it). The older onPad and groundY stand in for
  * hasPad and padY. trail.terrainAt = (x, z) => height, if given, is the land outside the pad's concrete.

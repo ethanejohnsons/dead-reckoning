@@ -121,7 +121,10 @@ export const atAz = (g, a) => g.rotateY(a);
  * rectangular section between two points; nothing is allocated per beam beyond the array growth.
  */
 export class Beams {
-  constructor() { this.p = []; this.n = []; this.c = []; }
+  /** o.outward: wind every face the way its normal points, so the outside of each member is what is drawn and lit.
+   *  (Left out, the faces are wound the other way round: what shows is the inside of a member's far walls, lit as if
+   *  from behind. Models tuned on that keep it by not asking.) */
+  constructor(o = {}) { this.p = []; this.n = []; this.c = []; this.outward = !!o.outward; }
   add(a, b, w, rgb, h = w, caps = false) {
     let tx = b[0] - a[0], ty = b[1] - a[1], tz = b[2] - a[2];
     const l = Math.hypot(tx, ty, tz); if (l < 1e-6) return this;
@@ -133,8 +136,8 @@ export class Beams {
     const vx = ty * uz - tz * uy, vy = tz * ux - tx * uz, vz = tx * uy - ty * ux;
     const hw = w / 2, hh = h / 2, P = this.p, N = this.n, C = this.c;
     const corner = (e, su, sv) => [e[0] + ux * hw * su + vx * hh * sv, e[1] + uy * hw * su + vy * hh * sv, e[2] + uz * hw * su + vz * hh * sv];
-    const quad = (p0, p1, p2, p3, nx, ny, nz) => {
-      for (const p of [p0, p1, p2, p0, p2, p3]) { P.push(p[0], p[1], p[2]); N.push(nx, ny, nz); C.push(rgb[0], rgb[1], rgb[2]); }
+    const out = this.outward, quad = (p0, p1, p2, p3, nx, ny, nz) => {
+      for (const p of out ? [p0, p2, p1, p0, p3, p2] : [p0, p1, p2, p0, p2, p3]) { P.push(p[0], p[1], p[2]); N.push(nx, ny, nz); C.push(rgb[0], rgb[1], rgb[2]); }
     };
     const a00 = corner(a, -1, -1), a10 = corner(a, 1, -1), a11 = corner(a, 1, 1), a01 = corner(a, -1, 1);
     const b00 = corner(b, -1, -1), b10 = corner(b, 1, -1), b11 = corner(b, 1, 1), b01 = corner(b, -1, 1);
