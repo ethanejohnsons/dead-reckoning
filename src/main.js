@@ -63,6 +63,10 @@ const ROCKET_LIST = [
 ];
 const ROCKET_STARTS = [['pad', 'On the pad'], ['orbit', 'In orbit of the Earth'], ['moon', 'In orbit of the Moon']];
 const startsOf = (id) => (isStarship(id) ? VOYAGE_STARTS : ROCKET_STARTS);
+/** Where a starship starts: over the airfield chosen (any of them: it needs no pad), as a site like the launch sites. */
+const shipSite = () => { const f = fieldById(S.opts.field) || fieldById(DEFAULT_FIELD); return { id: f.id, name: f.name, place: regionOf(f), near: placeOfField(f).near, lat: f.lat, lon: f.lon, az: 90, blurb: '' }; };
+/** The place the craft chosen starts from, if it is a rocket or a starship. */
+const siteChosen = () => (isStarship(S.opts.plane) ? shipSite() : siteById(S.opts.site) || siteById(DEFAULT_SITE));
 /** The start chosen, if the craft chosen can start there; else that craft's usual one. */
 const startOf = (id) => (startsOf(id).some(([k]) => k === S.opts.rstart) ? S.opts.rstart : startsOf(id)[0][0]);
 const isRocket = (id) => ROCKET_LIST.some((r) => r.id === id);
@@ -152,7 +156,7 @@ async function boot() {
   await Promise.all([loadTowns(), loadWorldFields(), loadClimate()]);     // the towns, the airfields and the climate of the whole earth (the game runs without any of them)
   if (!fieldById(S.opts.field)) S.opts.field = DEFAULT_FIELD;
   if (!siteById(S.opts.site)) S.opts.site = DEFAULT_SITE;
-  await loadWorld(isRocket(S.opts.plane) ? placeOfSite(siteById(S.opts.site)) : placeOfField(fieldById(S.opts.field)));
+  await loadWorld(isRocket(S.opts.plane) && !isStarship(S.opts.plane) ? placeOfSite(siteById(S.opts.site)) : placeOfField(fieldById(S.opts.field)));
 
   const canvas = $('gl');
   renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
@@ -348,10 +352,13 @@ async function followAircraft() {
  * there, at the local time the mission clock says it is.
  */
 async function arriveFromSpace() {
-  if (S.busy || S.mode !== 'flying') return;
-  S.busy = true;
+  if (S.busy || S.arriving || S.mode !== 'flying') return;
+  // A rocket is falling, so its flight waits for the ground. A starship is not: it stays above the air (space/voyage.js keeps
+  // it there while there is no ground in hand) and flies on while the country below is fetched.
+  const ship = !!mission.voy;
+  S.arriving = true; if (!ship) S.busy = true;
   const flight = S.flight, rk = mission.rk;
-  toast('Unrolling the chart below…', 120);
+  toast(ship ? 'Unrolling the chart below: the ship holds above the air until it is ready…' : 'Unrolling the chart below…', 120);
   try {
     const move = worldQueue.then(() => loadWorld(placeOfPoint(rk.lat, rk.lon)));
     worldQueue = move.catch(() => {});
@@ -366,7 +373,7 @@ async function arriveFromSpace() {
   } catch (e) {
     console.error(e); S.moving = false;
     toast('The country below could not be loaded: ' + e.message, 8);
-  } finally { S.busy = false; $('loadMsg').textContent = ''; loadBar(null); }
+  } finally { S.arriving = false; if (!ship) S.busy = false; $('loadMsg').textContent = ''; loadBar(null); }
 }
 
 function onResize() {
@@ -523,10 +530,10 @@ function leaveRocket() {
 
 /** The title screen behind a rocket: the vehicle on its pad at the launch site chosen. */
 async function enterSplashRocket() {
-  const site = siteById(S.opts.site), id = S.opts.plane;
+  const site = siteChosen(), id = S.opts.plane;
   if (!worldHoldsPoint(site)) {
     await ensureWorld(placeOfSite(site), () => worldHoldsPoint(site));
-    if (S.mode !== 'splash' || site.id !== S.opts.site || id !== S.opts.plane || !worldHoldsPoint(site)) return;
+    if (S.mode !== 'splash' || site.id !== siteChosen().id || id !== S.opts.plane || !worldHoldsPoint(site)) return;
   }
   $('where').textContent = REGION.title;
   const p = toWorld(site.lat, site.lon);
@@ -613,7 +620,7 @@ async function startRocket(pin = null) {
   S.busy = true;
   persist();
   setChart(false);
-  const site = pin ? pinSite(pin.lat, pin.lon) : siteById(S.opts.site) || siteById(DEFAULT_SITE);
+  const site = pin ? pinSite(pin.lat, pin.lon) : siteChosen();
   if (!worldHoldsPoint(site)) {
     S.mode = 'splash'; S.paused = false; show('splash');
     await ensureWorld(pin ? placeOfPoint(pin.lat, pin.lon) : placeOfSite(site), () => worldHoldsPoint(site));
@@ -692,7 +699,9 @@ function bindUI() {
   const craftUI = () => {
     const r = isRocket(S.opts.plane), ship = isStarship(S.opts.plane);
     for (const p of ['o', 'p']) {
-      $(p + 'FieldL').hidden = r; $(p + 'StartL').hidden = r; $(p + 'SiteL').hidden = !r; $(p + 'RStartL').hidden = !r;
+      // A rocket leaves from a launch site; a starship needs no pad and starts over any airfield in the list.
+      $(p + 'FieldL').hidden = r && !ship; $(p + 'StartL').hidden = r; $(p + 'SiteL').hidden = !r || ship; $(p + 'RStartL').hidden = !r;
+      { const t = $(p + 'FieldL').firstChild; if (t && t.nodeType === 3) t.nodeValue = ship ? 'Over ' : 'Airfield '; }
       // Where a rocket may start and where a starship may are different lists: the menu shows the craft's own.
       const sel = $(p + 'RStart'), list = startsOf(S.opts.plane), want = startOf(S.opts.plane);
       if (sel.dataset.craft !== (ship ? 'ship' : 'rocket')) { sel.dataset.craft = ship ? 'ship' : 'rocket'; sel.innerHTML = list.map(([k, t]) => `<option value="${k}">${t}</option>`).join(''); }
@@ -1152,7 +1161,9 @@ function loop(now) {
 /** One frame. shown: it is one of the browser's own frames (not a test stepping the game by hand through DR.tick),
  *  so the time since the last one says something about the frame rate. */
 function tick(dt, shown = false) {
-  if (S.moving) return;                               // the window of the world is being moved: see loadWorld
+  // The window of the world is being moved (see loadWorld): nothing of it can be drawn or flown over meanwhile. A starship
+  // clear above the air needs none of it (its picture is the view from space) and flies on.
+  if (S.moving && !mission?.voy?.aloft) return;
   // Frame accounting (render/perf.js: main-thread time per stage, for the debug panel) and the frame's budget
   // for uploads to the graphics card (render/budget.js), which every streaming module draws on.
   const frameMs = perf.frameBegin();
@@ -1169,7 +1180,7 @@ function tick(dt, shown = false) {
     // The window of the world follows a rocket flown low and far, and is fetched again under one coming back from space.
     const rk = mission.rk;
     if (mission.groundOK && mission.mix < 1 && Math.max(Math.abs(ac.pos.x), Math.abs(ac.pos.z)) > RECENTER_AT) followAircraft();
-    else if (!mission.groundOK && !mission.mapOpen && rk.body === 'earth' && rk.alt < 50000 && rk.vs < 0 && !rk.crashed && Math.abs(rk.lat) < 79) arriveFromSpace();      // (not sooner: at orbital speed it would be out of any window in half a minute)
+    else if (!mission.groundOK && !S.moving && !mission.mapOpen && rk.body === 'earth' && rk.alt < (mission.voy ? 250000 : 50000) && rk.vs < 0 && !rk.crashed && Math.abs(rk.lat) < 79) arriveFromSpace();      // (a starship asks sooner: it holds above the air until the ground is there)      // (not sooner: at orbital speed it would be out of any window in half a minute)
   } else if (flying) {
     if (S.flight.endT > 0) { S.flight.endT -= dt; if (S.flight.endT <= 0) respawn('That one will need a new airplane.'); }
     else simulate(dt * S.timeAccel);
@@ -1227,11 +1238,12 @@ function tick(dt, shown = false) {
   if ((cityShadeT -= dt) <= 0) { cityShadeT = 5; if (cities.builtCount !== cityShadeN) { cityShadeN = cities.builtCount; groundLight.stale(); } }
   towns.update(dt, dusk, camera.position, sky.exposure, cities);
   const live = !S.paused, pr = live ? wx.precip : precip.level, sn = wx.snowMix;   // rain turns to snow over a couple of degrees: the particles, the glass and the sound all mix the two
+  const sealed = rocket && !!mission.voy?.inBridge;       // (the Enterprise's bridge has no window: no rain, snow or cloud is drawn from inside it, where it would fall through the room)
   precip.update({
-    dt: live ? dt : 0, time: S.time, rain: pr * (1 - sn), snow: pr * sn,
-    hail: live ? wx.hail || 0 : 0, blow: wx.blow || 0, ground: groundHeight(camera.position.x, camera.position.z),
+    dt: live ? dt : 0, time: S.time, rain: sealed ? 0 : pr * (1 - sn), snow: sealed ? 0 : pr * sn,
+    hail: live && !sealed ? wx.hail || 0 : 0, blow: wx.blow || 0, ground: groundHeight(camera.position.x, camera.position.z),
     wind: v1.set(wx.x, wx.y, wx.z), camVel: camState.vel, camPos: camera.position, camera,
-    cloud: wx.cloud / CLOUD_SIGMA, humidity: weather.humidity * 0.6, temp: wx.temp,
+    cloud: sealed ? 0 : wx.cloud / CLOUD_SIGMA, humidity: weather.humidity * 0.6, temp: wx.temp,
     aircraft: { pos: ac.pos, quat: ac.quat, vel: ac.vel, root: model.root, tas: ac.tas, gLoad: ac.gLoad, onGround: rocket || ac.onGround, power: ac.thrustLevel },      // (a rocket has no wingtips to trail vapor from: its stand-in is "on the ground" to this)
   });
   clouds.uFlashScreen.value *= Math.exp(-dt * 7);

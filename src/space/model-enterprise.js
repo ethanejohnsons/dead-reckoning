@@ -45,7 +45,7 @@ const UP = [0, 1, 0], DOWN = [0, -1, 0], ONE = [1, 1, 1];
 const NEARER = { polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 };
 
 // Emissive strengths, in the game's HDR units (sunlit hull is about 0.8; above 1 blooms).
-export const ENTERPRISE_GLOW = { window: 2.3, windowNight: 1.05, flood: 1.7, bussard: 3.2, grilleIdle: 1.3, grilleWarp: 7, grilleFlash: 16, dish: 2.6, impulseIdle: 0.5, impulseFull: 9, lamp: 9 };
+export const ENTERPRISE_GLOW = { window: 2.3, windowNight: 1.05, flood: 1.7, bussard: 3.2, grilleIdle: 1.3, grilleWarp: 16, grilleFlash: 48, dish: 2.6, impulseIdle: 0.5, impulseFull: 9, lamp: 9 };
 
 const TONES = ['#a7b6be', '#9dadb4', '#b1bfc6'];        // the hull's paint: the two tones of the plating and a paler third
 const DARK = [0.035, 0.037, 0.042], STRIP = [0.1, 0.1, 0.105], GLASS = [0.02, 0.026, 0.034];

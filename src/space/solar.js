@@ -291,6 +291,27 @@ export class SolarSystem {
     return this;
   }
 
+  /** A body's place from the sun (m, the axes of frames.js) at any mission time t, into out, leaving what place() holds alone. */
+  fromSun(b, clock, t, out) {
+    out[0] = out[1] = out[2] = 0;
+    if (b === this.sun) return out;
+    if (b === this.earth || b === this.moon) {
+      const s = sunDir(clock, t, [0, 0, 0]);
+      for (let k = 0; k < 3; k++) out[k] = -s[k] * AU;
+      if (b === this.moon) { const m = moonPos(clock, t, [0, 0, 0]); for (let k = 0; k < 3; k++) out[k] += m[k]; }
+      return out;
+    }
+    const d = daysJ2000(clock, t);
+    if (b.orb) { this.fromSun(this.by[b.orb.about], clock, t, out); const o = [0, 0, 0]; this.moonAt(b, d, 0, o); for (let k = 0; k < 3; k++) out[k] += o[k]; return out; }
+    return helio(b.el, d / 36525, out);
+  }
+  /** Its velocity round the sun (m/s) at t, into out. */
+  velocity(b, clock, t, out) {
+    const a = this.fromSun(b, clock, t - 60, [0, 0, 0]), c = this.fromSun(b, clock, t + 60, [0, 0, 0]);
+    for (let k = 0; k < 3; k++) out[k] = (c[k] - a[k]) / 120;
+    return out;
+  }
+
   /** A moon's place from its planet (m, the axes of frames.js) at d days from J2000, `turn` of a turn further along its orbit, into out. Returns the orbit's pole. */
   moonAt(b, d, turn, out) {
     const o = b.orb, pl = this.by[o.about], ra = pl.pole[0] * D2R, de = pl.pole[1] * D2R, inc = (o.inc || 0) * D2R;

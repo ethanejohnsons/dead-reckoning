@@ -7,8 +7,12 @@
 //     latitude and longitude address them directly), lit by the sun through the air.
 //   - Clouds come from the game's tiling noise volume laid over the sphere in bands (wet tropics, dry
 //     subtropics, storm tracks), and, inside the game's window of the world, from the weather's own cloud
-//     map, so the weather a rocket climbed out of is the weather seen from above. They shade themselves and
-//     throw shadows on the ground.
+//     map, so the weather a rocket climbed out of is the weather seen from above. They have height: the
+//     layer is a slab from one mile up to seven, the thick of a system standing tall in it and its edges
+//     low, and the ray is walked down through the slab to where it first meets cloud, so from low down
+//     the towers stand in front of what is behind them and slide against the ground as the camera moves.
+//     They shade themselves and throw shadows on the ground. Detail finer than a pixel is left out (it
+//     only shimmered), and what changes with distance is cross-faded, never stretched.
 //   - The air is marched: Rayleigh and haze scattering with the sun's light followed down to each sample by a
 //     closed-form optical depth (Schuler's approximation of the Chapman function), which gives the blue
 //     limb, the white haze toward the sun, the red band at the terminator and the Earth's shadow in its
@@ -41,7 +45,9 @@ export const MOON_CREDIT = 'The Moon: NASA\'s Scientific Visualization Studio, C
 
 const S0 = 1.56;                            // sunlight above the air as irradiance / pi, in engine units (world/sky.js)
 const K_LUM = (S0 * Math.PI) / 133000;      // engine radiance per cd/m2
-const H_AIR = 80000, H_CLOUD = 6500;        // top of the marched air, and of the cloud shell (m)
+const H_AIR = 80000, H_CLOUD = 6500;        // top of the marched air, and the middle of the cloud layer (m): where its shadow is cast from
+const H_CTOP = 11500, H_CBASE = 1500;       // the cloud layer's top and bottom (m)
+const CSTEPS = { low: 4, med: 5, high: 7, ultra: 9 };      // steps down through it
 const NL = 11;                              // clip levels
 const TILES = { low: 4, med: 6, high: 6, ultra: 8 };
 const STEPS = { low: 10, med: 14, high: 16, ultra: 20 };
@@ -51,6 +57,7 @@ precision highp float; precision highp sampler3D; precision highp sampler2DArray
 in vec2 vUv; out vec4 outColor;
 uniform mat4 uProjInv; uniform mat3 uCamRot;
 uniform vec3 uEarthC, uEarthK;        // the Earth's center from the camera (m); |c|^2 - r^2 for the ground, the cloud shell, the top of the air
+uniform vec2 uCloudK;                 // the same for the top and the bottom of the cloud layer
 uniform mat3 uEarthRot;               // drawing axes to geographic: x through 0 E on the equator, y through 90 E, z the north pole
 uniform vec3 uSun, uSunCol;           // direction to the sun (from the Earth); its light above the air (irradiance / pi)
 uniform vec4 uSunV;                   // where the sun stands from the camera, and in w how many times smaller it looks than from the Earth (solar.js)
@@ -145,19 +152,27 @@ vec3 tiles(vec2 uv, float zw) {
 
 // The value a blend of two or three of the noise's (evenly spread) channels exceeds over a fraction c of the globe.
 float quant(float c) { c = clamp(c, 0.0, 1.0); return c < 0.5 ? 1.0 - sqrt(0.5 * c) : sqrt(0.5 * (1.0 - c)); }
-// ---- clouds: how much cloud stands over a point of the globe (g: unit vector in geographic axes), 0..1
+// ---- clouds: how much cloud stands over a point of the globe (g: unit vector in geographic axes), 0..1. Also leaves in
+// gTop how high it stands there, 0 (the bottom of the layer) .. 1 (its top). gFoot: a pixel's width on the globe, in radii.
+float gTop, gFoot;
 float cloudAt(vec3 g, vec2 uv) {
   vec3 w = textureLod(tNoise, g.zxy * 2.3 + 0.37, 0.0).rgb - 0.5;
   vec4 a = textureLod(tNoise, g * vec3(1.3, 1.3, 2.0) + vec3(0.13, 0.31, 0.57) + w * 0.3, 0.0);       // (stretched along the parallels, and stirred)
-  float b = textureLod(tNoise, g.yzx * mix(9.0, 3.3, uFar) + w * 0.3, 0.0).r;      // (coarser from far off, where the fine grain would only shimmer)
-  float c = textureLod(tNoise, g * 61.0 + w * 0.2, 0.0).r;
+  // The middle detail at two fixed scales, the finer giving way to the coarser with distance, and the grain: each left
+  // out as its texels (the noise is 128 across) shrink under a pixel. (One scale stretched as the camera drew away made
+  // every cloud swim; grain finer than a pixel shimmered.)
+  float fb = smoothstep(0.4, 1.3, gFoot * 9.0 * 128.0), fc = smoothstep(0.4, 1.3, gFoot * 61.0 * 128.0);
+  float b = mix(mix(textureLod(tNoise, g.yzx * 9.0 + w * 0.3, 0.0).r, 0.5, fb), textureLod(tNoise, g.yzx * 3.3 + w * 0.3, 0.0).r, uFar);
+  float c = mix(textureLod(tNoise, g * 61.0 + w * 0.2, 0.0).r, 0.5, max(uFar, fc));
   float lat = asin(clamp(g.z, -1.0, 1.0));
   // Wet along the equator, dry in the subtropics, stormy in the middle latitudes.
   float cover = 0.31 - 0.04 * uFar + 0.15 * cos(6.0 * lat) * (1.0 - 0.5 * smoothstep(1.0, 1.4, abs(lat))) + (a.a - 0.5) * 0.6;
-  float shape = a.r * 0.5 + b * 0.32 + mix(c, 0.5, uFar) * 0.18;
+  float shape = a.r * 0.5 + b * 0.32 + c * 0.18;
   float th = quant(cover * 0.9);
   // Thick in the middle of a system and thin toward its edge; from far off the edges are soft.
   float d = smoothstep(th - 0.05 - 0.05 * uFar, th + 0.08 + 0.10 * uFar, shape) * (0.62 + 0.38 * smoothstep(th, th + 0.22, shape));
+  // And tall in the middle: the heart of a system reaches the top of the layer, its edges stay low.
+  gTop = d * (0.3 + 0.7 * smoothstep(th + 0.02, th + 0.3, shape));
   if (uWx.w > 0.5) {
     // Inside the game's window the weather's own map decides: its cloud cover, broken by the same noise.
     vec2 q = vec2(fract(uv.x - uWx.x + 0.5) - 0.5, uv.y - uWx.y) * uWx.z;
@@ -167,10 +182,18 @@ float cloudAt(vec3 g, vec2 uv) {
       float cv = max(max(wx.r, 0.85 * wx.g), 0.2 * wx.a), fine = b * 0.55 + c * 0.45;       // (high cloud is thin: from above it hides little)
       float tl = quant(cv);
       float dl = smoothstep(tl - 0.04, tl + 0.06, fine) * (0.6 + 0.4 * smoothstep(0.0, 0.6, wx.r));
+      gTop = mix(dl * (0.3 + 0.7 * smoothstep(tl + 0.02, tl + 0.3, fine)), gTop, smoothstep(0.38, 0.5, e));
       d = mix(dl, d, smoothstep(0.38, 0.5, e));
     }
   }
   return d * uClouds;
+}
+// The cloud over the point a ray reaches at t: how much, with the globe's direction there and its place on the map left in gc, uvc.
+float cloudOn(vec3 d, float t, out vec3 nc, out vec3 gc, out vec2 uvc) {
+  nc = normalize(t * d - uEarthC);
+  gc = uEarthRot * nc; float sc = clamp(gc.z, -0.99999, 0.99999);
+  uvc = vec2(atan(gc.y, gc.x) * 0.15915494 + 0.5, 0.5 - log((1.0 + sc) / (1.0 - sc)) * 0.0795775);
+  return cloudAt(gc, uvc);
 }
 
 // ---- the Moon
@@ -287,17 +310,32 @@ void main() {
       alb = mix(alb, s > 0.0 ? vec3(0.62, 0.68, 0.74) : vec3(0.80, 0.82, 0.85), cap);
 
       // Clouds: where the ray meets the shell, and the shadow of the cloud between the ground and the sun.
-      float c0, c1, cd = 0.0, shade = 1.0; vec3 nc = n; float tc = g0;
+      float c0, c1, b0, b1, cd = 0.0, shade = 1.0; vec3 nc = n; float tc = g0;
       vec3 sunT = uSun - n * nl;                                    // toward the sun along the ground
+      gFoot = g0 * uPix / RE;
       if (uClouds > 0.0) {
-        if (sphere(d, uEarthC, uEarthK.y, c0, c1) && uEarthK.y > 0.0) {
-          tc = c0; nc = normalize(c0 * d - uEarthC);
-          vec3 gc = uEarthRot * nc; float sc = clamp(gc.z, -0.99999, 0.99999);
-          vec2 uvc = vec2(atan(gc.y, gc.x) * 0.15915494 + 0.5, 0.5 - log((1.0 + sc) / (1.0 - sc)) * 0.0795775);
-          cd = cloudAt(gc, uvc);
-          // Relief: thinner cloud toward the sun means this side is lit, thicker means it lies in shadow.
-          float cd2 = cloudAt(normalize(gc + (uEarthRot * sunT) * 0.0016), uvc);
-          shade = clamp(1.0 + 1.1 * (cd - cd2), 0.45, 1.35);
+        if (sphere(d, uEarthC, uCloudK.x, c0, c1) && uCloudK.x > 0.0 && sphere(d, uEarthC, uCloudK.y, b0, b1)) {
+          // Down through the layer from its top to its bottom, to the first place the cloud stands higher than the ray:
+          // between the last step above it and the first below, where the two heights cross. From far off (where the
+          // layer is thinner than a pixel) one look in the middle of it does.
+          vec3 gc; vec2 uvc;
+          float top = 0.0, hit = 0.5;
+          if (uFar > 0.75) { tc = mix(c0, b0, 0.5); cd = cloudOn(d, tc, nc, gc, uvc); top = gTop; }
+          else {
+            float pt = c0, pd = -1.0; tc = b0; hit = 0.0;
+            for (int i = 0; i < CSTEPS; i++) {
+              float s = (float(i) + 0.5) / float(CSTEPS), t = mix(c0, b0, s);
+              cloudOn(d, t, nc, gc, uvc);
+              float over = gTop - (1.0 - s);                        // > 0: the cloud here stands above the ray
+              if (over > 0.0) { float f = clamp(pd / (pd - over), 0.0, 1.0); tc = mix(pt, t, f); hit = 1.0 - mix(s - 1.0 / float(CSTEPS), s, f); break; }
+              pt = t; pd = over;
+            }
+            cd = cloudOn(d, tc, nc, gc, uvc); top = gTop;
+          }
+          // Relief: lower cloud toward the sun means this side is lit, higher means it lies in shadow; and what is met
+          // low down, between the towers, has less of the sky over it.
+          cloudAt(normalize(gc + (uEarthRot * sunT) * 0.0016), uvc);
+          shade = clamp(1.0 + 1.5 * (top - gTop), 0.4, 1.4) * mix(0.88, 1.0, smoothstep(0.0, 0.6, hit));
         }
         float reach = ${(H_CLOUD / RE).toFixed(6)} / max(nl, 0.12);
         float sh = cloudAt(normalize(g + (uEarthRot * sunT) * reach), uv);
@@ -356,13 +394,13 @@ export class Cosmos {
     const V = () => ({ value: new THREE.Vector3() }), M = () => ({ value: new THREE.Matrix3() });
     this.u = {
       uProjInv: { value: new THREE.Matrix4() }, uCamRot: M(), uEarthC: V(), uEarthK: V(), uEarthRot: M(),
-      uSun: V(), uSunV: { value: new THREE.Vector4(1, 0, 0, 1) }, uSunCol: { value: new THREE.Vector3(S0, S0, S0) }, uMoonC: V(), uMoonK: { value: 1 }, uMoonRot: M(),
+      uCloudK: { value: new THREE.Vector2() }, uSun: V(), uSunV: { value: new THREE.Vector4(1, 0, 0, 1) }, uSunCol: { value: new THREE.Vector3(S0, S0, S0) }, uMoonC: V(), uMoonK: { value: 1 }, uMoonRot: M(),
       tTiles: { value: this.tiles.texture }, tMask: { value: this.tiles.maskTexture }, uLevel: { value: this.tiles.uniform }, uTilesW: { value: this.tiles.W },
       tNoise: ENV.tCloudNoise, uClouds: { value: 1 }, uFar: { value: 0 }, tWxA: ENV.tWxA, uWx: { value: new THREE.Vector4(0, 0, 1, 0) },
       tMoon: { value: null }, tMoonRelief: { value: null }, uMoonMap: { value: 0 },
       tMilky: { value: null }, uMilky: V(), uPix: { value: 0.001 }, uSunDisk: { value: 1 }, uAer: { value: new THREE.Vector4(2.2e-5, 4100, 0.9, 0.8) },
     };
-    this.mat = fsMaterial(FRAG, this.u, { defines: { STEPS: STEPS[quality] || 16 } });
+    this.mat = fsMaterial(FRAG, this.u, { defines: { STEPS: STEPS[quality] || 16, CSTEPS: CSTEPS[quality] || 7 } });
     Object.assign(this.mat, {
       blending: THREE.CustomBlending, blendEquation: THREE.AddEquation, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
       blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
@@ -425,7 +463,7 @@ export class Cosmos {
   setQuality(q) {
     if (q === this.quality) return;
     this.quality = q;
-    this.mat.defines.STEPS = STEPS[q] || 16; this.mat.needsUpdate = true;
+    this.mat.defines.STEPS = STEPS[q] || 16; this.mat.defines.CSTEPS = CSTEPS[q] || 7; this.mat.needsUpdate = true;
     // (the windows keep the size they were made with: remaking the tile store mid-flight would blank the planet)
   }
   setSize(w, h) {
@@ -455,6 +493,7 @@ export class Cosmos {
     const d2 = p[0] * p[0] + p[1] * p[1] + p[2] * p[2], dist = Math.sqrt(d2), h = dist - RE;
     u.uEarthC.value.set(-p[0], -p[2], p[1]);
     u.uEarthK.value.set(d2 - RE * RE, d2 - (RE + H_CLOUD) ** 2, d2 - (RE + H_AIR) ** 2);
+    u.uCloudK.value.set(d2 - (RE + H_CTOP) ** 2, d2 - (RE + H_CBASE) ** 2);
     const th = earthAngle(clock, t), c = Math.cos(th), s = Math.sin(th);
     u.uEarthRot.value.set(c, 0, -s, -s, 0, -c, 0, 1, 0);
     this.earthBall.position.copy(u.uEarthC.value);

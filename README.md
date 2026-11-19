@@ -452,8 +452,8 @@ and gently on its engines has landed.
 ### The starship Enterprise
 
 Choose the U.S.S. Enterprise under Craft and Start says where the flight begins: in orbit of the Earth over
-the launch site chosen, low over that site in the game's own weather, or already at the Moon or a planet. A
-pin on the map starts it low over that spot.
+the place chosen (any airfield in the list: a starship needs no pad), low over that place in the game's own
+weather, or already at the Moon or a planet. A pin on the map starts it low over that spot.
 
 It flies like nothing else here: no fuel and no gravity, the ship goes where its bow points. `W`/`S` and
 `A`/`D` point the bow, `Q`/`E` roll, and `R`/`F` (or `Z`/`X`) set the impulse engines. How fast those take the
@@ -463,6 +463,11 @@ curve and rights itself against the horizon, and it cannot be flown into the gro
 factor, 1 to 9, at the speeds the factors always meant: the Moon in a little over a second at warp 1, Neptune
 in ten seconds at warp 9. The ship winds up for a moment, then jumps; it comes out of warp by itself where a
 world's neighborhood is in the way.
+
+Left alone, the ship goes round the sun. By a world it goes with that world; out in the open it keeps the
+velocity of the world it last left (the drives move the ship without changing that) and falls round the sun
+on whatever orbit that makes from where it has got to. At thirty kilometers a second none of this shows in
+flight: the chart draws the path.
 
 `N` lays in a course (the Moon, a planet, the sun) and `G` engages: the helm turns the ship, goes round the
 world it is leaving if that is in the way, jumps to warp, comes out on the destination's sunlit side and takes
@@ -474,13 +479,15 @@ command seats, ops and conn in front of them, the wooden rail and the tactical c
 stations along the back wall, the door alcoves, the luminous dome and its skylight. Its main viewer is an
 opening onto the real view ahead, so what is in front of the ship is what the viewer shows, warp streaks
 included; conn reads the ship's speed and what the helm is doing, ops the world it is at and the course laid
-in. Drag turns the head, nearly all the way round. The sun's glare reaches the picture only when the sun is
+in. Officers sit at conn and ops and stand at tactical and two of the aft stations. Drag turns the head,
+nearly all the way round. The sun's glare reaches the picture only when the sun is
 in the viewer or the skylight.
 
 `M` is the chart of the solar system: the same view pulled far back, with every planet's orbit drawn through
 where the planet is, a dot and a name for each world and for the ship, and the course as a line. Drag turns
-it, the wheel goes nearer and farther (all the way in to the world itself), `Tab` centers it on the sun, the
-ship or the destination, and a click on a world's name lays in a course for it. The ship flies on while the
+it, the wheel goes nearer and farther (all the way in to the world itself). It opens centered on the ship,
+with the ship's own path round the sun drawn in green; `Tab` centers it on the destination, the sun, and the
+ship again, and a click on a world's name lays in a course for it. The ship flies on while the
 chart is open, so a trip at warp can be watched from above.
 
 The planets are where they are this year, each turning about its real pole, so Saturn's rings tilt as they

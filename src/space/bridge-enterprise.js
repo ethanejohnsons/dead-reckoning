@@ -38,6 +38,10 @@
 // phrase, the warp field and impulse power), ops (where the ship is, how high, where it is going, how far)
 // and the Engineering station on the aft wall (the warp core winding up and running).
 //
+// Crew. Five generic officers in the duty uniform of the period, nobody in particular: seated at conn and ops, standing
+// at tactical and at two of the aft stations. They are lofted like the furniture, take the same baked light and shade
+// what is round them; each head is a small mesh of its own, turned a little now and then by update().
+//
 // buildBridge() -> { root, height, eye, fov, reach, viewer, skylight, update(dt, s), dispose() }.
 // viewer = { center, width, height } is the opening of the main viewer in root coordinates.
 // update takes s = { time, exposure, speed (m/s), warp, spool, impulse, world, height (m), dest, distance (m),
@@ -664,6 +668,61 @@ function pod(K, x, z, yaw, s) {
   K.ao(new THREE.Matrix4().multiplyMatrices(M, new THREE.Matrix4().makeTranslation(0, 0.32, 0)), [0.2, 0.3, 0.17]); K.shadows.push({ x, z, w: 0.44, d: 0.38, yaw, r: 0.12, a: 0.6 });
 }
 
+// ---------------------------------------------------------------- crew
+
+const vsub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]], vadd = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]], vmix = (a, b, t) => [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
+const vunit = (a) => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+/** A rounded limb lofted along a path. radii: [[across, through], ...] at each point; side: the way "across" runs; color: one, or (i) => one for each stretch. */
+function limb(path, radii, side, color, seg = 10) {
+  const n = path.length, col = typeof color === 'function' ? color : () => color, mid = (i) => path[Math.min(i, n - 1)];
+  const P = path.map((p, i) => {
+    const t = vunit(vsub(path[Math.min(i + 1, n - 1)], path[Math.max(i - 1, 0)])), d = side[0] * t[0] + side[1] * t[1] + side[2] * t[2], s = vunit([side[0] - t[0] * d, side[1] - t[1] * d, side[2] - t[2] * d]), b = [t[1] * s[2] - t[2] * s[1], t[2] * s[0] - t[0] * s[2], t[0] * s[1] - t[1] * s[0]], r = radii[i];
+    return Array.from({ length: seg }, (_, k) => { const a = (k / seg) * TAU, c = Math.cos(a) * r[0], q = Math.sin(a) * r[1]; return [p[0] + s[0] * c + b[0] * q, p[1] + s[1] * c + b[1] * q, p[2] + s[2] * c + b[2] * q]; });
+  });
+  return [skin(P, { closedJ: true, away: mid, color: (i) => col(i), crease: 70 }), cap(P[0], path[1], col(0)), cap(P[n - 1], path[n - 2], col(n - 2))];
+}
+/**
+ * One of the crew, in their own axes (facing -Z, their floor at 0): a generic officer in the duty uniform of the period, nobody in
+ * particular. o: { sit, k (stature), wide (build), dept (the uniform's color), tone (skin), hair, hands: [left, right] where the
+ * fingertips rest, foot: [height, how far forward] of a seated officer's ankles }. Returns { cloth, skin, dark, head: geometries,
+ * neck: the point the head turns about }.
+ */
+function figure(o) {
+  const k = o.k, w = o.wide, X = [1, 0, 0], BLK = [0.012, 0.012, 0.014], hip = o.sit ? [0, 0.575, -0.02] : [0, 0.93 * k, 0], lz = o.sit ? -0.06 : 0.02, up = (s) => [0, hip[1] + s * 0.52 * k, hip[2] + s * lz];
+  const cloth = [], sk = [], dark = [], head = [];
+  // the trunk: hips, waist, chest, and the black yoke over the shoulders
+  cloth.push(...limb([up(-0.12), up(0), up(0.35), up(0.7), up(0.86), up(0.97), up(1.03)], [[0.1 * w, 0.07], [0.17 * w, 0.115], [0.15 * w, 0.1], [0.18 * w, 0.118], [0.19 * w, 0.11], [0.17 * w, 0.085], [0.07, 0.065]], X, (i) => (i >= 4 || i === 0 ? BLK : o.dept), 14));
+  dark.push(box(0.028, 0.036, 0.006, vadd(up(0.72), [0.078 * w, 0, -0.121]), [0.75, 0.6, 0.25]));      // the badge
+  // the neck and the head: an egg with a jaw, a nose, a brow, a chin and eye sockets pressed into it, the hair standing a little proud
+  const nk = up(1.03), nt = [nk[0], nk[1] + 0.07 * k, nk[2] - 0.005], hc = [nt[0], nt[1] + 0.1 * k, nt[2] - 0.012], rx = 0.076 * k, ry = 0.118 * k, rz = 0.094 * k;
+  head.push(...limb([nk, nt, [nt[0], nt[1] + 0.03, nt[2]]], [[0.058, 0.058], [0.052, 0.055], [0.05, 0.05]], X, o.tone, 10));
+  const NV = 13, NA = 18, hairAt = (v, f) => v > 0.45 || (Math.abs(f) > 1.15 && v > lerp(0.05, -0.5, sstep(1.15, 2.4, Math.abs(f)))), bell = (x, c, s) => Math.exp(-(((x - c) / s) ** 2));
+  const hp = (v, f) => {
+    const rho = Math.sqrt(1 - v * v) * (1 - 0.2 * sstep(-0.25, -0.9, v)), af = Math.abs(f);
+    const e = 0.02 * bell(f, 0, 0.2) * bell(v, -0.1, 0.17) + 0.006 * bell(f, 0, 0.7) * bell(v, 0.2, 0.1) - 0.007 * bell(af, 0.38, 0.16) * bell(v, 0.07, 0.09) + 0.01 * bell(f, 0, 0.4) * bell(v, -0.72, 0.15) + (hairAt(v, f) ? 0.008 : 0);
+    return [hc[0] + Math.sin(f) * (rx * rho + e), hc[1] + v * ry, hc[2] - Math.cos(f) * (rz * rho + e)];
+  };
+  const HP = Array.from({ length: NV + 1 }, (_, i) => Array.from({ length: NA }, (_, j) => hp(-0.97 + (1.94 * i) / NV, -Math.PI + (TAU * (j + 0.5)) / NA)));
+  head.push(skin(HP, { closedJ: true, away: hc, crease: 70, color: (i, j) => (hairAt(-0.97 + (1.94 * (i + 0.5)) / NV, -Math.PI + (TAU * (j + 1)) / NA) ? o.hair : o.tone) }), cap(HP[0], hc, o.tone), cap(HP[NV], hc, o.hair));
+  const on = (v, f, lift = 0.002) => { const p = hp(v, f); return [p[0] + Math.sin(f) * lift, p[1], p[2] - Math.cos(f) * lift]; };
+  for (const s of [-1, 1]) head.push(box(0.02, 0.007, 0.004, on(0.07, s * 0.38), [0.03, 0.02, 0.02]), box(0.03, 0.006, 0.004, on(0.2, s * 0.36, 0.003), o.hair), box(0.012, 0.05, 0.026, on(0, s * 1.57, 0.004), o.tone));      // eyes, brows, ears
+  head.push(box(0.04, 0.005, 0.004, on(-0.42, 0), o.tone.map((c) => c * 0.5)));
+  // arms to where the hands rest, hands as a palm, a mitten of fingers and a thumb
+  const sh = up(0.93);
+  for (const s of [-1, 1]) {
+    const S = [s * 0.19 * w, sh[1], sh[2]], H = o.hands[s < 0 ? 0 : 1], Wr = [H[0], H[1] + 0.015, H[2] + 0.13], E = vadd(vmix(S, Wr, 0.52), [s * 0.05, -0.1, 0.1]);
+    cloth.push(...limb([S, vmix(S, E, 0.5), E, vmix(E, Wr, 0.5), Wr], [[0.054, 0.054], [0.05, 0.048], [0.043, 0.043], [0.038, 0.036], [0.03, 0.027]], X, (i) => (i === 0 ? BLK : o.dept)));
+    sk.push(...limb([Wr, vmix(Wr, H, 0.5), H, vadd(H, [0, -0.004, -0.035])], [[0.027, 0.02], [0.042, 0.013], [0.038, 0.011], [0.02, 0.007]], X, o.tone), ...limb([vadd(vmix(Wr, H, 0.3), [-s * 0.03, 0, 0]), vadd(vmix(Wr, H, 0.3), [-s * 0.062, -0.004, -0.04])], [[0.012, 0.011], [0.009, 0.008]], X, o.tone, 6));
+  }
+  // legs and boots
+  for (const s of [-1, 1]) {
+    const J = [s * 0.09 * w, hip[1] - 0.02, hip[2]], K = o.sit ? [s * 0.11, hip[1], hip[2] - 0.43 * k] : [s * 0.1, 0.5 * k, 0.01], A = o.sit ? [s * 0.11, o.foot[0], hip[2] + o.foot[1]] : [s * 0.1, 0.09, 0.02];
+    cloth.push(...limb([J, vmix(J, K, 0.5), K, vmix(K, A, 0.5), A], [[0.085, 0.085], [0.078, 0.075], [0.06, 0.06], [0.052, 0.055], [0.042, 0.045]], X, BLK));
+    cloth.push(...limb([vadd(A, [0, 0.03, 0.02]), vadd(A, [0, -0.05, -0.02]), vadd(A, [0, -0.055, -0.21])], [[0.045, 0.05], [0.048, 0.045], [0.04, 0.028]], X, BLK));
+  }
+  return { cloth, skin: sk, dark, head, neck: nt };
+}
+
 /** One panel of the luminous ceiling: brightest in the middle, a little dimmer and warmer toward the ribs that frame it. */
 function panelTexture() {
   const S = 64, [c, g] = canvas(S, S, '#e9dfcd'), gd = g.createRadialGradient(S / 2, S / 2, 4, S / 2, S / 2, S * 0.72);
@@ -686,7 +745,7 @@ const LIT = {};                                                        // what t
  * meshes and tints their colors with the bounce; returns a small picture of the light on the floor, in plan, for the carpet's map.
  */
 function lightRoom(geos, floods) {
-  const names = ['wall', 'trim', 'leather', 'wood', 'dark'];
+  const names = Object.keys(geos).filter((n) => /^(wall|trim|leather|wood|dark|cloth|skin|head\d+)$/.test(n));
   const give = (name) => { const g = geos[name], k = LIT[name]; g.attributes.color.array.set(k.col); g.setAttribute('lit', new THREE.BufferAttribute(k.lit.slice(), 2)); };
   const sig = (g) => { const p = g.attributes.position.array; let s = 0; for (let i = 0; i < p.length; i += 53) s += p[i]; return p.length + ':' + Math.round(s * 1000); };
   if (LIT.floor && names.every((n) => LIT[n] && LIT[n].n === sig(geos[n]))) { names.forEach(give); return LIT.floor; }
@@ -709,7 +768,7 @@ function lightRoom(geos, floods) {
     }
   };
   const carpet = (x, z) => { const a = Math.atan2(x, ZC - z), red = Math.hypot(x, z - ZC) > Math.min(wallR(a), Rw(a)) - 0.6 || (x / (HX + 0.5)) ** 2 + ((z - HC) / (HZ + 0.5)) ** 2 < 1 || (x / 2.2) ** 2 + ((z + 1.5) / 1.2) ** 2 < 1; return red ? [0.27, 0.07, 0.06] : [0.3, 0.32, 0.36]; };
-  pour(geos.wall, 1, [0.9, 0.9, 0.9]); pour(geos.trim, 1, [0.6, 0.55, 0.48]); pour(geos.leather, 1, [0.9, 0.9, 0.9]); pour(geos.wood, 1, [0.5, 0.25, 0.11]); pour(geos.dark, 1, ONE); pour(geos.floor, 1, carpet);
+  pour(geos.wall, 1, [0.9, 0.9, 0.9]); pour(geos.trim, 1, [0.6, 0.55, 0.48]); pour(geos.leather, 1, [0.9, 0.9, 0.9]); pour(geos.wood, 1, [0.5, 0.25, 0.11]); pour(geos.dark, 1, ONE); pour(geos.floor, 1, carpet); for (const n of names) if (/^(cloth|skin|head)/.test(n)) pour(geos[n], 1, [0.9, 0.9, 0.9]);
   pour(geos.lamp, (u) => (Math.abs(u - LAMP[0][0]) < 0.03 ? 2 : 1), [0.8, 0.8, 0.8]); pour(geos.dome, 2); for (const n of ['lcars', 'eng', 'conn', 'ops']) pour(geos[n], 3);
 
   const NR = 20, RD = Array.from({ length: NR }, (_, k) => { const u1 = (k + 0.5) / NR, ph = TAU * ((k * 0.61803398875) % 1), r = Math.sqrt(u1); return [r * Math.cos(ph), r * Math.sin(ph), Math.sqrt(1 - u1)]; });
@@ -777,6 +836,10 @@ export function buildBridge() {
   const ao = () => {};          // (the furniture once shaded the bake as boxes: the light is cast through the room's own geometry now, see lightRoom)
   const K = { G, A, TR, put, lamp, ao, wpt, shadows, glows, floods, wins };
 
+  // ---- the crew: generic officers at conn and ops, at tactical and at two of the aft stations (their heads apart, to turn)
+  const crew = [], RED = [0.36, 0.03, 0.035], GOLD = [0.5, 0.33, 0.06], BLUE = [0.04, 0.2, 0.3];
+  const man = (M, o) => { const f = figure(o), i = crew.length; put('cloth', M, f.cloth); put('skin', M, f.skin); put('dark', M, f.dark); put('head' + i, M, f.head); crew.push({ neck: wpt(M, f.neck), ph: i * 1.7 + 0.4, mesh: null }); };
+
   // ---- the walls, bay by bay
   const ROWS = [[0.022, -0.03, 1], [0.022, 0.1, 1], [0, 0.104, 1], [0, WALL, 0]];
   const strip = (M, x0, x1, y = WALL - 0.045, z = 0.004) => { put('lamp', M, lamp(quad([x0, y - 0.03, z], [x1, y - 0.03, z], [x1, y + 0.03, z], [x0, y + 0.03, z], ONE, { seen: [0, 1.5, 3] }), 1)); for (let x = x0 + 0.3; x < x1; x += 0.9) floods.push({ p: wpt(M, [x, y - 0.1, 0.22]), i: 0.14, r: 0.9 }); };      // a cool strip of light under the cornice
@@ -825,7 +888,8 @@ export function buildBridge() {
       put('lcars', M, quad([-0.52, sl(0.52), 0.52], [0.52, sl(0.52), 0.52], [0.52, sl(0.07), 0.07], [-0.52, sl(0.07), 0.07], ONE, { ...see, uv: (i, j) => ku(i, j) }));
       wins.push({ c: wpt(M, [0, y0 + 0.5, 0.1]), n: wdir(M, [0, 0, 1]), area: 0.8 });
       strip(M, -hw, hw, y1 + 0.07);
-      putSeat(K, new THREE.Matrix4().multiplyMatrices(M, new THREE.Matrix4().makeTranslation(0, f, 1.02)), 'stool');
+      if (k === 1 || k === 4) man(new THREE.Matrix4().multiplyMatrices(M, new THREE.Matrix4().makeTranslation(k === 1 ? 0.1 : -0.08, f, 0.8)), k === 1 ? { k: 0.95, wide: 0.93, dept: GOLD, tone: [0.55, 0.36, 0.26], hair: [0.16, 0.07, 0.03], hands: [[-0.2, 0.9, -0.5], [0.17, 0.9, -0.46]] } : { k: 1.01, wide: 1.03, dept: BLUE, tone: [0.3, 0.17, 0.1], hair: [0.02, 0.015, 0.012], hands: [[-0.16, 0.9, -0.46], [0.22, 0.9, -0.5]] });
+      else putSeat(K, new THREE.Matrix4().multiplyMatrices(M, new THREE.Matrix4().makeTranslation(0, f, 1.02)), 'stool');
       ao(new THREE.Matrix4().multiplyMatrices(M, new THREE.Matrix4().makeTranslation(0, f + 0.42, 0.3)), [hw, 0.4, 0.27]);
       const c = wpt(M, [0, 0, 0.3]); shadows.push({ x: c[0], z: c[2], w: W, d: 0.62, yaw, r: 0.16, a: 0.55 });
     } else {
@@ -908,6 +972,9 @@ export function buildBridge() {
   helmUnit(K, HELM.x, HELM.z, 'conn'); helmUnit(K, -HELM.x, HELM.z, 'ops');
   for (const [x, z, yaw, kind] of [[0, 0.02, 0, 'capt'], [1.0, -0.06, 0.12, 'cmd'], [-1.0, -0.06, -0.12, 'cmd'], [1.8, -0.36, 0.42, 'end'], [-1.8, -0.36, -0.42, 'end']]) putSeat(K, place(x, z, yaw), kind);
   pod(K, 2.28, -0.86, -0.86, 1); pod(K, -2.28, -0.86, 0.86, -1);
+  man(place(HELM.x, HELM.z + 0.05), { sit: 1, k: 0.97, wide: 1.0, dept: RED, tone: [0.5, 0.3, 0.2], hair: [0.03, 0.02, 0.015], hands: [[-0.2, 0.765, -0.7], [0.23, 0.765, -0.72]], foot: [0.3, -0.6] });
+  man(place(-HELM.x, HELM.z + 0.05), { sit: 1, k: 1.0, wide: 1.06, dept: GOLD, tone: [0.22, 0.12, 0.07], hair: [0.01, 0.01, 0.01], hands: [[-0.24, 0.765, -0.72], [0.18, 0.765, -0.7]], foot: [0.3, -0.6] });
+  man(place(0, HC + HZ + 0.78, 0, UP), { k: 1.04, wide: 1.1, dept: GOLD, tone: [0.42, 0.26, 0.17], hair: [0.05, 0.03, 0.02], hands: [[-0.25, 0.86, -0.34], [0.22, 0.86, -0.36]] });
 
   // ---------------------------------------------------------------- light, materials, meshes
   const U = cabinLight([]); U.uSceneK.value = 0;              // no window: nothing of the scene's light comes in
@@ -923,14 +990,18 @@ export function buildBridge() {
     leather: roomMat(U, { map: lea.map, normalMap: lea.normalMap, normalScale: V2(0.28), roughness: 0.44, envMap: env }),
     wood: roomMat(U, { map: wd.map, normalMap: wd.normalMap, roughnessMap: wd.roughnessMap, normalScale: V2(0.5), roughness: 1, envMap: env }),
     dark: roomMat(U, { roughness: 0.2, envMap: env }),
+    cloth: roomMat(U, { map: fab.map, normalMap: fab.normalMap, normalScale: V2(0.6), roughness: 0.86, envMap: env }), skin: roomMat(U, { roughness: 0.55, envMap: env }),
     lcars: screen(A.tex), conn: screen(lives.conn.tex), ops: screen(lives.ops.tex), eng: screen(lives.eng.tex),
     lamp: new THREE.MeshBasicMaterial({ map: lampTexture(), fog: false }), dome: new THREE.MeshBasicMaterial({ map: panelTexture(), fog: false }),
   };
-  const GLOSS = { wall: 0.55, trim: 0.5, floor: 0.25, leather: 0.8, wood: 1.0, dark: 1.3 }, TILE = { wall: 0.3, leather: 0.2, dark: 0.3 }, screens = [mats.lcars, mats.conn, mats.ops, mats.eng];
+  const GLOSS = { wall: 0.55, trim: 0.5, floor: 0.25, leather: 0.8, wood: 1.0, dark: 1.3, cloth: 0.3, skin: 0.6 }, TILE = { wall: 0.3, leather: 0.2, dark: 0.3, cloth: 0.1 }, screens = [mats.lcars, mats.conn, mats.ops, mats.eng];
   let tris = 0; const geos = {};
   for (const name of Object.keys(G.lists)) { const g = G.geometry(name); if (!g) continue; if (TILE[name]) boxUv(g, TILE[name]); geos[name] = g; tris += g.attributes.position.count / 3; }
   mats.floor.map = paintFloor(lightRoom(geos, floods)); constLit(geos.floor, FMAX, 0.2);
-  for (const name of Object.keys(geos)) { const m = meshFrom(geos[name], mats[name]); m.name = name; root.add(m); }
+  for (const name of Object.keys(geos)) {
+    const m = meshFrom(geos[name], mats[name] || mats.skin); m.name = name; root.add(m);
+    if (name.startsWith('head')) { const c = crew[+name.slice(4)]; geos[name].translate(-c.neck[0], -c.neck[1], -c.neck[2]); m.position.set(c.neck[0], c.neck[1], c.neck[2]); c.mesh = m; }      // (a head turns about its neck)
+  }
 
   // ---------------------------------------------------------------- the interface
   const st = { turn: 0, clock: 0, slot: -1, phase: 0, v: ['0', 'MPH', ''], alt: null, rng: null }, q0 = new THREE.Quaternion(), e0 = new THREE.Euler();
@@ -959,6 +1030,8 @@ export function buildBridge() {
     const fl = clamp01(Math.max(level, spool * 0.9)), label = warp > 0 ? st.v[0] : spool > 0.02 ? 'ENGAGING' : imp > 0.02 ? 'IMPULSE' : 'STANDBY';
     lives.eng.want(`${ph}|${Math.round(fl * 20)}|${impQ}|${label}`, { run, phase: ph, field: [fl, fl], imp: impQ, label });
     flushLive(liveList, st.turn++, 2);
+    // the crew: a head turns a little now and then, and rides the breath
+    for (const c of crew) if (c.mesh) { const t = time * 0.23 + c.ph; c.mesh.rotation.y = 0.24 * Math.sin(t) * Math.sin(t * 0.37 + 1) + 0.05 * Math.sin(t * 2.3 + c.ph); c.mesh.rotation.x = 0.05 * Math.sin(t * 0.61 + 2); c.mesh.position.y = c.neck[1] + 0.0025 * Math.sin(time * 1.3 + c.ph); }
   }
   update(0, {}); for (const l of liveList) if (l.dirty) l.flush();
 

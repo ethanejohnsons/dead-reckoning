@@ -25,6 +25,10 @@
 //     and takes up a standard orbit. O takes up a standard orbit of the world below at any time.
 //
 //   - M is the chart of the solar system (solarchart.js): the same view from far off, with the orbits drawn.
+//   - Left alone, the ship goes round the sun. By a world it goes with that world; out in the open it keeps the
+//     velocity of the world it last left (the drives move the ship without changing that, as a warp drive would)
+//     and falls round the sun on whatever orbit that makes from where it has got to: `drift`. At thirty
+//     kilometers a second none of it shows in flight; the chart draws the path.
 //
 // What mission.js still does: the view from space and the fade between it and the game's world (drawSpace,
 // renderSpace, `mix`), the satellites, the shadows. This module sets what those read: the craft (`mission.rk`
@@ -48,7 +52,7 @@ export const STARSHIPS = [
 export const isStarship = (id) => STARSHIPS.some((s) => s.id === id);
 /** Where a starship flight can begin (the menu's "Start"). */
 export const VOYAGE_STARTS = [
-  ['orbit', 'In orbit of the Earth'], ['low', 'Low over the launch site'], ['moon', 'At the Moon'], ['mars', 'At Mars'], ['jupiter', 'At Jupiter'],
+  ['orbit', 'In orbit of the Earth'], ['low', 'Low over the place chosen'], ['moon', 'At the Moon'], ['mars', 'At Mars'], ['jupiter', 'At Jupiter'],
   ['saturn', 'At Saturn'], ['uranus', 'At Uranus'], ['neptune', 'At Neptune'], ['venus', 'At Venus'], ['mercury', 'At Mercury'],
 ];
 const DESTINATIONS = ['earth', 'moon', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune', 'venus', 'mercury', 'sun'];
@@ -115,6 +119,8 @@ export class Voyage {
     this.thr = 0; this.warp = 0; this.speed = 0; this.atWarp = false; this.jump = 0; this.streakAmt = 0;
     this.spool = 0; this.pending = 0;          // winding up for warp: seconds left, and the factor it will jump to
     this.snd = shipSound; this.chart = null; this.chartOpen = false;
+    this.drift = [0, 0, 0];                    // out in the open: the ship's velocity round the sun (m/s, the axes of frames.js)
+    this.glow = null;                          // the light the nacelles throw round themselves going to warp
     this.bridge = null;                        // the room the view from the bridge is seen from (bridge-enterprise.js), if it loaded
     this.dest = null; this.ap = null; this.orbit = null;
     this.want = new THREE.Vector3(); this.wantUp = new THREE.Vector3();
@@ -136,7 +142,18 @@ export class Voyage {
     try { this.model = shipMod ? shipMod.buildEnterprise({ detail }) : standInShip(); } catch (e) { console.warn('The Enterprise could not be built:', e); this.model = standInShip(); }
     this.root = new THREE.Group(); this.root.add(this.model.root);
     this.streaks = new WarpStreaks(); this.root.add(this.streaks.object);
-    m.vehicle = { id, root: this.root, height: SIZE, radius: 232, stages: [], setStage() {}, update() {}, dispose: () => { this.model.dispose?.(); this.streaks.dispose(); this.bridge?.dispose?.(); } };
+    // The nacelles' glow going to warp: soft blue light along each, over the grilles' own (the model's), so it reads from any side.
+    this.glow = null;
+    if (this.model.points?.nacelles) {
+      const cv = document.createElement('canvas'); cv.width = cv.height = 128;
+      const gx = cv.getContext('2d'), gr = gx.createRadialGradient(64, 64, 0, 64, 64, 64);
+      gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.25, 'rgba(255,255,255,0.42)'); gr.addColorStop(0.6, 'rgba(255,255,255,0.08)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+      gx.fillStyle = gr; gx.fillRect(0, 0, 128, 128);
+      const map = new THREE.CanvasTexture(cv), mat = new THREE.SpriteMaterial({ map, color: 0x000000, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false, toneMapped: false });
+      for (const p of this.model.points.nacelles) for (const dz of [-100, -40, 20, 80]) { const sp = new THREE.Sprite(mat); sp.position.set(p.x, p.y, p.z + dz); sp.scale.set(170, 110, 1); sp.visible = false; this.model.root.add(sp); }
+      this.glow = { map, mat };
+    }
+    m.vehicle = { id, root: this.root, height: SIZE, radius: 232, stages: [], setStage() {}, update() {}, dispose: () => { this.model.dispose?.(); this.streaks.dispose(); this.bridge?.dispose?.(); this.glow?.map.dispose(); this.glow?.mat.dispose(); } };
     g.scene.add(this.root);
     this.rocketWas = m.rk; m.rk = this.craft;
     m.groundOK = true; m.mix = 0; m.view = 'chase'; this.view = 'chase';
@@ -328,7 +345,7 @@ export class Voyage {
   sunThrough(br) {
     const m = this.m, sky = m.mix >= 1;
     // The way to the sun in the room's axes (the ship's).
-    if (sky) v3.copy(m.cosmos.solar.sunView).applyQuaternion(qI.copy(this.q).invert());
+    if (sky) v3.copy(m.cosmos.solar.sunView).applyQuaternion(qI.copy(this.qShown).invert());
     else v3.copy(ENV.uSunDir.value).applyQuaternion(qI.copy(this.qW).invert());
     let best = 0;
     const vw = br.viewer;
@@ -570,15 +587,32 @@ export class Voyage {
       if (follow < 1) q1.slerp(q2.identity(), 1 - follow);
       q.premultiply(q1).normalize();
     }
+    // Out in the open, left alone or not, the ship is falling round the sun.
+    if (ref.id === 'sun' && !this.orbit) {
+      const k = (-ref.mu / (d0 * d0 * d0)) * dt, v = this.drift;
+      for (let i = 0; i < 3; i++) { v[i] += rel[i] * k; rel[i] += v[i] * dt; }
+    }
     // ---- which world it belongs to now
     for (let i = 0; i < 3; i++) c.r[i] = ref.r[i] + rel[i];
     const nb = sol.nearest(c.r, ref);
     if (nb !== ref) {
+      if (nb.id === 'sun') sol.velocity(this.planetOf(ref), m.clock, c.t, this.drift);      // leaving a world for the open: the ship keeps that world's way round the sun
       this.ref = nb; this.orbit = null;
       for (let i = 0; i < 3; i++) rel[i] = c.r[i] - nb.r[i];
     }
     this.data(dt);
   }
+
+  /** The planet a world belongs with: itself, or the planet a moon goes round. */
+  planetOf(b) { return b.orb ? this.solar.by[b.orb.about] : b.id === 'moon' ? this.solar.earth : b; }
+  /** Where the ship goes if left alone: its place and velocity round the sun ({ p, u }: m and m/s, the axes of frames.js). By a world it goes round the sun with that world. */
+  trajectory() {
+    const sol = this.solar, s = sol.sun.r, c = this.craft.r, p = [c[0] - s[0], c[1] - s[1], c[2] - s[2]];
+    if (this.ref.id === 'sun') return { p, u: this.drift };
+    return { p, u: sol.velocity(this.planetOf(this.ref), this.m.clock, this.craft.t, this.tu || (this.tu = [0, 0, 0])) };
+  }
+  /** Is the ship clear above the air, where the view from space is the whole picture? (main.js asks: such a ship flies on while the country below is being fetched.) */
+  get aloft() { return this.ref.id !== 'earth' || this.craft.alt > MIX_HI + 2000; }
 
   /** Refresh what the rest of the game reads of the craft. */
   data(dt) {
@@ -601,7 +635,7 @@ export class Voyage {
     const m = this.m, g = this.g, c = this.craft, ac = g.ac, cam = g.camera, input = g.input;
     const onEarth = this.ref.id === 'earth';
     const p = onEarth ? toWorld(c.lat, c.lon) : { x: 1e9, z: 1e9 };
-    m.groundOK = onEarth && Math.abs(p.x) < WORLD_HALF - 30000 && Math.abs(p.z) < WORLD_HALF - 30000;
+    m.groundOK = onEarth && !g.S.moving && Math.abs(p.x) < WORLD_HALF - 30000 && Math.abs(p.z) < WORLD_HALF - 30000;      // (not while the window of the world is being moved under the ship: main.js)
     const charting = this.chartOpen;
     m.mix = m.forceMix ?? (charting ? 1 : m.groundOK ? smoothstep(MIX_LO, MIX_HI, c.alt) : 1);
 
@@ -626,13 +660,13 @@ export class Voyage {
     const cc = m.cam, look = input.look;
     if (charting) {
       // The mouse is the chart's: drag turns it, and the wheel (which the game keeps as a factor near 1) takes it nearer or farther.
-      this.chart.drag(look.yaw, look.pitch, Math.pow(input.zoomTarget, 4));
+      this.chart.drag(look.yaw, look.pitch, Math.pow(input.zoomTarget, 4), dt);
       input.zoom = input.zoomTarget = 1;
     } else if (this.view === 'bridge') { cc.headYaw = clamp(cc.headYaw + look.yaw, -3.1, 3.1); cc.headPitch = clamp(cc.headPitch - look.pitch, -1.3, 1.3); }      // (the room's own reach is applied below)
     else {
       if (look.yaw || look.pitch) this.camEase = null;
       if (this.camEase != null && dt > 0) { cc.pitch += (this.camEase - cc.pitch) * (1 - Math.exp(-dt * 1.6)); if (Math.abs(this.camEase - cc.pitch) < 0.01) this.camEase = null; }
-      cc.yaw -= look.yaw; cc.pitch = clamp(cc.pitch - look.pitch, -1.45, 1.45);
+      cc.yaw += look.yaw; cc.pitch = clamp(cc.pitch + look.pitch, -1.45, 1.45);      // (a drag swings the camera the way it does round the airplanes and the rockets)
     }
     look.yaw = 0; look.pitch = 0;
     input.zoom += (input.zoomTarget - input.zoom) * (dt <= 0 ? 1 : 1 - Math.exp(-dt * 9));
@@ -651,10 +685,12 @@ export class Voyage {
       // The captain's chair: the room's own eye point, the head turned by the mouse, and the deck trembling as the ship jumps.
       const R = br.reach || { yaw: 2.6, up: 1.1, down: 0.9 }, t = g.S.time, shake = 0.012 * this.jump + 0.004 * wind;
       cc.headYaw = clamp(cc.headYaw, -R.yaw, R.yaw); cc.headPitch = clamp(cc.headPitch, -R.down, R.up);
+      // (All in the ship's axes as the ship is drawn, the lean of a turn included: the room leans with the hull, a hundred
+      // feet above the axis it leans about, and an eye left upright was thrown out through the wall by every turn.)
       eye.copy(br.root.position).add(br.eye);
       eye.x += shake * Math.sin(t * 47.0); eye.y += shake * Math.sin(t * 61.3 + 1.0); eye.z += shake * Math.sin(t * 53.7 + 2.0);
-      eye.applyQuaternion(this.q);
-      qc.copy(this.q).multiply(q1.setFromEuler(eu.set(cc.headPitch, cc.headYaw, 0, 'YXZ')));
+      eye.applyQuaternion(this.qShown);
+      qc.copy(this.qShown).multiply(q1.setFromEuler(eu.set(cc.headPitch, cc.headYaw, 0, 'YXZ')));
       fov = clamp((br.fov || 62) * input.zoom * (1 + 0.12 * this.jump), 22, 100);
       sunIn = this.sunThrough(br);
     } else if (view === 'bridge') {
@@ -719,6 +755,11 @@ export class Voyage {
         world: this.ref.name.replace(/^the /, ''), height: Math.max(this.height(), 0), dest: d ? d.name.replace(/^the /, '') : null, distance: d ? Math.max(this.distTo(d) - d.R, 0) : 0,
         helm: ap ? (ap.phase === 'turn' ? 'coming about' : ap.phase === 'warp' ? `at warp for ${ap.dest.name}` : `on impulse for ${ap.dest.name}`) : null, orbit: !!this.orbit,
       });
+    }
+    if (this.glow) {
+      const surge = Math.max(this.jump, wind * wind), k = (this.atWarp ? 0.9 : 0.5 * wind) + 9 * surge * surge, on = k > 0.01 && view !== 'bridge';
+      this.glow.mat.color.setRGB(0.2, 0.48, 1).multiplyScalar(k);
+      for (const o of this.model.root.children) if (o.isSprite) o.visible = on;
     }
     shipSound.attach(g.sound);
     shipSound.update(dt, { on: g.S.mode === 'flying' && !g.S.busy, view, impulse: this.atWarp ? 0.5 : impulse, warp: this.atWarp ? Math.max(1, warpOf(this.speed)) : 0, spool: wind, dist: m.camDist });
@@ -801,7 +842,7 @@ export class Voyage {
   /** A line for the start of a flight. */
   hello(where) {
     const b = this.ref;
-    return where === 'low' ? 'The Enterprise, low over the launch site. W S A D fly her, R and F are the impulse engines; climb out of the air for warp. Esc for controls.'
+    return where === 'low' ? `The Enterprise, low over ${this.m.site?.name || 'the place chosen'}. W S A D fly her, R and F are the impulse engines; climb out of the air for warp. Esc for controls.`
       : `The Enterprise in standard orbit of ${b.name}. N chooses a destination and G flies there; or take the helm: W S A D, R and F for impulse, period and comma for warp. Esc for controls.`;
   }
 }

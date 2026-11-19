@@ -393,6 +393,19 @@ void main() {
       const float O = 24.0;
       float mapSea = min(min(waterCover(vWorld.xz + vec2(O, 0.0)), waterCover(vWorld.xz - vec2(O, 0.0))), min(waterCover(vWorld.xz + vec2(0.0, O)), waterCover(vWorld.xz - vec2(0.0, O))));
       surf *= 1.0 - smoothstep(0.9, 1.0, min(mapSea, waterCover(vWorld.xz)));
+      // The sea's edge has deep water off it: fathoms down within a mile. A lagoon, a tidal creek or a marsh pond lies at
+      // sea level too, but shoal for miles, and no surf breaks on it. (Without this every pond of the marshes behind Cape
+      // Canaveral was outlined in white.) The regional map has the sea bed, half a kilometer to the texel: the deepest of
+      // eight looks around, 600 m and 1,100 m off, must be a couple of meters down, and the ground here not standing
+      // meters above the sea (a pond just behind the dunes is near deep water too, but up on the land).
+      if (lake < 0.5 && surf > 0.004) {
+        float deep = 0.0;
+        for (int i = 0; i < 8; i++) {
+          float a = 0.7853982 * float(i), o = i < 4 ? 600.0 : 1100.0;
+          deep = max(deep, -texture2D(tRegion, (vWorld.xz + o * vec2(cos(a), sin(a))) / (2.0 * uWxHalf) + 0.5).r);
+        }
+        surf *= mix(smoothstep(1.8, 3.6, deep) * (1.0 - smoothstep(2.4, 4.2, reg.r)), 1.0, lake);
+      }
     }
     float spec = pow(max(dot(R, uSkySun), 0.0), mix(1400.0, 160.0, wind)) * shadow * step(0.0, uSkySun.y);
     vec3 wcol = body * (1.0 - fres) + refl * fres + uSunCol * spec * 14.0;
